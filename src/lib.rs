@@ -2,6 +2,7 @@
 pub mod app;
 pub mod benchmark;
 pub mod document;
+pub mod html;
 pub mod layout;
 pub mod linebreak;
 pub mod math;

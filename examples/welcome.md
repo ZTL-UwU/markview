@@ -23,8 +23,9 @@ $$
 |:--|:--:|--:|
 | Emphasis | **bold** and *italic* | Native text |
 | Mathematics | $\sum_{i=1}^{n}i$ | Shared baseline |
+| Links | [example](https://example.com) | Click to open |
 | Task lists | GFM | Read only |
-| HTML | `<br>` | Source text |
+| HTML | `<strong>bold</strong>` | Markdown semantics |
 
 - [x] Native window and GPU drawing
 - [x] Paragraph optimization and English hyphenation
@@ -55,13 +56,21 @@ $$
 \underbrace{1+2+\cdots+n}_{n\text{ terms}} = \frac{n(n+1)}{2}
 $$
 
-脚注也是阅读的一部分。[^reading] 这里有一个裸链接：https://example.com，以及一个邮箱 reader@example.com。
+脚注也是阅读的一部分。[^reading] 这里有一个裸链接：https://example.com，以及一个邮箱 reader@example.com。链接可以直接点击：悬停时右下角显示目标地址，点击后在系统浏览器打开。
 
 [^reading]: 字体由系统提供。公式使用随应用附带的 KaTeX 字体，公式解析与排版由 Rust 实现的 RaTeX 完成。
 
 ---
 
-HTML is intentionally visible as source: <strong>not a browser</strong>.
+## HTML that reads like Markdown
+
+Simple HTML shares Markdown semantics: <strong>bold</strong>, <em>italic</em>, <del>struck</del>, <code>code</code> and <a href="https://example.com">links</a>. Attributes such as <b class="lead" style="color:red">class or style</b> are ignored, comments vanish<!-- never shown--> without leaving a gap, and unknown tags such as <span>stay as source</span>.
+
+<h2>A heading can be an HTML block</h2>
+
+<p>So can a <em>paragraph</em>, and the next line is a rule.</p>
+
+<hr>
 
 ![A landscape that is not loaded](landscape.png)
 

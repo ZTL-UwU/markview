@@ -13,6 +13,7 @@ comrak = { version = "0.55", default-features = false }
 hypher = { version = "0.1.7", default-features = false, features = ["english", "alloc"] }
 icu_segmenter = "2.3"
 notify = "8.2"
+open = "5.4"
 parley = { version = "0.11.1", features = ["complex-scripts"] }
 pollster = "0.4"
 ratex-parser = "=0.1.14"

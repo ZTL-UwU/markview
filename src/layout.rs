@@ -142,12 +142,20 @@ pub struct Overflow {
 	pub commands: Range<usize>,
 }
 
+/// One clickable link fragment, in block-local coordinates.
+#[derive(Clone, Debug)]
+pub struct LinkRect {
+	pub rect: Rect,
+	pub url: String,
+}
+
 #[derive(Debug, Default)]
 pub struct BlockLayout {
 	pub draws: Vec<Draw>,
 	pub height: f32,
 	pub width: f32,
 	pub overflow: Vec<Overflow>,
+	pub links: Vec<LinkRect>,
 	pub degraded: usize,
 	pub math_errors: usize,
 }
@@ -168,6 +176,45 @@ pub struct LayoutSnapshot {
 	pub reused: usize,
 	pub degraded: usize,
 	pub math_errors: usize,
+}
+
+impl LayoutSnapshot {
+	/// The link under a point in document coordinates: `x` from the column's
+	/// left edge, `y` from the top of the document including the scroll offset.
+	pub fn link_at(
+		&self,
+		x: f32,
+		y: f32,
+		horizontal: &HashMap<(usize, usize), f32>,
+	) -> Option<&str> {
+		for (bi, block) in self.blocks.iter().enumerate() {
+			let y = y - block.y;
+			if y < 0.0 || y > block.layout.height {
+				continue;
+			}
+			for link in &block.layout.links {
+				// Wide blocks scroll horizontally, so a link inside one moves.
+				let offset = block
+					.layout
+					.overflow
+					.iter()
+					.enumerate()
+					.find(|(_, o)| o.rect.contains(link.rect.x, link.rect.y))
+					.map(|(oi, _)| {
+						horizontal.get(&(bi, oi)).copied().unwrap_or(0.0)
+					})
+					.unwrap_or(0.0);
+				let rect = Rect {
+					x: link.rect.x - offset,
+					..link.rect
+				};
+				if rect.contains(x, y) {
+					return Some(&link.url);
+				}
+			}
+		}
+		None
+	}
 }
 
 #[derive(Clone)]
@@ -386,6 +433,54 @@ impl LayoutEngine {
 			cursor += c.width;
 		}
 		draws
+	}
+
+	/// Advance width of a UI label at `size`.
+	pub fn text_width(&mut self, text: &str, size: f32) -> f32 {
+		self.shape(text, &[], size, true)
+			.iter()
+			.map(|c| c.width)
+			.sum()
+	}
+
+	/// Shorten `text` to `max` width, keeping its start and end like a browser.
+	pub fn fit(&mut self, text: &str, size: f32, max: f32) -> String {
+		if self.text_width(text, size) <= max {
+			return text.to_string();
+		}
+		let chars: Vec<char> = text.chars().collect();
+		let tail = 16.min(chars.len() / 3);
+		let build = |head: usize| {
+			let mut out: String = chars[..head].iter().collect();
+			out.push('…');
+			out.extend(chars[chars.len() - tail..].iter());
+			out
+		};
+		let (mut lo, mut hi) = (0, chars.len() - tail);
+		while lo < hi {
+			let mid = (lo + hi).div_ceil(2);
+			if self.text_width(&build(mid), size) <= max {
+				lo = mid;
+			} else {
+				hi = mid - 1;
+			}
+		}
+		build(lo)
+	}
+
+	/// A right-aligned label, trimmed to `max` width.
+	pub fn right_label(
+		&mut self,
+		text: &str,
+		size: f32,
+		max: f32,
+		right: f32,
+		baseline: f32,
+		paint: Paint,
+	) -> Vec<Draw> {
+		let text = self.fit(text, size, max);
+		let width = self.text_width(&text, size);
+		self.label(&text, size, (right - width).max(0.0), baseline, paint)
 	}
 
 	fn prepare(
@@ -710,12 +805,31 @@ impl LayoutEngine {
 			};
 			let start_draw = out.draws.len();
 			let mut cursor = x + offset;
+			let mut link: Option<(String, f32)> = None;
 			for (c, flex) in clusters.into_iter().zip(flexibility) {
 				let style = p
 					.spans
 					.iter()
 					.find(|s| s.range.contains(&c.range.start))
 					.map(|s| &s.style);
+				let url = style.and_then(|s| s.link.as_deref());
+				// A link wraps as one run per line, so hit testing stays tight.
+				if link.as_ref().map(|(u, _)| u.as_str()) != url {
+					if let Some((url, x0)) = link.take() {
+						out.links.push(LinkRect {
+							rect: Rect {
+								x: x0,
+								y: baseline - ascent,
+								w: cursor - x0,
+								h: ascent + descent,
+							},
+							url,
+						});
+					}
+					if let Some(url) = url {
+						link = Some((url.to_string(), cursor));
+					}
+				}
 				if style.is_some_and(|s| s.code) {
 					out.draws.push(Draw::Rect(
 						Rect {
@@ -752,6 +866,17 @@ impl LayoutEngine {
 					));
 				}
 				cursor += c.width + flex * ratio;
+			}
+			if let Some((url, x0)) = link {
+				out.links.push(LinkRect {
+					rect: Rect {
+						x: x0,
+						y: baseline - ascent,
+						w: cursor - x0,
+						h: ascent + descent,
+					},
+					url,
+				});
 			}
 			if actual > width + 0.5 {
 				out.overflow.push(Overflow {
@@ -1293,6 +1418,65 @@ pub fn anchored_scroll(
 mod tests {
 	use super::*;
 	use crate::document;
+	#[test]
+	fn links_are_hit_testable_and_survive_reuse() {
+		let d = document::parse(
+			"See [the manual](https://example.com/manual) and [mail](mailto:a@b.example).\n",
+		);
+		let mut engine = LayoutEngine::new();
+		let opts = LayoutOptions {
+			width: 400.0,
+			..Default::default()
+		};
+		let snapshot = engine.layout(&d, &opts);
+		let block = &snapshot.blocks[0];
+		assert_eq!(block.layout.links.len(), 2);
+		assert_eq!(block.layout.links[0].url, "https://example.com/manual");
+		assert_eq!(block.layout.links[1].url, "mailto:a@b.example");
+		let hit = block.layout.links[0].rect;
+		let none = HashMap::new();
+		assert_eq!(
+			snapshot.link_at(hit.x + 1.0, block.y + hit.y + 1.0, &none),
+			Some("https://example.com/manual")
+		);
+		assert_eq!(
+			snapshot.link_at(hit.x - 6.0, block.y + hit.y + 1.0, &none),
+			None
+		);
+		assert_eq!(snapshot.link_at(hit.x + 1.0, block.y - 1.0, &none), None);
+		let again = engine.layout(&d, &opts);
+		assert_eq!(again.reused, 1);
+		assert_eq!(again.blocks[0].layout.links.len(), 2);
+	}
+	#[test]
+	fn wrapped_links_produce_one_rect_per_line() {
+		let d = document::parse(
+			"[an intentionally long linked phrase that wraps](https://example.com)\n",
+		);
+		let mut engine = LayoutEngine::new();
+		let opts = LayoutOptions {
+			width: 120.0,
+			..Default::default()
+		};
+		let snapshot = engine.layout(&d, &opts);
+		let links = &snapshot.blocks[0].layout.links;
+		assert!(links.len() > 1, "expected a wrapped link, got {links:?}");
+		assert!(links.iter().all(|l| l.url == "https://example.com"));
+		assert!(links.windows(2).all(|w| w[0].rect.y < w[1].rect.y));
+	}
+	#[test]
+	fn long_labels_are_trimmed_to_fit() {
+		let mut engine = LayoutEngine::new();
+		let short = "https://example.com";
+		assert_eq!(engine.fit(short, 11.0, 500.0), short);
+		let long = "https://example.com/a/very/long/path/that/keeps/going?with=query&more=1";
+		let fitted = engine.fit(long, 11.0, 160.0);
+		assert!(engine.text_width(&fitted, 11.0) <= 160.0);
+		let (head, tail) = fitted.split_once('…').expect("ellipsis");
+		assert!(long.starts_with(head) && long.ends_with(tail));
+		assert!(!head.is_empty() && !tail.is_empty());
+		assert!(fitted.chars().count() < long.chars().count());
+	}
 	#[test]
 	fn mixed_layout_is_finite_and_reused() {
 		let mut engine = LayoutEngine::new();

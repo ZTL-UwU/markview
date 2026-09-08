@@ -1,4 +1,5 @@
-//! Semantic Markdown; no HTML rendering or remote resource loading.
+//! Semantic Markdown; raw HTML is limited to a small supported subset.
+use crate::html;
 use comrak::{
 	Arena, Options,
 	nodes::{AstNode, ListType, NodeValue, TableAlignment},
@@ -140,50 +141,76 @@ impl Reader<'_> {
 		style: &TextStyle,
 		out: &mut RichText,
 	) {
+		// Raw HTML tags are siblings, so a supported tag opens a style scope
+		// that the matching closing tag ends; unsupported markup stays source.
+		let mut style = style.clone();
+		let mut scopes: Vec<(String, TextStyle)> = Vec::new();
 		for child in node.children() {
-			let mut style = style.clone();
+			let mut child_style = style.clone();
 			let value = child.data.borrow();
 			let kind = match &value.value {
 				NodeValue::Text(t) => Some(InlineKind::Text(t.to_string())),
 				NodeValue::SoftBreak => Some(InlineKind::Text(" ".into())),
 				NodeValue::LineBreak => Some(InlineKind::Text("\n".into())),
 				NodeValue::Code(c) => {
-					style.code = true;
+					child_style.code = true;
 					Some(InlineKind::Text(c.literal.clone()))
 				}
-				NodeValue::HtmlInline(t) | NodeValue::Raw(t) => {
-					style.code = true;
+				NodeValue::Raw(t) => {
+					child_style.code = true;
 					Some(InlineKind::Text(t.clone()))
 				}
+				NodeValue::HtmlInline(t) => match html::inline(t) {
+					html::Inline::Ignore => continue,
+					html::Inline::Break => Some(InlineKind::Text("\n".into())),
+					html::Inline::Open { name, patch } => {
+						scopes.push((name, style.clone()));
+						apply_patch(&patch, &mut style);
+						continue;
+					}
+					html::Inline::Close { name } => {
+						if let Some(i) =
+							scopes.iter().rposition(|(open, _)| *open == name)
+						{
+							style = scopes[i].1.clone();
+							scopes.truncate(i);
+						}
+						continue;
+					}
+					html::Inline::Literal => {
+						child_style.code = true;
+						Some(InlineKind::Text(t.clone()))
+					}
+				},
 				NodeValue::Math(m) => Some(InlineKind::Math {
 					latex: m.literal.clone(),
 					display: m.display_math,
 				}),
 				NodeValue::FootnoteReference(f) => {
-					style.superscript = true;
+					child_style.superscript = true;
 					Some(InlineKind::Text(format!("[{}]", f.ix)))
 				}
 				NodeValue::Strong => {
-					style.bold = true;
+					child_style.bold = true;
 					None
 				}
 				NodeValue::Emph => {
-					style.italic = true;
+					child_style.italic = true;
 					None
 				}
 				NodeValue::Strikethrough => {
-					style.strike = true;
+					child_style.strike = true;
 					None
 				}
 				NodeValue::Link(l) => {
-					style.link = Some(l.url.clone());
+					child_style.link = Some(l.url.clone());
 					None
 				}
 				NodeValue::Image(_) => {
 					let mut alt = Vec::new();
 					self.inlines(child, &TextStyle::default(), &mut alt);
 					let alt = plain_text(&alt);
-					style.italic = true;
+					child_style.italic = true;
 					Some(InlineKind::Text(format!(
 						"[Image: {}]",
 						if alt.is_empty() {
@@ -198,11 +225,11 @@ impl Reader<'_> {
 			if let Some(kind) = kind {
 				out.push(Inline {
 					kind,
-					style,
+					style: child_style,
 					source: self.range(child),
 				});
 			} else {
-				self.inlines(child, &style, out);
+				self.inlines(child, &child_style, out);
 			}
 		}
 	}
@@ -210,7 +237,7 @@ impl Reader<'_> {
 	fn rich<'a>(&self, node: &'a AstNode<'a>) -> RichText {
 		let mut text = Vec::new();
 		self.inlines(node, &TextStyle::default(), &mut text);
-		text
+		merge_text(text)
 	}
 
 	fn blocks<'a>(&self, node: &'a AstNode<'a>, depth: usize) -> Vec<Block> {
@@ -246,9 +273,22 @@ impl Reader<'_> {
 						language: c.info.clone(),
 						text: c.literal.clone(),
 					},
-					NodeValue::HtmlBlock(h) => BlockKind::Code {
-						language: "HTML source".into(),
-						text: h.literal.clone(),
+					NodeValue::HtmlBlock(h) => match html::block(&h.literal) {
+						html::Block::Unsupported => BlockKind::Code {
+							language: "HTML source".into(),
+							text: h.literal.clone(),
+						},
+						html::Block::Empty => continue,
+						html::Block::Rule => BlockKind::Rule,
+						html::Block::Heading { level, text } => {
+							BlockKind::Heading {
+								level,
+								text: html_rich(text, &source),
+							}
+						}
+						html::Block::Paragraph(text) => {
+							BlockKind::Paragraph(html_rich(text, &source))
+						}
 					},
 					NodeValue::ThematicBreak => BlockKind::Rule,
 					NodeValue::BlockQuote => BlockKind::Quote {
@@ -365,6 +405,81 @@ pub fn plain_text(text: &RichText) -> String {
 		.collect()
 }
 
+/// Only schemes the operating system can safely hand to a browser or mail
+/// client are ever opened; `file:`, `javascript:` and local paths are not.
+pub fn openable_link(url: &str) -> bool {
+	let Some((scheme, _)) = url.split_once(':') else {
+		return false;
+	};
+	matches!(
+		scheme.to_ascii_lowercase().as_str(),
+		"http" | "https" | "mailto"
+	)
+}
+
+fn apply_patch(patch: &html::Patch, style: &mut TextStyle) {
+	match patch {
+		html::Patch::Bold => style.bold = true,
+		html::Patch::Italic => style.italic = true,
+		html::Patch::Strike => style.strike = true,
+		html::Patch::Code => style.code = true,
+		html::Patch::Superscript => style.superscript = true,
+		html::Patch::Link(url) => style.link = Some(url.clone()),
+		html::Patch::None => {}
+	}
+}
+
+fn html_rich(spans: Vec<html::Span>, source: &Range<usize>) -> RichText {
+	spans
+		.into_iter()
+		.map(|span| {
+			let mut style = TextStyle::default();
+			for patch in &span.styles {
+				apply_patch(patch, &mut style);
+			}
+			Inline {
+				kind: InlineKind::Text(span.text),
+				style,
+				source: source.clone(),
+			}
+		})
+		.collect()
+}
+
+/// Merge neighboring runs that share a style so a dropped comment or tag does
+/// not leave a double space behind.
+fn merge_text(text: RichText) -> RichText {
+	let mut out: RichText = Vec::with_capacity(text.len());
+	for span in text {
+		let InlineKind::Text(t) = &span.kind else {
+			out.push(span);
+			continue;
+		};
+		let mut merged = false;
+		if let Some(last) = out.last_mut()
+			&& last.style == span.style
+			&& let InlineKind::Text(prev) = &mut last.kind
+		{
+			if prev.ends_with(char::is_whitespace)
+				&& t.starts_with(char::is_whitespace)
+			{
+				let len = prev.trim_end().len();
+				prev.truncate(len);
+				prev.push(' ');
+				prev.push_str(t.trim_start());
+			} else {
+				prev.push_str(t);
+			}
+			last.source.end = span.source.end;
+			merged = true;
+		}
+		if !merged {
+			out.push(span);
+		}
+	}
+	out
+}
+
 fn semantic_key(kind: &BlockKind) -> u64 {
 	let mut hash = DefaultHasher::new();
 	std::mem::discriminant(kind).hash(&mut hash);
@@ -439,7 +554,73 @@ mod tests {
 			p.iter()
 				.any(|s| s.style.link.as_deref() == Some("https://example.com"))
 		);
-		assert!(plain_text(p).contains("<b>raw</b>"));
+		assert!(p.iter().any(|s| s.style.bold
+			&& matches!(&s.kind, InlineKind::Text(t) if t == "raw")));
+	}
+	#[test]
+	fn html_comments_disappear_and_attributes_are_ignored() {
+		let doc = parse(
+			"A <!-- hidden --> B <b class=\"x\" style=\"y\">bold</b> <em>i</em> <del>d</del> <code>c</code> <sup>s</sup> <a href=\"/u\">l</a>.\n",
+		);
+		let BlockKind::Paragraph(p) = &doc.blocks[0].kind else {
+			panic!()
+		};
+		assert_eq!(plain_text(p), "A B bold i d c s l.");
+		let style = |text: &str| {
+			p.iter()
+				.find(|s| matches!(&s.kind, InlineKind::Text(t) if t == text))
+				.unwrap_or_else(|| panic!("missing {text}"))
+				.style
+				.clone()
+		};
+		assert!(style("bold").bold);
+		assert!(style("i").italic);
+		assert!(style("d").strike);
+		assert!(style("c").code);
+		assert!(style("s").superscript);
+		assert_eq!(style("l").link.as_deref(), Some("/u"));
+	}
+	#[test]
+	fn html_blocks_become_rule_heading_and_paragraph() {
+		let doc = parse(
+			"<h2>Title <em>here</em></h2>\n\n<hr>\n\n<p>Body</p>\n\n<!-- gone -->\n",
+		);
+		assert_eq!(doc.blocks.len(), 3);
+		let BlockKind::Heading { level, text } = &doc.blocks[0].kind else {
+			panic!()
+		};
+		assert_eq!(*level, 2);
+		assert_eq!(plain_text(text), "Title here");
+		assert!(text.iter().any(|s| s.style.italic));
+		assert!(matches!(doc.blocks[1].kind, BlockKind::Rule));
+		assert!(
+			matches!(&doc.blocks[2].kind, BlockKind::Paragraph(p) if plain_text(p) == "Body")
+		);
+	}
+	#[test]
+	fn unsupported_html_keeps_the_source() {
+		let doc = parse("<div class=\"x\">\n\nspan <span>s</span>\n");
+		assert!(matches!(
+			&doc.blocks[0].kind,
+			BlockKind::Code { language, text }
+				if language == "HTML source" && text.contains("div")
+		));
+		let BlockKind::Paragraph(p) = &doc.blocks[1].kind else {
+			panic!()
+		};
+		assert!(plain_text(p).contains("<span>s</span>"));
+	}
+	#[test]
+	fn only_safe_link_schemes_are_openable() {
+		assert!(openable_link("https://example.com/a?b=c#d"));
+		assert!(openable_link("HTTP://example.com"));
+		assert!(openable_link("mailto:reader@example.com"));
+		assert!(!openable_link("javascript:alert(1)"));
+		assert!(!openable_link("file:///etc/passwd"));
+		assert!(!openable_link("ftp://example.com"));
+		assert!(!openable_link("other.md"));
+		assert!(!openable_link("//example.com"));
+		assert!(!openable_link("#section"));
 	}
 	#[test]
 	fn identity_survives_insertion_and_ranges_are_utf8() {

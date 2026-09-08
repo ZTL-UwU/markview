@@ -20,7 +20,7 @@ use winit::{
 	event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
 	event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
 	keyboard::{Key, ModifiersState, NamedKey},
-	window::{Window, WindowId},
+	window::{CursorIcon, Window, WindowId},
 };
 
 const TOP: f32 = 58.0;
@@ -71,7 +71,7 @@ fn arguments() -> Result<Option<Args>> {
 		match text.as_ref() {
 			"-h" | "--help" => {
 				println!(
-					"Markview — native Markdown reading\n\nmarkview [FILE]\nmarkview --render FILE --output preview.png [--dark] [--scale 2]\nmarkview --bench FILE [--iterations 100] [--output metrics.json]\nmarkview --smoke-test FILE [--output window.png]\n\nOptions: --width N --height N --column N --font-size N --scroll N\n         --scale N --dark --light --left --no-hyphens --greedy\n\nKeyboard: Ctrl+O open · Ctrl+T theme · Ctrl+ +/- font size\n          Ctrl+[ / ] column width · Ctrl+L alignment · Ctrl+H hyphenation\n          arrows / PageUp / PageDown / Home / End scroll\n          Shift+wheel scroll wide blocks · Tab/Enter toolbar\n\n--render and --bench use the real GPU pipeline offscreen.\n--greedy is a typography comparison mode."
+					"Markview — native Markdown reading\n\nmarkview [FILE]\nmarkview --render FILE --output preview.png [--dark] [--scale 2]\nmarkview --bench FILE [--iterations 100] [--output metrics.json]\nmarkview --smoke-test FILE [--output window.png]\n\nOptions: --width N --height N --column N --font-size N --scroll N\n         --scale N --dark --light --left --no-hyphens --greedy\n\nKeyboard: Ctrl+O open · Ctrl+T theme · Ctrl+ +/- font size\n          Ctrl+[ / ] column width · Ctrl+L alignment · Ctrl+H hyphenation\n          arrows / PageUp / PageDown / Home / End scroll\n          Shift+wheel scroll wide blocks · Tab/Enter toolbar\n          click a link to open http, https or mailto in the system browser\n\n--render and --bench use the real GPU pipeline offscreen.\n--greedy is a typography comparison mode."
 				);
 				return Ok(None);
 			}
@@ -259,6 +259,7 @@ struct App {
 	horizontal: HashMap<(usize, usize), f32>,
 	modifiers: ModifiersState,
 	cursor: (f32, f32),
+	hover: Option<String>,
 	focus: Option<usize>,
 	status: String,
 	error: bool,
@@ -294,6 +295,7 @@ impl App {
 			horizontal: HashMap::new(),
 			modifiers: ModifiersState::empty(),
 			cursor: (0.0, 0.0),
+			hover: None,
 			focus: None,
 			status: "Read only · local files".into(),
 			error: false,
@@ -477,6 +479,48 @@ impl App {
 	fn scroll_by(&mut self, dy: f32) {
 		self.scroll = (self.scroll + dy)
 			.clamp(0.0, (self.snapshot.height - self.viewport()).max(0.0));
+		self.refresh_hover();
+		self.redraw();
+	}
+	/// The link under a window point, using the same origin as the renderer.
+	fn link_at(&self, px: f32, py: f32) -> Option<String> {
+		let left =
+			((self.dimensions().0 - self.snapshot.width) / 2.0).max(20.0);
+		self.snapshot
+			.link_at(px - left, py - TOP - 10.0 + self.scroll, &self.horizontal)
+			.map(str::to_string)
+	}
+	/// Hover state follows scrolling and reflow, not only pointer motion.
+	fn refresh_hover(&mut self) {
+		let hover = self.link_at(self.cursor.0, self.cursor.1);
+		if hover == self.hover {
+			return;
+		}
+		self.hover = hover;
+		if let Some(w) = &self.window {
+			w.set_cursor(if self.hover.is_some() {
+				CursorIcon::Pointer
+			} else {
+				CursorIcon::Default
+			});
+		}
+		self.redraw();
+	}
+	fn open_link(&mut self, url: &str) {
+		if !document::openable_link(url) {
+			self.error = true;
+			self.status =
+				format!("Not opened: {url} — only http, https and mailto");
+		} else {
+			self.error = false;
+			self.status = match open::that_detached(url) {
+				Ok(()) => format!("Opened {url}"),
+				Err(error) => {
+					self.error = true;
+					format!("Cannot open {url}: {error}")
+				}
+			};
+		}
 		self.redraw();
 	}
 	fn horizontal_by(&mut self, dx: f32) {
@@ -492,6 +536,7 @@ impl App {
 					let offset = self.horizontal.entry((bi, oi)).or_default();
 					*offset = (*offset + dx)
 						.clamp(0.0, (o.content_width - o.rect.w).max(0.0));
+					self.refresh_hover();
 					self.redraw();
 					return;
 				}
@@ -578,6 +623,17 @@ impl App {
 				Paint::Muted
 			},
 		));
+		// Like a browser, the hovered target appears at the bottom right.
+		if let Some(url) = self.hover.clone() {
+			out.extend(self.ui.right_label(
+				&url,
+				11.0,
+				(width * 0.6).max(120.0),
+				width - 20.0,
+				height - 10.0,
+				Paint::Muted,
+			));
+		}
 		if self.snapshot.blocks.is_empty() {
 			let x = ((width - 440.0) / 2.0).max(24.0);
 			let y = (height * 0.4).max(110.0);
@@ -805,6 +861,7 @@ impl ApplicationHandler<Event> for App {
 						self.snapshot = snapshot;
 						self.horizontal.clear();
 						self.error = false;
+						self.refresh_hover();
 						self.status = if self.snapshot.math_errors > 0 {
 							format!(
 								"Watching file · {} formulas shown as source",
@@ -884,9 +941,16 @@ impl ApplicationHandler<Event> for App {
 				let old = self.cursor;
 				self.cursor =
 					(position.x as f32 / scale, position.y as f32 / scale);
+				self.refresh_hover();
 				if old.1 < TOP || self.cursor.1 < TOP {
 					self.redraw();
 				}
+			}
+			WindowEvent::CursorLeft { .. } if self.hover.take().is_some() => {
+				if let Some(w) = &self.window {
+					w.set_cursor(CursorIcon::Default);
+				}
+				self.redraw();
 			}
 			WindowEvent::MouseInput {
 				button: MouseButton::Left,
@@ -899,6 +963,8 @@ impl ApplicationHandler<Event> for App {
 					}) {
 					self.focus = Some(i);
 					self.action(b.action);
+				} else if let Some(url) = self.hover.clone() {
+					self.open_link(&url);
 				} else {
 					self.focus = None;
 					let (_, h, _) = self.dimensions();

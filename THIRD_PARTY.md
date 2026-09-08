@@ -14,6 +14,7 @@ source and original license texts are available in Cargo's registry packages.
 | Swash | Glyph rasterization | Apache-2.0 OR MIT |
 | tiny-skia | Mathematical path rasterization | BSD-3-Clause |
 | notify | Filesystem observation | CC0-1.0 |
+| open | Opening links with the system browser | MIT |
 | rfd | Native file dialogs | MIT |
 
 KaTeX mathematical fonts are embedded by `ratex-katex-fonts`. Their SIL Open

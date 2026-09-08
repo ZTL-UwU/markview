@@ -1,0 +1,373 @@
+//! Parent-directory observation, bounded debouncing, and latest-request wins.
+use crate::{
+	document,
+	layout::{LayoutEngine, LayoutOptions, LayoutSnapshot},
+};
+use anyhow::{Context, Result, bail};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use std::{
+	fs,
+	io::Read,
+	path::{Path, PathBuf},
+	sync::{
+		Arc, Condvar, Mutex,
+		atomic::{AtomicBool, AtomicU64, Ordering},
+		mpsc,
+	},
+	thread,
+	time::{Duration, Instant, SystemTime},
+};
+
+pub const QUIET: Duration = Duration::from_millis(30);
+pub const MAX_WAIT: Duration = Duration::from_millis(100);
+pub const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
+
+#[derive(Default)]
+pub struct Debounce {
+	first: Option<Instant>,
+	last: Option<Instant>,
+}
+impl Debounce {
+	pub fn push(&mut self, now: Instant) {
+		self.first.get_or_insert(now);
+		self.last = Some(now);
+	}
+	pub fn deadline(&self) -> Option<Instant> {
+		Some((self.first? + MAX_WAIT).min(self.last? + QUIET))
+	}
+	pub fn take_due(&mut self, now: Instant) -> bool {
+		if self.deadline().is_some_and(|d| d <= now) {
+			*self = Self::default();
+			true
+		} else {
+			false
+		}
+	}
+}
+
+pub struct FileWatch {
+	_watcher: Option<RecommendedWatcher>,
+	stop: Arc<AtomicBool>,
+	thread: Option<thread::JoinHandle<()>>,
+	pub polling: bool,
+}
+impl FileWatch {
+	pub fn new(path: PathBuf, changed: impl Fn() + Send + 'static) -> Self {
+		let stop = Arc::new(AtomicBool::new(false));
+		let (tx, rx) = mpsc::sync_channel(64);
+		let target = path.clone();
+		let mut watcher = notify::recommended_watcher(
+			move |event: notify::Result<notify::Event>| {
+				if let Ok(event) = event {
+					if matches!(event.kind, notify::EventKind::Access(_)) {
+						return;
+					}
+					if event.paths.is_empty()
+						|| event.paths.iter().any(|p| {
+							p == &target || p.file_name() == target.file_name()
+						}) {
+						let _ = tx.try_send(());
+					}
+				} else {
+					let _ = tx.try_send(());
+				}
+			},
+		)
+		.ok();
+		if let Some(w) = &mut watcher
+			&& w.watch(
+				path.parent().unwrap_or(Path::new(".")),
+				RecursiveMode::NonRecursive,
+			)
+			.is_err()
+		{
+			watcher = None;
+		}
+		let polling = watcher.is_none();
+		let flag = stop.clone();
+		let handle = thread::spawn(move || {
+			let mut pending = Debounce::default();
+			let mut stamp = file_stamp(&path);
+			let mut poll_at = Instant::now() + Duration::from_millis(500);
+			while !flag.load(Ordering::Relaxed) {
+				let now = Instant::now();
+				let timeout = pending
+					.deadline()
+					.unwrap_or(poll_at)
+					.min(poll_at)
+					.saturating_duration_since(now)
+					.min(Duration::from_millis(100));
+				match rx.recv_timeout(timeout) {
+					Ok(()) => pending.push(Instant::now()),
+					Err(mpsc::RecvTimeoutError::Disconnected) if !polling => {
+						break;
+					}
+					Err(_) => {
+						if polling {
+							thread::sleep(timeout);
+						}
+					}
+				}
+				let now = Instant::now();
+				// A cheap metadata poll also recovers lost events on native watchers.
+				if now >= poll_at {
+					let next = file_stamp(&path);
+					if next != stamp {
+						pending.push(now);
+						stamp = next;
+					}
+					poll_at = now + Duration::from_millis(500);
+				}
+				if pending.take_due(now) {
+					stamp = file_stamp(&path);
+					changed();
+				}
+			}
+		});
+		Self {
+			_watcher: watcher,
+			stop,
+			thread: Some(handle),
+			polling,
+		}
+	}
+}
+impl Drop for FileWatch {
+	fn drop(&mut self) {
+		self.stop.store(true, Ordering::Relaxed);
+		if let Some(t) = self.thread.take() {
+			let _ = t.join();
+		}
+	}
+}
+
+fn file_stamp(path: &Path) -> Option<(u64, Option<SystemTime>)> {
+	fs::metadata(path)
+		.ok()
+		.map(|m| (m.len(), m.modified().ok()))
+}
+
+pub fn read_document(path: &Path) -> Result<String> {
+	let mut file = fs::File::open(path)
+		.with_context(|| format!("Cannot open {}", path.display()))?;
+	let before = file.metadata()?;
+	if !before.is_file() {
+		bail!("Not a regular file: {}", path.display());
+	}
+	if before.len() > MAX_FILE_BYTES {
+		bail!("MVP file size limit is 32 MiB");
+	}
+	let mut bytes = Vec::with_capacity(before.len() as usize);
+	Read::by_ref(&mut file)
+		.take(MAX_FILE_BYTES + 1)
+		.read_to_end(&mut bytes)?;
+	if bytes.len() as u64 > MAX_FILE_BYTES {
+		bail!("MVP file size limit is 32 MiB");
+	}
+	let after = file.metadata()?;
+	if before.len() != after.len()
+		|| before.modified().ok() != after.modified().ok()
+	{
+		bail!("File is still being written; waiting for the next update");
+	}
+	let text = String::from_utf8(bytes)
+		.context("File is not complete UTF-8; waiting for a valid update")?;
+	Ok(text.trim_start_matches('\u{feff}').to_string())
+}
+
+pub struct Request {
+	pub version: u64,
+	pub path: PathBuf,
+	pub options: LayoutOptions,
+	pub requested: Instant,
+}
+pub struct Update {
+	pub version: u64,
+	pub path: PathBuf,
+	pub result: Result<LayoutSnapshot, String>,
+	pub requested: Instant,
+	pub read_ms: f64,
+	pub parse_ms: f64,
+	pub layout_ms: f64,
+}
+
+struct Inbox {
+	pending: Option<Request>,
+	stopped: bool,
+}
+pub struct Worker {
+	inbox: Arc<(Mutex<Inbox>, Condvar)>,
+	version: Arc<AtomicU64>,
+	handle: Option<thread::JoinHandle<()>>,
+}
+impl Worker {
+	pub fn new(done: impl Fn(Update) + Send + 'static) -> Self {
+		let inbox = Arc::new((
+			Mutex::new(Inbox {
+				pending: None,
+				stopped: false,
+			}),
+			Condvar::new(),
+		));
+		let thread_inbox = inbox.clone();
+		let version = Arc::new(AtomicU64::new(0));
+		let current = version.clone();
+		let handle = thread::Builder::new()
+			.name("markview-layout".into())
+			.stack_size(8 * 1024 * 1024)
+			.spawn(move || {
+				let mut engine = LayoutEngine::new();
+				loop {
+					let request = {
+						let (lock, wake) = &*thread_inbox;
+						let mut inbox = lock.lock().unwrap();
+						while inbox.pending.is_none() && !inbox.stopped {
+							inbox = wake.wait(inbox).unwrap();
+						}
+						if inbox.stopped {
+							break;
+						}
+						inbox.pending.take().unwrap()
+					};
+					let mut update = Update {
+						version: request.version,
+						path: request.path.clone(),
+						requested: request.requested,
+						result: Err(String::new()),
+						read_ms: 0.0,
+						parse_ms: 0.0,
+						layout_ms: 0.0,
+					};
+					let start = Instant::now();
+					update.result = match read_document(&request.path) {
+						Err(e) => Err(format!("{e:#}")),
+						Ok(text) => {
+							update.read_ms =
+								start.elapsed().as_secs_f64() * 1000.0;
+							if current.load(Ordering::Relaxed)
+								!= request.version
+							{
+								continue;
+							}
+							let start = Instant::now();
+							let document = document::parse(text);
+							update.parse_ms =
+								start.elapsed().as_secs_f64() * 1000.0;
+							if current.load(Ordering::Relaxed)
+								!= request.version
+							{
+								continue;
+							}
+							let start = Instant::now();
+							let snapshot =
+								engine.layout(&document, &request.options);
+							update.layout_ms =
+								start.elapsed().as_secs_f64() * 1000.0;
+							Ok(snapshot)
+						}
+					};
+					if current.load(Ordering::Relaxed) == request.version {
+						done(update);
+					}
+				}
+			})
+			.expect("start layout worker");
+		Self {
+			inbox,
+			version,
+			handle: Some(handle),
+		}
+	}
+	pub fn submit(&self, request: Request) {
+		self.version.store(request.version, Ordering::Relaxed);
+		let (lock, wake) = &*self.inbox;
+		lock.lock().unwrap().pending = Some(request);
+		wake.notify_one();
+	}
+}
+impl Drop for Worker {
+	fn drop(&mut self) {
+		let (lock, wake) = &*self.inbox;
+		lock.lock().unwrap().stopped = true;
+		wake.notify_one();
+		if let Some(t) = self.handle.take() {
+			let _ = t.join();
+		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	#[test]
+	fn continuous_events_have_a_deadline() {
+		let start = Instant::now();
+		let mut d = Debounce::default();
+		for ms in [0, 20, 40, 60, 80, 95] {
+			d.push(start + Duration::from_millis(ms));
+		}
+		assert_eq!(d.deadline(), Some(start + MAX_WAIT));
+		assert!(d.take_due(start + MAX_WAIT));
+		assert_eq!(d.deadline(), None);
+	}
+	#[test]
+	fn atomic_replace_and_recreate_are_observed() {
+		let dir = tempfile::tempdir().unwrap();
+		let path = dir.path().join("read.md");
+		fs::write(&path, "first").unwrap();
+		let (tx, rx) = mpsc::channel();
+		let _watch = FileWatch::new(path.clone(), move || {
+			let _ = tx.send(());
+		});
+		let tmp = dir.path().join("save.tmp");
+		fs::write(&tmp, "second").unwrap();
+		fs::rename(&tmp, &path).unwrap();
+		rx.recv_timeout(Duration::from_secs(3)).unwrap();
+		assert_eq!(read_document(&path).unwrap(), "second");
+		while rx.try_recv().is_ok() {}
+		fs::remove_file(&path).unwrap();
+		fs::write(&path, "third").unwrap();
+		rx.recv_timeout(Duration::from_secs(3)).unwrap();
+		assert_eq!(read_document(&path).unwrap(), "third");
+	}
+	#[test]
+	fn empty_and_partial_utf8_reads_have_explicit_results() {
+		let dir = tempfile::tempdir().unwrap();
+		let path = dir.path().join("read.md");
+		fs::write(&path, [0xe4, 0xb8]).unwrap();
+		assert!(read_document(&path).is_err());
+		fs::write(&path, "").unwrap();
+		assert_eq!(read_document(&path).unwrap(), "");
+		fs::write(&path, "\u{feff}中文").unwrap();
+		assert_eq!(read_document(&path).unwrap(), "中文");
+	}
+	#[test]
+	fn worker_publishes_latest_request() {
+		let dir = tempfile::tempdir().unwrap();
+		let path = dir.path().join("read.md");
+		fs::write(&path, "A paragraph.").unwrap();
+		let (tx, rx) = mpsc::channel();
+		let worker = Worker::new(move |u| {
+			let _ = tx.send(u);
+		});
+		for version in 1..=20 {
+			worker.submit(Request {
+				version,
+				path: path.clone(),
+				options: LayoutOptions {
+					width: 250.0 + version as f32,
+					..Default::default()
+				},
+				requested: Instant::now(),
+			});
+		}
+		loop {
+			let update = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+			if update.version == 20 {
+				assert_eq!(update.result.unwrap().width, 270.0);
+				break;
+			}
+		}
+		assert!(rx.recv_timeout(Duration::from_millis(100)).is_err());
+	}
+}

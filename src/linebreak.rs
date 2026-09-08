@@ -1,0 +1,409 @@
+//! Bounded Knuth–Plass: boxes, stretchable glue, penalties and fitness classes.
+//! Widths are shaped advances, never estimates from Unicode character counts.
+use std::ops::Range;
+
+#[derive(Clone, Copy, Debug)]
+pub struct Break {
+	pub penalty: f64,
+	pub hyphen_width: f32,
+	pub forced: bool,
+}
+impl Break {
+	pub const NORMAL: Self = Self {
+		penalty: 0.0,
+		hyphen_width: 0.0,
+		forced: false,
+	};
+	pub const FORCED: Self = Self {
+		forced: true,
+		..Self::NORMAL
+	};
+}
+
+#[derive(Clone, Debug)]
+pub struct Unit {
+	pub source: Range<usize>,
+	pub width: f32,
+	pub stretch: f32,
+	pub shrink: f32,
+	pub discard: bool,
+	pub after: Option<Break>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Line {
+	pub units: Range<usize>,
+	pub width: f32,
+	pub ratio: f32,
+	pub hyphen: bool,
+	pub last: bool,
+}
+
+#[derive(Default, Debug)]
+pub struct Solution {
+	pub lines: Vec<Line>,
+	pub demerits: f64,
+	pub degraded: bool,
+	pub evaluations: usize,
+}
+
+const BUDGET: usize = 250_000;
+const INF: f64 = f64::INFINITY;
+
+#[derive(Clone, Copy)]
+struct State {
+	cost: f64,
+	previous: (usize, usize),
+}
+const EMPTY: State = State {
+	cost: INF,
+	previous: (0, 0),
+};
+
+struct Prefix {
+	width: Vec<f32>,
+	stretch: Vec<f32>,
+	shrink: Vec<f32>,
+}
+impl Prefix {
+	fn new(units: &[Unit]) -> Self {
+		let mut p = Self {
+			width: vec![0.0],
+			stretch: vec![0.0],
+			shrink: vec![0.0],
+		};
+		for u in units {
+			p.width.push(p.width.last().unwrap() + u.width);
+			p.stretch.push(p.stretch.last().unwrap() + u.stretch);
+			p.shrink.push(p.shrink.last().unwrap() + u.shrink);
+		}
+		p
+	}
+	fn metrics(
+		&self,
+		units: &[Unit],
+		mut start: usize,
+		mut end: usize,
+	) -> (Range<usize>, f32, f32, f32) {
+		while start < end && units[start].discard {
+			start += 1;
+		}
+		while end > start && units[end - 1].discard {
+			end -= 1;
+		}
+		let mut stretch = self.stretch[end] - self.stretch[start];
+		let mut shrink = self.shrink[end] - self.shrink[start];
+		// Inter-character glue belongs between characters, not after the line.
+		if end > start && !units[end - 1].discard {
+			stretch -= units[end - 1].stretch;
+			shrink -= units[end - 1].shrink;
+		}
+		(
+			start..end,
+			self.width[end] - self.width[start],
+			stretch.max(0.0),
+			shrink.max(0.0),
+		)
+	}
+}
+
+fn line_score(
+	width: f32,
+	stretch: f32,
+	shrink: f32,
+	target: f32,
+	last: bool,
+	justified: bool,
+	emergency: bool,
+) -> Option<(f32, usize, f64)> {
+	let delta = target - width;
+	if last && delta >= -0.01 {
+		return Some((0.0, 1, 0.0));
+	}
+	if !justified {
+		if delta < -0.01 {
+			return None;
+		}
+		let r = delta / target.max(1.0);
+		return Some((0.0, 1, (10.0 + 100.0 * (r as f64).powi(2)).powi(2)));
+	}
+	let available = if delta < 0.0 {
+		shrink
+	} else {
+		stretch + if emergency { target * 0.15 } else { 0.0 }
+	};
+	let ratio = if delta.abs() < 0.01 {
+		0.0
+	} else if available > 0.0 {
+		delta / available
+	} else {
+		return None;
+	};
+	if !(-1.0..=3.0).contains(&ratio) {
+		return None;
+	}
+	let fitness = if ratio < -0.5 {
+		0
+	} else if ratio <= 0.5 {
+		1
+	} else if ratio <= 1.0 {
+		2
+	} else {
+		3
+	};
+	let badness = 100.0 * (ratio.abs() as f64).powi(3);
+	Some((ratio, fitness, (10.0 + badness).powi(2)))
+}
+
+fn optimize(
+	units: &[Unit],
+	target: f32,
+	justified: bool,
+	emergency: bool,
+	budget: &mut usize,
+) -> Option<Solution> {
+	let p = Prefix::new(units);
+	let mut points = vec![0];
+	points.extend(
+		units
+			.iter()
+			.enumerate()
+			.filter_map(|(i, u)| u.after.map(|_| i + 1)),
+	);
+	if *points.last()? != units.len() {
+		points.push(units.len());
+	}
+	let mut states = vec![[EMPTY; 4]; points.len()];
+	states[0][1].cost = 0.0;
+	let mut earliest = 0;
+	for j in 1..points.len() {
+		let end = points[j];
+		let br = units[end - 1].after.unwrap_or(Break::FORCED);
+		let last = end == units.len() || br.forced;
+		for i in (earliest..j).rev() {
+			*budget += 1;
+			if *budget > BUDGET {
+				return None;
+			}
+			let (range, natural, stretch, shrink) =
+				p.metrics(units, points[i], end);
+			let width = natural + if last { 0.0 } else { br.hyphen_width };
+			if width - shrink > target + 0.01 && !range.is_empty() {
+				break;
+			}
+			if range.is_empty() && !last {
+				continue;
+			}
+			let Some((_, fitness, cost)) = line_score(
+				width, stretch, shrink, target, last, justified, emergency,
+			) else {
+				continue;
+			};
+			let penalty = if br.penalty >= 0.0 {
+				br.penalty.powi(2)
+			} else {
+				-br.penalty.powi(2)
+			};
+			let flagged = br.hyphen_width > 0.0;
+			let previous_flagged = points[i] > 0
+				&& units[points[i] - 1]
+					.after
+					.is_some_and(|b| b.hyphen_width > 0.0);
+			for f in 0..4 {
+				let adjacent =
+					if fitness.abs_diff(f) > 1 { 3000.0 } else { 0.0 };
+				let consecutive = if flagged && previous_flagged {
+					5000.0
+				} else {
+					0.0
+				};
+				let total =
+					states[i][f].cost + cost + penalty + adjacent + consecutive;
+				if total < states[j][fitness].cost {
+					states[j][fitness] = State {
+						cost: total,
+						previous: (i, f),
+					};
+				}
+			}
+		}
+		if br.forced {
+			earliest = j;
+		}
+	}
+	let end = points.len() - 1;
+	let fitness = (0..4)
+		.min_by(|&a, &b| states[end][a].cost.total_cmp(&states[end][b].cost))?;
+	if !states[end][fitness].cost.is_finite() {
+		return None;
+	}
+	let mut result = Solution {
+		demerits: states[end][fitness].cost,
+		evaluations: *budget,
+		..Default::default()
+	};
+	let (mut j, mut f) = (end, fitness);
+	while j > 0 {
+		let (i, previous_f) = states[j][f].previous;
+		let br = units[points[j] - 1].after.unwrap_or(Break::FORCED);
+		let last = points[j] == units.len() || br.forced;
+		let (range, width, stretch, shrink) =
+			p.metrics(units, points[i], points[j]);
+		let hyphen = !last && br.hyphen_width > 0.0;
+		let width = width + if hyphen { br.hyphen_width } else { 0.0 };
+		let (ratio, _, _) = line_score(
+			width, stretch, shrink, target, last, justified, emergency,
+		)?;
+		result.lines.push(Line {
+			units: range,
+			width,
+			ratio,
+			hyphen,
+			last,
+		});
+		(j, f) = (i, previous_f);
+	}
+	result.lines.reverse();
+	Some(result)
+}
+
+/// Greedy fallback observes legal boundaries; an unbreakable box may overflow.
+pub fn greedy(units: &[Unit], target: f32) -> Solution {
+	let p = Prefix::new(units);
+	let mut result = Solution {
+		degraded: true,
+		..Default::default()
+	};
+	let mut start = 0;
+	while start < units.len() {
+		let mut best = None;
+		for end in start + 1..=units.len() {
+			let br = units[end - 1]
+				.after
+				.or_else(|| (end == units.len()).then_some(Break::FORCED));
+			let Some(br) = br else {
+				continue;
+			};
+			let (range, width, _, _) = p.metrics(units, start, end);
+			let last = br.forced || end == units.len();
+			let width = width + if last { 0.0 } else { br.hyphen_width };
+			if width > target && best.is_some() {
+				break;
+			}
+			best = Some((
+				end,
+				Line {
+					units: range,
+					width,
+					ratio: 0.0,
+					hyphen: !last && br.hyphen_width > 0.0,
+					last,
+				},
+			));
+			if last || width > target {
+				break;
+			}
+		}
+		let (end, line) = best.expect("end of paragraph is a breakpoint");
+		result.lines.push(line);
+		start = end;
+	}
+	result
+}
+
+pub fn break_lines(units: &[Unit], target: f32, justified: bool) -> Solution {
+	if units.is_empty() {
+		return Solution::default();
+	}
+	let target = target.max(1.0);
+	let mut budget = 0;
+	if let Some(s) = optimize(units, target, justified, false, &mut budget) {
+		return s;
+	}
+	if budget <= BUDGET
+		&& let Some(s) = optimize(units, target, justified, true, &mut budget)
+	{
+		return s;
+	}
+	let mut s = greedy(units, target);
+	s.evaluations = budget;
+	s
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	fn words(widths: &[f32]) -> Vec<Unit> {
+		let mut units = Vec::new();
+		for &width in widths {
+			units.push(Unit {
+				source: 0..1,
+				width,
+				stretch: 0.0,
+				shrink: 0.0,
+				discard: false,
+				after: None,
+			});
+			units.push(Unit {
+				source: 1..2,
+				width: 3.0,
+				stretch: 2.0,
+				shrink: 1.0,
+				discard: true,
+				after: Some(Break::NORMAL),
+			});
+		}
+		units.last_mut().unwrap().after = Some(Break::FORCED);
+		units
+	}
+	#[test]
+	fn forced_breaks_are_not_skipped() {
+		let mut u = words(&[12.0; 8]);
+		u[3].after = Some(Break::FORCED);
+		let s = break_lines(&u, 100.0, true);
+		assert_eq!(s.lines[0].units, 0..3);
+		assert_eq!(s.lines.len(), 2);
+		assert!(s.lines.iter().all(|l| l.last && l.ratio == 0.0));
+	}
+	#[test]
+	fn optimal_raggedness_matches_exhaustive_partitions() {
+		let u = words(&[13.0, 9.0, 18.0, 7.0, 14.0, 11.0]);
+		let target = 40.0;
+		let p = Prefix::new(&u);
+		let mut best = INF;
+		for mask in 0..(1 << 5) {
+			let mut start = 0;
+			let mut cost = 0.0;
+			for word in 0..6 {
+				if word != 5 && mask & (1 << word) == 0 {
+					continue;
+				}
+				let end = (word + 1) * 2;
+				let (_, w, stretch, shrink) = p.metrics(&u, start, end);
+				cost += line_score(
+					w,
+					stretch,
+					shrink,
+					target,
+					word == 5,
+					false,
+					false,
+				)
+				.map_or(INF, |s| s.2);
+				start = end;
+			}
+			best = best.min(cost);
+		}
+		let actual = break_lines(&u, target, false);
+		assert!(!actual.degraded);
+		assert!((actual.demerits - best).abs() < 0.001);
+	}
+	#[test]
+	fn unbreakable_box_overflows_without_losing_content() {
+		let u = words(&[500.0, 10.0]);
+		let s = break_lines(&u, 50.0, true);
+		assert!(s.degraded);
+		assert_eq!(s.lines[0].units, 0..1);
+		assert_eq!(s.lines[1].units, 2..3);
+	}
+}

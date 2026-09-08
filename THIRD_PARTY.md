@@ -1,0 +1,27 @@
+# Third-party components
+
+The application depends on the versions pinned in `Cargo.lock`. Dependency
+source and original license texts are available in Cargo's registry packages.
+
+| Component | Role | License |
+| --- | --- | --- |
+| winit, wgpu | Native windows and GPU rendering | Apache-2.0 OR MIT |
+| Comrak | CommonMark and GFM parser | BSD-2-Clause |
+| Parley / Fontique | Shaping, font matching and Unicode analysis | Apache-2.0 OR MIT |
+| ICU4X | Unicode segmentation | Unicode-3.0 |
+| hypher | English hyphenation patterns | MIT OR Apache-2.0 |
+| RaTeX | LaTeX mathematics parsing and layout | MIT |
+| Swash | Glyph rasterization | Apache-2.0 OR MIT |
+| tiny-skia | Mathematical path rasterization | BSD-3-Clause |
+| notify | Filesystem observation | CC0-1.0 |
+| rfd | Native file dialogs | MIT |
+
+KaTeX mathematical fonts are embedded by `ratex-katex-fonts`. Their SIL Open
+Font License is reproduced in `licenses/KaTeX-OFL.txt`; keep that file with
+redistributed binaries. Markview does not bundle the JavaScript KaTeX runtime.
+Body/UI fonts are discovered from the operating system and are not distributed
+with this repository.
+
+Before packaging a release, include notices for the complete dependency tree,
+not only this architectural summary. `cargo metadata --locked` records that
+tree and each crate's declared license.

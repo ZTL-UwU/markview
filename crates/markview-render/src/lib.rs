@@ -41,6 +41,9 @@ pub enum Theme {
 impl Theme {
 	pub fn color(self, p: Paint) -> [f32; 4] {
 		let rgb = match (self, p) {
+			(Self::Light, Paint::Glass) => 0xf3f6f9,
+			(Self::Dark, Paint::Glass) => 0x252e38,
+			(_, Paint::Scrim | Paint::Shadow) => 0x101923,
 			(Self::Light, Paint::Text) => 0x262b30,
 			(Self::Light, Paint::Muted) => 0x69747e,
 			(Self::Light, Paint::Accent) => 0x315d86,
@@ -60,7 +63,12 @@ impl Theme {
 			((rgb >> 16) & 255) as f32 / 255.0,
 			((rgb >> 8) & 255) as f32 / 255.0,
 			(rgb & 255) as f32 / 255.0,
-			1.0,
+			match p {
+				Paint::Glass => 0.94,
+				Paint::Scrim => 0.24,
+				Paint::Shadow => 0.18,
+				_ => 1.0,
+			},
 		]
 	}
 }

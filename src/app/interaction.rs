@@ -3,6 +3,27 @@ use super::*;
 impl App {
 	pub(super) fn action(&mut self, action: Command) {
 		match action {
+			Command::OpenConfig => {
+				let result = self.settings_store.ensure_file().and_then(|()| {
+					open::that_detached(self.settings_store.path().unwrap())
+						.map_err(Into::into)
+				});
+				if let Err(error) = result {
+					self.settings_warning =
+						Some(format!("Cannot open settings: {error}"));
+				}
+				self.redraw();
+				return;
+			}
+			Command::SystemTheme => {
+				self.args.overrides.retain(|f| *f != Setting::Theme);
+				self.args.theme = None;
+				self.settings_store.follow_system();
+				self.apply_saved_settings();
+				self.save_at =
+					Some(Instant::now() + Duration::from_millis(250));
+				return;
+			}
 			Command::Settings => {
 				self.interaction.panel_open = !self.interaction.panel_open;
 				self.interaction.pointer_down = None;
@@ -81,6 +102,12 @@ impl App {
 		self.redraw();
 	}
 	pub(super) fn setting_changed(&mut self, field: Option<Setting>) {
+		self.args
+			.overrides
+			.retain(|f| field.is_some_and(|changed| changed != *f));
+		if field.is_none() || field == Some(Setting::Theme) {
+			self.args.theme = None;
+		}
 		if self.args.mode == Mode::Window {
 			self.settings_store.changed(&self.settings, field);
 			self.save_at = Some(Instant::now() + Duration::from_millis(250));
@@ -97,6 +124,23 @@ impl App {
 			&self.session.horizontal,
 			self.session.accepted_revision,
 		)
+	}
+
+	pub(super) fn text_under_cursor(&self) -> bool {
+		let geometry = self.view_geometry();
+		if !geometry
+			.clip()
+			.contains(self.interaction.cursor.0, self.interaction.cursor.1)
+		{
+			return false;
+		}
+		let (x, y) = geometry.document_point(
+			self.interaction.cursor.0,
+			self.interaction.cursor.1,
+		);
+		self.session
+			.snapshot
+			.contains_text(x, y, &self.session.horizontal)
 	}
 
 	pub(super) fn update_drag(&mut self) {
@@ -146,11 +190,37 @@ impl App {
 	pub(super) fn flush_settings(&mut self) {
 		self.save_at = None;
 		match self.settings_store.flush() {
-			Ok(()) => self.settings_warning = None,
+			Ok(()) => {
+				self.settings_warning = None;
+				if self.args.mode == Mode::Window {
+					self.apply_saved_settings();
+				}
+			}
 			Err(e) => {
 				self.settings_warning =
 					Some(format!("Cannot save settings: {e}"))
 			}
+		}
+	}
+	pub(super) fn apply_saved_settings(&mut self) {
+		let previous = self.settings.clone();
+		let options = self.options();
+		self.settings = self.settings_store.settings();
+		if self.settings_store.theme_preference().is_none() {
+			self.settings.theme = self
+				.window
+				.as_ref()
+				.and_then(|w| system_theme(w))
+				.unwrap_or_default();
+		}
+		for field in &self.args.overrides {
+			self.settings.copy_field(&previous, *field);
+		}
+		if self.options() != options {
+			self.request(false);
+		}
+		if self.settings != previous {
+			self.redraw();
 		}
 	}
 }

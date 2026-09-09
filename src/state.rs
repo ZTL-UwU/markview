@@ -18,6 +18,8 @@ pub(crate) enum Command {
 	Hyphens,
 	Settings,
 	Reset,
+	OpenConfig,
+	SystemTheme,
 }
 
 #[derive(Default)]

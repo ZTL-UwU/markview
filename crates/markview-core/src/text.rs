@@ -176,6 +176,35 @@ impl LayoutSnapshot {
 		}
 		best
 	}
+	/// Returns whether a point is inside the laid-out bounds of a text cluster.
+	/// Unlike `hit_test_text`, this does not snap through line spacing to the
+	/// nearest cluster.
+	pub fn contains_text(
+		&self,
+		x: f32,
+		y: f32,
+		horizontal: &HashMap<(usize, usize), f32>,
+	) -> bool {
+		let start = self
+			.blocks
+			.partition_point(|block| block.y + block.layout.height < y)
+			.saturating_sub(1);
+		self.blocks
+			.iter()
+			.enumerate()
+			.skip(start)
+			.any(|(bi, block)| {
+				if block.y > y {
+					return false;
+				}
+				block.layout.text.iter().any(|node| {
+					node.clusters.iter().any(|cluster| {
+						self.text_rect(bi, cluster, horizontal)
+							.is_some_and(|rect| rect.contains(x, y))
+					})
+				})
+			})
+	}
 	fn text_rect(
 		&self,
 		bi: usize,

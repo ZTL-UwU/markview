@@ -39,6 +39,7 @@ pub fn run() -> Result<()> {
 enum Event {
 	Ready(Box<Update>),
 	Changed(PathBuf),
+	SettingsChanged,
 	Open(Option<PathBuf>),
 	DeviceLost,
 }
@@ -65,6 +66,7 @@ struct App {
 	renderer: Option<Renderer>,
 	worker: Worker,
 	watch: Option<FileWatch>,
+	_settings_watch: Option<FileWatch>,
 	ui: TextShaper,
 	settings: ReaderSettings,
 	settings_store: SettingsStore,
@@ -86,12 +88,25 @@ impl App {
 		let worker = Worker::new(move |update| {
 			let _ = done.send_event(Event::Ready(Box::new(update)));
 		});
-		let (settings_store, settings_warning) =
+		let (mut settings_store, mut settings_warning) =
 			SettingsStore::load(if args.mode == Mode::Window {
 				crate::settings::config_path()
 			} else {
 				None
 			});
+		if args.mode == Mode::Window
+			&& settings_store.path().is_some()
+			&& let Err(error) = settings_store.ensure_file()
+		{
+			settings_warning =
+				Some(format!("Cannot initialize settings: {error}"));
+		}
+		let settings_watch = settings_store.path().map(|path| {
+			let proxy = proxy.clone();
+			FileWatch::new(path.to_path_buf(), move || {
+				let _ = proxy.send_event(Event::SettingsChanged);
+			})
+		});
 		let mut settings = settings_store.settings();
 		let explicit = ReaderSettings {
 			theme: args.theme.unwrap_or_default(),
@@ -112,6 +127,7 @@ impl App {
 			renderer: None,
 			worker,
 			watch: None,
+			_settings_watch: settings_watch,
 			ui: TextShaper::new(),
 			settings,
 			settings_store,
@@ -201,7 +217,7 @@ impl App {
 				.contains(self.interaction.cursor.0, self.interaction.cursor.1)
 	}
 	fn panel_has_focus(&self) -> bool {
-		self.interaction.panel_open && self.interaction.focus.is_some()
+		self.interaction.panel_open
 	}
 	fn scroll_by(&mut self, dy: f32) {
 		self.session.scroll = (self.session.scroll + dy).clamp(
@@ -223,28 +239,44 @@ impl App {
 			.link_at(x, y, &self.session.horizontal)
 			.map(str::to_string)
 	}
+	fn button_at_cursor(&self) -> bool {
+		self.buttons().into_iter().any(|button| {
+			button
+				.rect
+				.contains(self.interaction.cursor.0, self.interaction.cursor.1)
+		})
+	}
 
 	/// Hover state follows scrolling and reflow, not only pointer motion.
 	fn refresh_hover(&mut self) {
-		let hover = if self.pointer_in_panel()
+		let hover = if self.interaction.panel_open
 			|| self.interaction.pointer_down.is_some()
 		{
 			None
 		} else {
 			self.link_at(self.interaction.cursor.0, self.interaction.cursor.1)
 		};
-		if hover == self.interaction.hover {
-			return;
-		}
-		self.interaction.hover = hover;
-		if let Some(w) = &self.window {
-			w.set_cursor(if self.interaction.hover.is_some() {
-				CursorIcon::Pointer
+		let cursor = if self.interaction.pointer_down.is_some() {
+			if self.text_under_cursor() {
+				CursorIcon::Text
 			} else {
 				CursorIcon::Default
-			});
+			}
+		} else if self.button_at_cursor() || hover.is_some() {
+			CursorIcon::Pointer
+		} else if !self.interaction.panel_open && self.text_under_cursor() {
+			CursorIcon::Text
+		} else {
+			CursorIcon::Default
+		};
+		let hover_changed = hover != self.interaction.hover;
+		self.interaction.hover = hover;
+		if let Some(w) = &self.window {
+			w.set_cursor(cursor);
 		}
-		self.redraw();
+		if hover_changed {
+			self.redraw();
+		}
 	}
 	fn open_link(&mut self, url: &str) {
 		if !document::openable_link(url) {
@@ -426,6 +458,23 @@ impl ApplicationHandler<Event> for App {
 	}
 	fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Event) {
 		match event {
+			Event::SettingsChanged => {
+				match self.settings_store.reload() {
+					Ok(_) => {
+						self.settings_warning = None;
+						self.apply_saved_settings();
+						if self.settings_store.has_pending_changes() {
+							self.save_at = Some(
+								Instant::now() + Duration::from_millis(250),
+							);
+						}
+					}
+					Err(error) => {
+						self.settings_warning = Some(format!("{error:#}"))
+					}
+				}
+				self.redraw();
+			}
 			Event::Open(path) => {
 				self.dialog_open = false;
 				if let Some(path) = path {
@@ -521,6 +570,9 @@ impl ApplicationHandler<Event> for App {
 				self.redraw();
 			}
 			WindowEvent::Occluded(false) => self.redraw(),
+			WindowEvent::ThemeChanged(_) if self.args.mode == Mode::Window => {
+				self.apply_saved_settings();
+			}
 			WindowEvent::DroppedFile(path) => self.open(path),
 			WindowEvent::ModifiersChanged(m) => {
 				self.interaction.modifiers = m.state()
@@ -542,12 +594,11 @@ impl ApplicationHandler<Event> for App {
 				// Leaving the window can drop the release event; end the drag.
 				self.interaction.pointer_down = None;
 				self.interaction.drag_at = None;
-				if self.interaction.hover.take().is_some() {
-					if let Some(w) = &self.window {
-						w.set_cursor(CursorIcon::Default);
-					}
-					self.redraw();
+				self.interaction.hover = None;
+				if let Some(w) = &self.window {
+					w.set_cursor(CursorIcon::Default);
 				}
+				self.redraw();
 			}
 			WindowEvent::MouseInput {
 				button: MouseButton::Left,
@@ -562,6 +613,10 @@ impl ApplicationHandler<Event> for App {
 				}) {
 					self.interaction.focus = Some(button.action);
 					self.action(button.action);
+				} else if self.interaction.panel_open {
+					if !self.pointer_in_panel() {
+						self.action(Command::Settings);
+					}
 				} else if !self.pointer_in_panel()
 					&& self.interaction.cursor.1 >= TOP + 10.0
 					&& self.interaction.cursor.1
@@ -608,7 +663,7 @@ impl ApplicationHandler<Event> for App {
 				self.interaction.modifiers = Default::default();
 			}
 			WindowEvent::MouseWheel { delta, .. } => {
-				if self.pointer_in_panel() {
+				if self.interaction.panel_open {
 					return;
 				}
 				let (dx, dy) = match delta {

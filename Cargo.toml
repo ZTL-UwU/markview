@@ -50,6 +50,7 @@ wgpu = { version = "29.0.4", default-features = false, features = ["std", "parki
 winit = "0.30.13"
 
 [dependencies]
+toml_edit = { version = "0.25", features = ["serde"] }
 arboard.workspace = true
 markview-core = { path = "crates/markview-core" }
 markview-render = { path = "crates/markview-render" }

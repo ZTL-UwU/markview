@@ -128,12 +128,18 @@ impl App {
 }
 
 pub(super) fn panel_rect(width: f32, height: f32) -> Rect {
+	let w = 540.0_f32.min((width - 32.0).max(0.0));
+	let h = 440.0_f32.min((height - 32.0).max(0.0));
 	Rect {
-		x: (width - 310.0).max(0.0),
-		y: TOP,
-		w: 310.0_f32.min(width),
-		h: (height - TOP - BOTTOM).max(0.0),
+		x: (width - w) / 2.0,
+		y: (height - h) / 2.0,
+		w,
+		h,
 	}
+}
+fn row_geometry(rect: Rect) -> (f32, f32) {
+	let top = if rect.h < 360.0 { 60.0 } else { 94.0 };
+	(top, (rect.h - top - 48.0) / 5.0)
 }
 fn controls(
 	settings: &ReaderSettings,
@@ -154,30 +160,67 @@ fn controls(
 	};
 	if panel_open {
 		let rect = panel_rect(width, height);
-		return [
-			(theme, Command::Theme),
-			("Close", Command::Settings),
-			("Smaller", Command::Smaller),
-			("Larger", Command::Larger),
-			("Narrower", Command::Narrower),
-			("Wider", Command::Wider),
-			(align, Command::Align),
-			(hyphens, Command::Hyphens),
-			("Reset defaults", Command::Reset),
+		let (top, row) = row_geometry(rect);
+		let mut buttons = vec![Button {
+			label: "Close",
+			action: Command::Settings,
+			rect: Rect {
+				x: rect.x + rect.w - 78.0,
+				y: rect.y + 16.0,
+				w: 58.0,
+				h: 28.0,
+			},
+		}];
+		for (i, entries) in [
+			vec![("System", Command::SystemTheme), (theme, Command::Theme)],
+			vec![("A−", Command::Smaller), ("A+", Command::Larger)],
+			vec![("W−", Command::Narrower), ("W+", Command::Wider)],
+			vec![(
+				if settings.justify {
+					"Justified"
+				} else {
+					"Left aligned"
+				},
+				Command::Align,
+			)],
+			vec![(
+				if settings.hyphenate { "On" } else { "Off" },
+				Command::Hyphens,
+			)],
 		]
 		.into_iter()
 		.enumerate()
-		.map(|(i, (label, action))| Button {
-			label,
-			action,
-			rect: Rect {
-				x: rect.x + 12.0 + (i % 2) as f32 * 145.0,
-				y: TOP + 64.0 + (i / 2) as f32 * 28.0,
-				w: 139.0,
-				h: 26.0,
-			},
-		})
-		.collect();
+		{
+			let count = entries.len();
+			for (j, (label, action)) in entries.into_iter().enumerate() {
+				buttons.push(Button {
+					label,
+					action,
+					rect: Rect {
+						x: rect.x + rect.w - 188.0 + j as f32 * 88.0,
+						y: rect.y + top + i as f32 * row,
+						w: if count == 1 { 168.0 } else { 80.0 },
+						h: (row - 4.0).min(32.0),
+					},
+				});
+			}
+		}
+		for (label, action, x, w) in [
+			("Open settings.toml", Command::OpenConfig, 20.0, 154.0),
+			("Reset defaults", Command::Reset, rect.w - 142.0, 122.0),
+		] {
+			buttons.push(Button {
+				label,
+				action,
+				rect: Rect {
+					x: rect.x + x,
+					y: rect.y + rect.h - 38.0,
+					w,
+					h: 28.0,
+				},
+			});
+		}
+		return buttons;
 	}
 	let entries = if width < 820.0 {
 		vec![
@@ -226,25 +269,78 @@ fn draw_controls(
 ) -> Vec<Draw> {
 	let mut out = Vec::new();
 	if interaction.panel_open {
-		out.push(Draw::Rect(panel_rect(width, height), Paint::Panel));
-		let x = panel_rect(width, height).x + 12.0;
+		let rect = panel_rect(width, height);
+		out.push(Draw::Rect(
+			Rect {
+				x: 0.0,
+				y: 0.0,
+				w: width,
+				h: height,
+			},
+			Paint::Scrim,
+		));
+		out.push(Draw::Rect(
+			Rect {
+				x: rect.x - 5.0,
+				y: rect.y + 6.0,
+				w: rect.w + 10.0,
+				h: rect.h + 4.0,
+			},
+			Paint::Shadow,
+		));
+		out.push(Draw::Rect(rect, Paint::Glass));
+		out.push(Draw::Rect(
+			Rect {
+				x: rect.x,
+				y: rect.y,
+				w: 3.0,
+				h: rect.h,
+			},
+			Paint::Accent,
+		));
+		let x = rect.x + 20.0;
 		out.extend(shaper.label(
 			"Reading settings",
-			17.0,
+			22.0,
 			x,
-			TOP + 24.0,
+			rect.y + 36.0,
 			Paint::Text,
 		));
-		out.extend(shaper.label(
-			&format!(
-				"Size {:.0} · Width {:.0}",
-				settings.font_size, settings.width
+		if rect.h >= 360.0 {
+			out.extend(shaper.label(
+				"Saved automatically · file changes apply live",
+				12.0,
+				x,
+				rect.y + 61.0,
+				Paint::Muted,
+			));
+		}
+		let (top, row) = row_geometry(rect);
+		for (i, label) in [
+			format!(
+				"Theme · {}",
+				if settings.theme == Theme::Light {
+					"Light"
+				} else {
+					"Dark"
+				}
 			),
-			12.0,
-			x,
-			TOP + 46.0,
-			Paint::Muted,
-		));
+			format!("Text size · {:.1} px", settings.font_size),
+			format!("Column width · {:.1} px", settings.width),
+			"Alignment".into(),
+			"English hyphenation".into(),
+		]
+		.iter()
+		.enumerate()
+		{
+			out.extend(shaper.label(
+				label,
+				13.0,
+				x,
+				rect.y + top + i as f32 * row + 19.0,
+				Paint::Text,
+			));
+		}
 	}
 	for b in controls(settings, interaction.panel_open, width, height) {
 		if interaction.focus == Some(b.action) {
@@ -259,13 +355,15 @@ fn draw_controls(
 				Paint::Panel,
 			));
 		} else if b.rect.contains(interaction.cursor.0, interaction.cursor.1) {
+			out.push(Draw::Rect(b.rect, Paint::Border));
+		} else if interaction.panel_open {
 			out.push(Draw::Rect(b.rect, Paint::Panel));
 		}
 		out.extend(shaper.label(
 			b.label,
 			13.0,
 			b.rect.x + 9.0,
-			b.rect.y + if interaction.panel_open { 18.0 } else { 22.0 },
+			b.rect.y + b.rect.h / 2.0 + 5.0,
 			Paint::Text,
 		));
 	}
@@ -304,51 +402,61 @@ mod gpu_tests {
 	#[test]
 	#[ignore = "requires a GPU; writes artifacts/refactor-ui.png"]
 	fn settings_and_selection_frame() -> Result<()> {
-		let settings = ReaderSettings::default();
-		let document = document::parse(
-			"# Reading selections\n\nSelect **English**, 中文 and $x^2$ across lines.\n\n```rust\n\tlet answer = 42;\n```\n\n| A | B |\n|---|---|\n| one | two |\n",
-		);
-		let snapshot = LayoutEngine::new()
-			.layout(&document, &settings.layout_options(800.0, false));
-		let interaction = InteractionState {
-			panel_open: true,
-			focus: Some(Command::Larger),
-			..Default::default()
-		};
-		let overlay = draw_controls(
-			&mut TextShaper::new(),
-			&settings,
-			&interaction,
-			800.0,
-			600.0,
-		);
-		let mut renderer = pollster::block_on(Renderer::new(None))?;
-		let horizontal = HashMap::new();
-		let view = View {
-			width: 1000,
-			height: 750,
-			scale: 1.25,
-			left: 20.0,
-			top: TOP + 10.0,
-			bottom: BOTTOM + 10.0,
-			scroll: 0.0,
-			theme: settings.theme,
-			horizontal: &horizontal,
-			selection: snapshot.select_all(1),
-			revision: 1,
-		};
-		let target = renderer.offscreen(view.width, view.height);
-		let submission = renderer.render(
-			&snapshot,
-			&view,
-			&overlay,
-			&target.create_view(&Default::default()),
-		)?;
-		renderer.wait(Some(submission))?;
-		let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-			.join("artifacts/refactor-ui.png");
-		std::fs::create_dir_all(output.parent().unwrap())?;
-		renderer.save_png(&target, &output)?;
+		for (width, height, theme, filename) in [
+			(800.0, 600.0, Theme::Light, "refactor-ui.png"),
+			(800.0, 600.0, Theme::Dark, "settings-dark.png"),
+			(500.0, 300.0, Theme::Light, "settings-compact.png"),
+		] {
+			let settings = ReaderSettings {
+				theme,
+				..Default::default()
+			};
+			let document = document::parse(
+				"# Reading selections\n\nSelect **English**, 中文 and $x^2$ across lines.\n\n```rust\n\tlet answer = 42;\n```\n\n| A | B |\n|---|---|\n| one | two |\n",
+			);
+			let snapshot = LayoutEngine::new()
+				.layout(&document, &settings.layout_options(800.0, false));
+			let interaction = InteractionState {
+				panel_open: true,
+				focus: Some(Command::Larger),
+				..Default::default()
+			};
+			let overlay = draw_controls(
+				&mut TextShaper::new(),
+				&settings,
+				&interaction,
+				width,
+				height,
+			);
+			let mut renderer = pollster::block_on(Renderer::new(None))?;
+			let horizontal = HashMap::new();
+			let view = View {
+				width: (width * 1.25) as u32,
+				height: (height * 1.25) as u32,
+				scale: 1.25,
+				left: 20.0,
+				top: TOP + 10.0,
+				bottom: BOTTOM + 10.0,
+				scroll: 0.0,
+				theme: settings.theme,
+				horizontal: &horizontal,
+				selection: snapshot.select_all(1),
+				revision: 1,
+			};
+			let target = renderer.offscreen(view.width, view.height);
+			let submission = renderer.render(
+				&snapshot,
+				&view,
+				&overlay,
+				&target.create_view(&Default::default()),
+			)?;
+			renderer.wait(Some(submission))?;
+			let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+				.join("artifacts")
+				.join(filename);
+			std::fs::create_dir_all(output.parent().unwrap())?;
+			renderer.save_png(&target, &output)?;
+		}
 		Ok(())
 	}
 }

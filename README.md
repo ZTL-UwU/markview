@@ -70,7 +70,23 @@ RaTeX 支持分式、根号、上下标、积分、矩阵等；不支持的语�
 
 选择复制输出阅读文本：代码保留原始空白，表格用制表符分列、换行分行，公式按整体选择并输出 LaTeX。排版生成的断字号不会被复制。改字号、栏宽保留选择；文件语义内容变化后清除选择（仅元数据变化或读取失败则保留）。拖选到正文视口上下边缘可自动滚动。第一版不提供 Markdown 源码复制、双击选词和完整键盘选择导航。
 
-设置优先级为默认值 → 用户配置 → 显式 CLI 参数；仅用户实际调整的字段写入配置。主题只有在用户主动切换后才写入配置，否则跟随系统；Reset defaults 会重新跟随系统。面板覆盖正文，不改变栏宽；面板区域接收控件输入，点击正文可继续阅读操作。配置位置与错误恢复说明见 [架构文档](docs/architecture.md)。`--render`、`--bench`、`--smoke-test` 不读取个人配置，确保结果可复现。
+设置窗口以半透明浮层居中显示，可调整主题、字号、栏宽、对齐与英语断字；点击外部或按 Escape 关闭。UI 更改自动保存，System 恢复跟随系统主题，Reset defaults 恢复所有默认值。
+
+配置使用 `settings.toml`，通过设置窗口的 Open settings.toml 打开。Linux 默认路径为 `~/.config/markview/settings.toml`（支持 `XDG_CONFIG_HOME`）；macOS 和 Windows 路径见 [架构文档](docs/architecture.md)。首次启动自动创建文件；存在旧版 `settings.json` 时迁移有效设置，并保留原文件。
+
+```toml
+version = 1
+# 省略 theme 即跟随系统；也可填 "light" 或 "dark"
+theme = "dark"
+font_size = 18.0 # 10–40 逻辑像素
+width = 760.0 # 240–1600 逻辑像素
+justify = true
+hyphenate = true
+```
+
+保存 TOML 后实时应用，无需重启，兼容编辑器的原子替换保存。解析失败或数值越界时保留当前设置，并在状态栏提示；修复文件后自动恢复。UI 保存保留注释和额外字段，同期外部修改与 UI 修改按字段合并，同一字段以待保存的 UI 值为准。
+
+设置优先级为默认值 → 用户配置 → 显式 CLI 参数；UI 调整某字段后解除该字段的 CLI 覆盖，Reset defaults 解除全部覆盖。浮层不改变正文栏宽。`--render`、`--bench`、`--smoke-test` 不读取个人配置，确保结果可复现。
 
 ## 实现与边界
 

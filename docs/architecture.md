@@ -83,10 +83,15 @@ document returns keyboard focus to the reader.
 ## Preferences and platform effects
 
 The settings panel, toolbar and shortcuts dispatch the same commands. Settings
-are JSON with `version: 1`, persisted after a 250 ms quiet period and flushed on
+are TOML with `version = 1`, persisted after a 250 ms quiet period and flushed on
 normal exit. A same-directory temporary file replaces the old configuration.
 Malformed or unsupported configurations remain untouched on load; before a user
-change is saved, their bytes are preserved in `settings-invalid-*.json`.
+change is saved, their bytes are preserved in `settings-invalid-*.toml`.
+The settings file has its own parent-directory watcher with bounded debounce and
+polling fallback. External edits update controls and reflow only when layout
+options change. Invalid or missing files retain the last good settings. Pending UI
+fields win conflicts; other external fields and TOML comments survive UI saves.
+The centered translucent modal captures input; outside click or Escape closes it.
 
 Window startup applies defaults, then user settings, then explicit CLI overrides.
 The desktop theme is only the default: once a user picks one it is stored as an
@@ -97,9 +102,10 @@ reading settings.
 Render, benchmark and smoke modes use defaults plus CLI flags and do not load or
 save personal configuration. Persistence errors do not revert session settings.
 
-The configuration locations are `XDG_CONFIG_HOME/markview/settings.json` (falling
-back to `~/.config`), macOS `~/Library/Application Support/markview/settings.json`,
-and Windows `%APPDATA%/markview/settings.json`.
+The configuration locations are `XDG_CONFIG_HOME/markview/settings.toml` (falling
+back to `~/.config`), macOS `~/Library/Application Support/markview/settings.toml`,
+and Windows `%APPDATA%/markview/settings.toml`. Window startup creates this file
+when absent, migrating a valid sibling `settings.json` without deleting it.
 
 Clipboard integration uses arboard with Wayland data-control support, retaining
 its handle for the application's lifetime. Clipboard failures appear in the status

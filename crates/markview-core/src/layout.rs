@@ -18,6 +18,45 @@ use std::{
 pub use crate::scene::*;
 pub use crate::shaping::TextShaper;
 use crate::shaping::{Cluster, Span};
+
+fn fitted_range(full: &str, shown: &str, range: Range<usize>) -> Range<usize> {
+	let (prefix, full_end, shown_end) = crate::text::changed_span(full, shown);
+	let start = if range.start <= prefix {
+		range.start
+	} else if range.start >= shown_end {
+		range.start - shown_end + full_end
+	} else {
+		prefix
+	};
+	let end = if range.end <= prefix {
+		range.end
+	} else if range.end >= shown_end {
+		range.end - shown_end + full_end
+	} else {
+		full_end
+	};
+	start..end
+}
+
+fn image_key(block: &Block, images: &crate::image::ImageSnapshot) -> u64 {
+	let mut specs = Vec::new();
+	block.images(&mut specs);
+	crate::document::fingerprint(
+		&specs
+			.iter()
+			.map(|s| {
+				(
+					&s.src,
+					images
+						.entries
+						.get(&s.src)
+						.map(|i| (i.version, i.size, &i.error)),
+				)
+			})
+			.collect::<Vec<_>>(),
+	)
+}
+
 #[derive(Clone, Debug)]
 pub struct LayoutOptions {
 	pub width: f32,
@@ -52,6 +91,7 @@ impl PartialEq for LayoutOptions {
 }
 
 struct Prepared {
+	images: BTreeMap<usize, crate::image::ImageSpec>,
 	reading: String,
 	mapping: Vec<(Range<usize>, Range<usize>, bool)>,
 	text: String,
@@ -60,6 +100,7 @@ struct Prepared {
 }
 
 pub struct LayoutEngine {
+	images: crate::image::ImageSnapshot,
 	shaper: TextShaper,
 	math: MathEngine,
 	cache: HashMap<CacheKey, Arc<BlockLayout>>,
@@ -67,6 +108,7 @@ pub struct LayoutEngine {
 
 #[derive(Hash, PartialEq, Eq)]
 struct CacheKey {
+	images: u64,
 	content: u64,
 	width: u32,
 	size: u32,
@@ -83,6 +125,7 @@ impl Default for LayoutEngine {
 impl LayoutEngine {
 	pub fn new() -> Self {
 		Self {
+			images: Default::default(),
 			shaper: TextShaper::new(),
 			math: MathEngine::default(),
 			cache: HashMap::new(),
@@ -103,8 +146,19 @@ impl LayoutEngine {
 		document: &Document,
 		options: &LayoutOptions,
 	) -> LayoutSnapshot {
+		self.layout_with_images(document, options, &Default::default())
+	}
+
+	pub fn layout_with_images(
+		&mut self,
+		document: &Document,
+		options: &LayoutOptions,
+		images: &crate::image::ImageSnapshot,
+	) -> LayoutSnapshot {
+		self.images = images.clone();
 		self.shaper.set_stylesheet(options.stylesheet.clone());
 		let mut result = LayoutSnapshot {
+			images: images.clone(),
 			width: options.width,
 			..Default::default()
 		};
@@ -121,6 +175,7 @@ impl LayoutEngine {
 		let mut cached_draws = 0;
 		for block in &document.blocks {
 			let key = CacheKey {
+				images: image_key(block, images),
 				content: block.content_key,
 				width: options.width.to_bits(),
 				size: options.font_size.to_bits(),
@@ -198,6 +253,7 @@ impl LayoutEngine {
 		out: &mut BlockLayout,
 	) -> Prepared {
 		let mut p = Prepared {
+			images: BTreeMap::new(),
 			reading: String::new(),
 			mapping: Vec::new(),
 			text: String::new(),
@@ -208,11 +264,20 @@ impl LayoutEngine {
 			let start = p.text.len();
 			let reading_start = p.reading.len();
 			match &inline.kind {
+				InlineKind::Image(image) => p.reading.push_str(
+					&self
+						.image_placeholder(image)
+						.unwrap_or_else(|| image.alt.clone()),
+				),
 				InlineKind::Text(t) => p.reading.push_str(t),
 				InlineKind::Math { latex, .. } => p.reading.push_str(latex),
 			}
 			let mut style = inline.style.clone();
 			match &inline.kind {
+				InlineKind::Image(image) => {
+					p.images.insert(start, image.clone());
+					p.text.push('\u{fffc}');
+				}
 				InlineKind::Text(t) => p.text.push_str(t),
 				InlineKind::Math { latex, display } => {
 					match self.math.layout(
@@ -240,7 +305,10 @@ impl LayoutEngine {
 			p.mapping.push((
 				start..p.text.len(),
 				reading_start..p.reading.len(),
-				matches!(inline.kind, InlineKind::Math { .. }),
+				matches!(
+					inline.kind,
+					InlineKind::Math { .. } | InlineKind::Image(_)
+				),
 			));
 			p.spans.push(Span {
 				range: start..p.text.len(),
@@ -250,12 +318,60 @@ impl LayoutEngine {
 		p
 	}
 
+	/// The image box scaled into the paragraph measure, like `max-width: 100%`.
+	fn image_size(
+		&self,
+		image: &crate::image::ImageSpec,
+		available: f32,
+		size: f32,
+	) -> (f32, f32) {
+		let inset = self.image_insets(size, available);
+		let (w, h) = image.size(
+			self.images.entries.get(&image.src),
+			(available - inset[1] - inset[3]).max(1.),
+		);
+		(w + inset[1] + inset[3], h + inset[0] + inset[2])
+	}
+
+	fn image_placeholder(
+		&self,
+		image: &crate::image::ImageSpec,
+	) -> Option<String> {
+		let message = match self.images.entries.get(&image.src) {
+			Some(i) if i.size.is_some() && i.error.is_none() => return None,
+			Some(i) if i.error.is_some() => i.error.as_deref().unwrap(),
+			_ => "Loading image…",
+		};
+		Some(if image.alt.is_empty() {
+			message.to_owned()
+		} else {
+			format!("{} · {message}", image.alt)
+		})
+	}
+
+	fn image_insets(&self, size: f32, available: f32) -> [f32; 4] {
+		let rule = self.shaper.stylesheet.rule(Role::Image);
+		let base = size / self.shaper.appearance.size;
+		let border = rule.border_width.unwrap_or(0.);
+		let mut inset = rule
+			.padding
+			.as_ref()
+			.map(|p| p.sides().map(|v| v * base + border))
+			.unwrap_or([border; 4]);
+		let scale =
+			((available - 1.).max(0.) / (inset[1] + inset[3]).max(1.)).min(1.);
+		inset[1] *= scale;
+		inset[3] *= scale;
+		inset
+	}
+
 	fn units(
 		&mut self,
 		p: &Prepared,
 		size: f32,
 		sans: bool,
 		hyphenate: bool,
+		available: f32,
 	) -> Vec<Unit> {
 		let mut clusters = self.shaper.shape(&p.text, &p.spans, size, sans);
 		clusters.sort_by_key(|c| c.range.start);
@@ -326,6 +442,8 @@ impl LayoutEngine {
 			};
 			let width = if hard || soft_hyphen {
 				0.0
+			} else if let Some(image) = p.images.get(&c.range.start) {
+				self.image_size(image, available, size).0
 			} else {
 				math.map_or(c.width, |m| m.width)
 			};
@@ -358,6 +476,7 @@ impl LayoutEngine {
 		hyphen: bool,
 		size: f32,
 		sans: bool,
+		available: f32,
 	) -> Vec<Cluster> {
 		let mut text = p.text[range.clone()].to_string();
 		if hyphen {
@@ -382,6 +501,13 @@ impl LayoutEngine {
 		for c in &mut clusters {
 			c.range = (c.range.start + range.start).min(range.end)
 				..(c.range.end + range.start).min(range.end);
+			if let Some(image) = p.images.get(&c.range.start) {
+				let (w, h) = self.image_size(image, available, size);
+				c.width = w;
+				c.ascent = h;
+				c.descent = 0.;
+				c.glyphs.clear();
+			}
 			if let Some(m) = p.math.get(&c.range.start) {
 				c.width = m.width;
 				c.ascent = m.ascent;
@@ -419,7 +545,7 @@ impl LayoutEngine {
 		if p.text.is_empty() {
 			return size * self.shaper.appearance.line_height;
 		}
-		let units = self.units(&p, size, sans, opts.hyphenate && !sans);
+		let units = self.units(&p, size, sans, opts.hyphenate && !sans, width);
 		let solution = if opts.greedy {
 			linebreak::greedy(&units, width)
 		} else {
@@ -427,6 +553,22 @@ impl LayoutEngine {
 		};
 		out.degraded += usize::from(solution.degraded && !opts.greedy);
 		let mut y_cursor = y;
+		// An image alone in its block is a centered figure; mixed with text it
+		// is an ordinary atomic inline box in the line flow.
+		let only_images = !rich.is_empty()
+			&& rich.iter().all(|i| {
+				matches!(&i.kind, InlineKind::Image(_))
+					|| matches!(&i.kind, InlineKind::Text(t) if t.trim().is_empty())
+			});
+		let align = if only_images && align == CellAlign::Left {
+			opts.stylesheet
+				.rule(Role::Image)
+				.align
+				.map(Into::into)
+				.unwrap_or(CellAlign::Center)
+		} else {
+			align
+		};
 		let mut lines: std::collections::VecDeque<_> = solution.lines.into();
 		while let Some(mut line) = lines.pop_front() {
 			if line.units.is_empty() {
@@ -436,7 +578,7 @@ impl LayoutEngine {
 			let range = units[line.units.start].source.start
 				..units[line.units.end - 1].source.end;
 			let mut clusters =
-				self.line_clusters(&p, range, line.hyphen, size, sans);
+				self.line_clusters(&p, range, line.hyphen, size, sans, width);
 			let mut natural: f32 = clusters.iter().map(|c| c.width).sum();
 			// Boundary reshaping (ligatures, kerning, inserted hyphens) can alter
 			// the measured advance. Move to an earlier legal break and reoptimize
@@ -474,8 +616,14 @@ impl LayoutEngine {
 				line.last = br.forced;
 				let range = units[line.units.start].source.start
 					..units[line.units.end - 1].source.end;
-				clusters =
-					self.line_clusters(&p, range, line.hyphen, size, sans);
+				clusters = self.line_clusters(
+					&p,
+					range,
+					line.hyphen,
+					size,
+					sans,
+					width,
+				);
 				natural = clusters.iter().map(|c| c.width).sum();
 				let tail = if opts.greedy {
 					linebreak::greedy(&units[end..], width)
@@ -539,6 +687,42 @@ impl LayoutEngine {
 			let mut link: Option<(String, f32)> = None;
 			for (c, flex) in clusters.into_iter().zip(flexibility) {
 				let range = p.reading_range(c.range.clone());
+				if let Some(image) = p.images.get(&c.range.start) {
+					let rect = Rect {
+						x: cursor,
+						y: baseline - c.ascent,
+						w: c.width,
+						h: c.ascent,
+					};
+					let command = out.draws.len();
+					if !range.is_empty()
+						&& self.image_placeholder(image).is_none()
+					{
+						out.text[node].push(TextCluster {
+							range: range.clone(),
+							rect,
+							rtl: false,
+							command,
+						});
+					}
+					if let Some(url) = p
+						.spans
+						.iter()
+						.find(|s| s.range.contains(&c.range.start))
+						.and_then(|s| s.style.link.clone())
+					{
+						out.links.push(LinkRect { command, rect, url });
+					}
+					for mut cluster in
+						self.draw_image(image, rect, size, width, out)
+					{
+						cluster.range.start += range.start;
+						cluster.range.end += range.start;
+						out.text[node].push(cluster);
+					}
+					cursor += c.width;
+					continue;
+				}
 				if !range.is_empty() {
 					out.text[node].push(TextCluster {
 						range,
@@ -658,7 +842,139 @@ impl LayoutEngine {
 			out.width = out.width.max(x + actual.min(width));
 			y_cursor += height;
 		}
+		if only_images && p.images.len() == 1 {
+			let image = p.images.values().next().unwrap();
+			let rule = opts.stylesheet.rule(Role::ImageCaption).clone();
+			if let Some(caption) = rule.source.unwrap_or_default().text(image) {
+				let old = self.shaper.appearance.clone();
+				self.shaper.appearance =
+					opts.stylesheet.text(&old, Role::ImageCaption);
+				let caption_size = opts.font_size * self.shaper.appearance.size;
+				y_cursor += rule.space_before.unwrap_or(0.) * opts.font_size;
+				let mut decoration = BlockLayout::default();
+				y_cursor += self.paragraph(
+					&[Inline {
+						kind: InlineKind::Text(caption.to_owned()),
+						style: TextStyle::default(),
+						source: 0..0,
+					}],
+					x,
+					y_cursor,
+					width,
+					caption_size,
+					false,
+					rule.align.map(Into::into).unwrap_or(CellAlign::Center),
+					false,
+					opts,
+					&mut decoration,
+				);
+				let offset = out.draws.len();
+				for mut node in decoration.text {
+					node.separator = "\n";
+					for cluster in &mut node.clusters {
+						cluster.command += offset;
+					}
+					out.text.push(node);
+				}
+				out.draws.extend(decoration.draws);
+				out.overflow.extend(decoration.overflow.into_iter().map(
+					|mut o| {
+						o.commands.start += offset;
+						o.commands.end += offset;
+						o
+					},
+				));
+				out.degraded += decoration.degraded;
+				y_cursor += rule.space_after.unwrap_or(0.) * opts.font_size;
+				self.shaper.appearance = old;
+			} else {
+				// Reserve the caption's ordinal so toggling it cannot renumber
+				// subsequent paragraphs or table cells in this cached block.
+				out.text.push(TextNode::new(String::new(), "\n"));
+			}
+		}
 		y_cursor - y
+	}
+
+	fn draw_image(
+		&mut self,
+		image: &crate::image::ImageSpec,
+		rect: Rect,
+		size: f32,
+		available: f32,
+		out: &mut BlockLayout,
+	) -> Vec<TextCluster> {
+		let mut text_clusters = Vec::new();
+		let info = self.images.entries.get(&image.src);
+		let inset = self.image_insets(size, available);
+		let content = Rect {
+			x: rect.x + inset[3],
+			y: rect.y + inset[0],
+			w: (rect.w - inset[1] - inset[3]).max(1.),
+			h: (rect.h - inset[0] - inset[2]).max(1.),
+		};
+		out.draws.push(Draw::Image {
+			src: image.src.clone(),
+			version: info.map_or(0, |i| i.version),
+			rect: content,
+			title: image.title.clone(),
+		});
+		out.draws.push(Draw::Box {
+			rect,
+			role: Role::Image,
+			radius: 0.,
+			border: self
+				.shaper
+				.stylesheet
+				.rule(Role::Image)
+				.border_width
+				.unwrap_or(0.)
+				.min(inset[1])
+				.min(inset[3]),
+			left_only: false,
+		});
+		if let Some(text) = self.image_placeholder(image) {
+			let rect = content;
+			out.draws.push(Draw::Rect(
+				rect,
+				Paint::Styled(Role::ImagePlaceholder, ColorField::Background),
+			));
+			let old = self.shaper.appearance.clone();
+			let base = size / old.size;
+			self.shaper.appearance =
+				self.shaper.stylesheet.text(&old, Role::ImagePlaceholder);
+			let label_size = base * self.shaper.appearance.size;
+			let label = self.shaper.fit(&text, base, (rect.w - 12.).max(0.));
+			if rect.h >= label_size + 12. && rect.w > 12. {
+				let baseline = rect.y + 6. + label_size;
+				let mut cursor = rect.x + 6.;
+				let command = out.draws.len();
+				for c in self.shaper.shape(&label, &[], label_size, true) {
+					text_clusters.push(TextCluster {
+						range: fitted_range(&text, &label, c.range),
+						rect: Rect {
+							x: cursor,
+							y: baseline - c.ascent,
+							w: c.width.max(1.),
+							h: c.ascent + c.descent,
+						},
+						rtl: c.rtl,
+						command,
+					});
+					cursor += c.width;
+				}
+				out.draws.extend(self.shaper.label(
+					&label,
+					base,
+					rect.x + 6.,
+					rect.y + 6. + label_size,
+					Paint::Styled(Role::ImagePlaceholder, ColorField::Color),
+				));
+			}
+			self.shaper.appearance = old;
+		}
+		out.width = out.width.max(rect.x + rect.w);
+		text_clusters
 	}
 
 	#[expect(
@@ -1218,7 +1534,7 @@ impl LayoutEngine {
 			let size = opts.font_size * self.shaper.appearance.size;
 			for (col, cell) in row.iter().enumerate().take(n) {
 				let p = self.prepare(cell, size, out);
-				let units = self.units(&p, size, false, false);
+				let units = self.units(&p, size, false, false, width);
 				let inset = pad[1] + pad[3];
 				preferred[col] = preferred[col]
 					.max(units.iter().map(|u| u.width).sum::<f32>() + inset);
@@ -1375,6 +1691,40 @@ pub fn anchored_scroll(
 			.filter(|b| b.id == anchor.id)
 			.nth(occurrence)
 		{
+			if old.images.entries != new.images.entries {
+				let local_y = scroll - anchor.y;
+				let cluster = anchor
+					.layout
+					.text
+					.iter()
+					.enumerate()
+					.flat_map(|(ni, n)| n.clusters.iter().map(move |c| (ni, c)))
+					.filter(|(_, c)| c.rect.y + c.rect.h >= local_y)
+					.min_by(|(_, a), (_, b)| {
+						let a_image = matches!(
+							anchor.layout.draws[a.command],
+							Draw::Image { .. }
+						);
+						let b_image = matches!(
+							anchor.layout.draws[b.command],
+							Draw::Image { .. }
+						);
+						a_image.cmp(&b_image).then_with(|| {
+							(a.rect.y - local_y)
+								.abs()
+								.total_cmp(&(b.rect.y - local_y).abs())
+						})
+					});
+				if let Some((ni, c)) = cluster
+					&& let Some(next) = b.layout.text.get(ni).and_then(|n| {
+						n.clusters
+							.iter()
+							.find(|n| n.range.contains(&c.range.start))
+					}) {
+					return (b.y + next.rect.y + (local_y - c.rect.y))
+						.clamp(0., max);
+				}
+			}
 			return (b.y + (scroll - anchor.y).min(b.layout.height))
 				.clamp(0.0, max);
 		}
@@ -1551,7 +1901,7 @@ mod tests {
 			source: 0..0,
 		}];
 		let p = e.prepare(&rich, 18.0, &mut out);
-		let units = e.units(&p, 18.0, false, true);
+		let units = e.units(&p, 18.0, false, true, 760.0);
 		for u in &units {
 			if u.after.is_some() && u.source.end < p.text.len() {
 				assert!(

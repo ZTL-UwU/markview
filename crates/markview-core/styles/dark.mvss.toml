@@ -47,6 +47,16 @@ color = "#414C58"
 [selection]
 background = "#8FB9DD47"
 
+[img]
+border_color = "#414C58"
+
+[img.caption]
+color = "#98A5B1"
+
+[img.placeholder]
+color = "#98A5B1"
+background = "#2A3139"
+
 [scrollbar]
 track = "#414C58"
 thumb = "#98A5B1"

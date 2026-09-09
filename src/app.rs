@@ -95,7 +95,7 @@ struct App {
 impl App {
 	fn new(args: LaunchOptions, proxy: EventLoopProxy<Event>) -> Self {
 		let done = proxy.clone();
-		let worker = Worker::new(move |update| {
+		let worker = Worker::with_images(args.offline, move |update| {
 			let _ = done.send_event(Event::Ready(Box::new(update)));
 		});
 		let (mut settings_store, mut settings_warning) =
@@ -410,6 +410,26 @@ impl App {
 		};
 		let hover_changed = hover != self.interaction.hover
 			|| hover_overflow != self.interaction.hover_overflow;
+		let geometry = self.view_geometry();
+		let (x, y) = geometry.document_point(
+			self.interaction.cursor.0,
+			self.interaction.cursor.1,
+		);
+		let hover_image = if idle
+			&& geometry
+				.clip()
+				.contains(self.interaction.cursor.0, self.interaction.cursor.1)
+		{
+			self.session
+				.snapshot
+				.image_title_at(x, y, &self.session.horizontal)
+				.map(str::to_owned)
+		} else {
+			None
+		};
+		let hover_changed =
+			hover_changed || hover_image != self.interaction.hover_image;
+		self.interaction.hover_image = hover_image;
 		self.interaction.hover = hover;
 		self.interaction.hover_overflow = hover_overflow;
 		if let Some(w) = &self.window {
@@ -658,8 +678,27 @@ impl ApplicationHandler<Event> for App {
 			{
 				match update.result.take() {
 					Some(Ok(reader)) => {
+						let reading_changed = !self
+							.session
+							.snapshot
+							.same_reading_text(&reader.layout);
+						let rebased =
+							self.interaction.selection.and_then(|s| {
+								self.session.snapshot.rebase_selection(
+									&reader.layout,
+									s,
+									self.session.accepted_revision,
+									reader.content_version,
+								)
+							});
 						if self.session.accept(reader, self.viewport()) {
 							self.interaction.clear_selection();
+						} else {
+							if reading_changed {
+								self.interaction.clear_selection();
+								self.interaction.selection_counts = None;
+							}
+							self.interaction.selection = rebased;
 						}
 						self.error = false;
 						self.refresh_hover();

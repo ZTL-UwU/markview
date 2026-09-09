@@ -7,6 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+html-escape = "0.2"
 unicode-segmentation.workspace = true
 comrak.workspace = true
 hypher.workspace = true

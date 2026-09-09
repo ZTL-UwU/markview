@@ -25,6 +25,7 @@ pub struct TextStyle {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum InlineKind {
 	Text(String),
+	Image(crate::image::ImageSpec),
 	Math { latex: String, display: bool },
 }
 
@@ -163,6 +164,9 @@ impl Reader<'_> {
 					Some(InlineKind::Text(t.clone()))
 				}
 				NodeValue::HtmlInline(t) => match html::inline(t) {
+					html::Inline::Image(image) => {
+						Some(InlineKind::Image(image))
+					}
 					html::Inline::Ignore => continue,
 					html::Inline::Break => Some(InlineKind::Text("\n".into())),
 					html::Inline::Open { name, patch } => {
@@ -208,19 +212,17 @@ impl Reader<'_> {
 					child_style.link = Some(l.url.clone());
 					None
 				}
-				NodeValue::Image(_) => {
+				NodeValue::Image(link) => {
 					let mut alt = Vec::new();
 					self.inlines(child, &TextStyle::default(), &mut alt);
 					let alt = plain_text(&alt);
-					child_style.italic = true;
-					Some(InlineKind::Text(format!(
-						"[Image: {}]",
-						if alt.is_empty() {
-							"no description"
-						} else {
-							&alt
-						}
-					)))
+					Some(InlineKind::Image(crate::image::ImageSpec {
+						src: link.url.clone(),
+						alt,
+						title: link.title.clone(),
+						width: None,
+						height: None,
+					}))
 				}
 				_ => None,
 			};
@@ -410,9 +412,51 @@ pub fn plain_text(text: &RichText) -> String {
 	text.iter()
 		.map(|s| match &s.kind {
 			InlineKind::Text(t) => t.as_str(),
+			InlineKind::Image(image) => image.alt.as_str(),
 			InlineKind::Math { latex, .. } => latex.as_str(),
 		})
 		.collect()
+}
+
+impl Block {
+	pub fn images<'a>(&'a self, out: &mut Vec<&'a crate::image::ImageSpec>) {
+		fn rich<'a>(
+			text: &'a RichText,
+			out: &mut Vec<&'a crate::image::ImageSpec>,
+		) {
+			for inline in text {
+				if let InlineKind::Image(image) = &inline.kind {
+					out.push(image);
+				}
+			}
+		}
+		match &self.kind {
+			BlockKind::Paragraph(t) | BlockKind::Heading { text: t, .. } => {
+				rich(t, out)
+			}
+			BlockKind::Quote { blocks, .. }
+			| BlockKind::Footnote { blocks, .. } => {
+				for b in blocks {
+					b.images(out);
+				}
+			}
+			BlockKind::List { items, .. } => {
+				for item in items {
+					for b in &item.blocks {
+						b.images(out);
+					}
+				}
+			}
+			BlockKind::Table { rows, .. } => {
+				for row in rows {
+					for cell in row {
+						rich(cell, out);
+					}
+				}
+			}
+			_ => {}
+		}
+	}
 }
 
 /// Only schemes the operating system can safely hand to a browser or mail
@@ -448,7 +492,10 @@ fn html_rich(spans: Vec<html::Span>, source: &Range<usize>) -> RichText {
 				apply_patch(patch, &mut style);
 			}
 			Inline {
-				kind: InlineKind::Text(span.text),
+				kind: span.image.map_or_else(
+					|| InlineKind::Text(span.text),
+					InlineKind::Image,
+				),
 				style,
 				source: source.clone(),
 			}

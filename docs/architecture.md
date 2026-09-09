@@ -45,6 +45,7 @@ separate services and do not own the layout engine.
 | Theme | Repaint |
 | Pointer, selection, scroll | Interaction and repaint |
 | DPI | Clear raster cache; reflow if effective logical width changed |
+| Image decoded or file changed | Layout retained document; repaint |
 
 ## Reading text and selection
 
@@ -105,6 +106,53 @@ theme can thicken the wide-block bar too or reserve no space at all. The setting
 panel consumes pointer events in its own
 region and keyboard events when a panel control has focus; clicking the document
 returns keyboard focus to the reader.
+
+## Images
+
+MVSS exposes `img` for the frame and padding, `img.placeholder` for loading/error
+text, and `img.caption` for a single-image paragraph's optional caption. Caption
+source and alignment participate in the geometry cache key; colors remain late
+bound. Captions and placeholders have character-level reading geometry and can
+be selected and copied like paragraph text. Hidden captions retain an empty
+node slot so subsequent nested paragraphs and cells keep their node ordinals.
+Placeholder ellipses map to the omitted full error text. When visible text
+changes, selection endpoints are rebased across unchanged prefixes/suffixes;
+selections containing replaced text are cleared, and counts are refreshed.
+
+`markview-core::image` holds image semantics (`ImageSpec`), immutable decoded
+pixels (`Pixels`), per-source metadata (`ImageInfo`) and an `ImageSnapshot` that
+pairs metadata with a pixel cache shared across layout snapshots. Layout only
+reads intrinsic sizes from the snapshot, so it never blocks on I/O.
+
+An image alone in its block is a centered figure; mixed with text it is an atomic
+inline box like a formula. It occupies one line-break unit, the line grows to its
+height and the text before and after it stays on the same line while there is
+room. Images never reserve a float band, so text never wraps beside them. The
+block cache key includes each image version and measured size, so a load or a
+file change relayouts only the affected blocks and never changes reading text.
+
+The application owns `images`, a bounded loader. Sources resolve relative to the
+document directory, and `file:`, `http(s):` and `data:` are recognized;
+`--offline` rejects network sources. Four threads fetch and decode with a 32 MiB
+byte cap, a 16 million pixel cap and a 15 s network timeout, and redirects stay
+on http(s). Bitmaps come from `image` (PNG, JPEG, GIF, WebP, BMP, ICO), including
+the first frame of animated GIF, WebP and APNG; anything else is parsed as SVG by
+resvg, which loads no external resources or scripts and shares one system font
+database. Loader threads turn decoder panics into errors, so a malformed file
+cannot take the reader down. When pixels arrive the worker lays out again with
+the same content version, which preserves selection and reading position.
+
+`markview-render` uploads straight-alpha sRGB RGBA8 textures on demand, keyed by
+source and image version and sampled with linear filtering. The renderer
+publishes a complete frame's image demand atomically. Repeated uses and aliases
+request their maximum physical size, so a smaller later occurrence cannot lower
+SVG quality. GPU-resident images do not require evicted CPU pixels to be fetched
+again. Headless rendering waits for this size negotiation before exporting.
+CPU pixel residency and GPU textures are each budgeted at 256 MiB (decoder
+scratch space is separate); aliases count as one CPU allocation and are evicted
+together. A texture larger than the device limit is never uploaded. Renaming a
+reference to another alias reuses the decoded pixels. Each load has its own
+ticket, so completion of a removed reference cannot replace a re-added one.
 
 ## Preferences and platform effects
 

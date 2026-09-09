@@ -20,6 +20,7 @@ pub struct ReaderSnapshot {
 	pub layout: LayoutSnapshot,
 	pub content_version: u64,
 }
+#[derive(Clone)]
 pub struct Request {
 	pub version: u64,
 	pub content_version: u64,
@@ -47,7 +48,14 @@ pub struct Worker {
 	handle: Option<thread::JoinHandle<()>>,
 }
 impl Worker {
+	#[cfg(test)]
 	pub fn new(done: impl Fn(Update) + Send + 'static) -> Self {
+		Self::with_images(true, done)
+	}
+	pub fn with_images(
+		offline: bool,
+		done: impl Fn(Update) + Send + 'static,
+	) -> Self {
 		let inbox = Arc::new((
 			Mutex::new(Inbox {
 				pending: None,
@@ -63,6 +71,8 @@ impl Worker {
 			.stack_size(8 * 1024 * 1024)
 			.spawn(move || {
 				let mut engine = LayoutEngine::new();
+				let mut images = crate::images::Images::new(offline);
+				let mut last: Option<Request> = None;
 				let mut cached: Option<(
 					PathBuf,
 					u64,
@@ -73,13 +83,23 @@ impl Worker {
 						let (lock, wake) = &*thread_inbox;
 						let mut inbox = lock.lock().unwrap();
 						while inbox.pending.is_none() && !inbox.stopped {
-							inbox = wake.wait(inbox).unwrap();
+							inbox = wake
+								.wait_timeout(
+									inbox,
+									std::time::Duration::from_millis(50),
+								)
+								.unwrap()
+								.0;
+							if inbox.pending.is_none() && images.poll() {
+								inbox.pending = last.clone();
+							}
 						}
 						if inbox.stopped {
 							break;
 						}
 						inbox.pending.take().unwrap()
 					};
+					last = Some(request.clone());
 					let mut update = Update {
 						version: request.version,
 						path: request.path.clone(),
@@ -129,8 +149,16 @@ impl Worker {
 									&request.options.stylesheet,
 								)
 								.map_err(|e| format!("Fonts: {e:#}"))?;
-							let layout =
-								engine.layout(&document, &request.options);
+							images.prepare(
+								&document,
+								&request.path,
+								request.content_version,
+							);
+							let layout = engine.layout_with_images(
+								&document,
+								&request.options,
+								&images.snapshot,
+							);
 							update.layout_ms =
 								start.elapsed().as_secs_f64() * 1000.0;
 							Ok(ReaderSnapshot {

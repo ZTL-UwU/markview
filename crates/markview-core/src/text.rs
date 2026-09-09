@@ -184,6 +184,95 @@ pub struct TextCluster {
 }
 
 impl LayoutSnapshot {
+	pub fn same_reading_text(&self, other: &Self) -> bool {
+		self.blocks.len() == other.blocks.len()
+			&& self.blocks.iter().zip(&other.blocks).all(|(a, b)| {
+				std::sync::Arc::ptr_eq(&a.layout, &b.layout)
+					|| (a.layout.text.len() == b.layout.text.len()
+						&& a.layout.text.iter().zip(&b.layout.text).all(
+							|(a, b)| {
+								a.text == b.text && a.separator == b.separator
+							},
+						))
+			})
+	}
+
+	/// Preserve a selection across presentation text changes only when the
+	/// selected text itself survives. Stable node slots keep nested cells aligned.
+	pub fn rebase_selection(
+		&self,
+		next: &Self,
+		selection: TextSelection,
+		old_revision: u64,
+		revision: u64,
+	) -> Option<TextSelection> {
+		if selection.anchor.revision != old_revision
+			|| selection.focus.revision != old_revision
+		{
+			return None;
+		}
+		let (a, b) = selection.ordered();
+		for bi in a.block..=b.block {
+			let old = self.blocks.get(bi)?;
+			let new = next.blocks.get(bi)?;
+			if old.id != new.id
+				|| old.layout.text.len() != new.layout.text.len()
+			{
+				return None;
+			}
+			for (ni, (old, new)) in
+				old.layout.text.iter().zip(&new.layout.text).enumerate()
+			{
+				if (bi, ni) < (a.block, a.node)
+					|| (bi, ni) > (b.block, b.node)
+					|| old.text == new.text
+				{
+					continue;
+				}
+				let (prefix, end, _) = changed_span(&old.text, &new.text);
+				let start = if (bi, ni) == (a.block, a.node) {
+					a.offset
+				} else {
+					0
+				};
+				let stop = if (bi, ni) == (b.block, b.node) {
+					b.offset
+				} else {
+					old.text.len()
+				};
+				if start < end && stop > prefix
+					|| (prefix == end && start < prefix && stop > prefix)
+				{
+					return None;
+				}
+			}
+		}
+		let position = |mut p: TextPosition| -> Option<TextPosition> {
+			let old = &self.blocks.get(p.block)?.layout.text.get(p.node)?.text;
+			let new = &next.blocks.get(p.block)?.layout.text.get(p.node)?.text;
+			if old != new {
+				let (prefix, end, new_end) = changed_span(old, new);
+				if prefix == end && p.offset == prefix {
+					if p.key() == a.key() {
+						p.offset = new_end;
+					}
+				} else if p.offset >= end {
+					p.offset = p.offset - end + new_end;
+				} else if p.offset > prefix {
+					return None;
+				}
+			}
+			if !new.is_char_boundary(p.offset) {
+				return None;
+			}
+			p.revision = revision;
+			Some(p)
+		};
+		Some(TextSelection {
+			anchor: position(selection.anchor)?,
+			focus: position(selection.focus)?,
+		})
+	}
 	/// Select the word nearest a text hit-test position. Uses dictionary
 	/// segmentation, so double-click selects a Chinese or Japanese word rather
 	/// than a single character.
@@ -482,7 +571,39 @@ impl LayoutSnapshot {
 						&& let Some(rect) =
 							self.text_rect(bi, cluster, horizontal)
 					{
-						rects.push(rect);
+						if matches!(
+							block.layout.draws.get(cluster.command),
+							Some(crate::scene::Draw::Image { .. })
+						) {
+							rects.extend([
+								Rect {
+									x: rect.x - 2.,
+									y: rect.y - 2.,
+									w: rect.w + 4.,
+									h: 2.,
+								},
+								Rect {
+									x: rect.x - 2.,
+									y: rect.y + rect.h,
+									w: rect.w + 4.,
+									h: 2.,
+								},
+								Rect {
+									x: rect.x - 2.,
+									y: rect.y,
+									w: 2.,
+									h: rect.h,
+								},
+								Rect {
+									x: rect.x + rect.w,
+									y: rect.y,
+									w: 2.,
+									h: rect.h,
+								},
+							]);
+						} else {
+							rects.push(rect);
+						}
 					}
 				}
 			}
@@ -503,6 +624,9 @@ impl LayoutSnapshot {
 		let mut result = String::new();
 		for (bi, block) in self.blocks.iter().enumerate() {
 			for (ni, node) in block.layout.text.iter().enumerate() {
+				if node.text.is_empty() {
+					continue;
+				}
 				if (bi, ni) < (a.block, a.node) || (bi, ni) > (b.block, b.node)
 				{
 					continue;
@@ -527,6 +651,25 @@ impl LayoutSnapshot {
 		}
 		result.replace('\u{ad}', "")
 	}
+}
+
+/// The differing interval, on grapheme boundaries, after trimming a shared
+/// prefix and suffix. Also maps elided placeholder text back to its full value.
+pub(crate) fn changed_span(old: &str, new: &str) -> (usize, usize, usize) {
+	let prefix = old
+		.graphemes(true)
+		.zip(new.graphemes(true))
+		.take_while(|(a, b)| a == b)
+		.map(|(a, _)| a.len())
+		.sum::<usize>();
+	let suffix = old[prefix..]
+		.graphemes(true)
+		.rev()
+		.zip(new[prefix..].graphemes(true).rev())
+		.take_while(|(a, b)| a == b)
+		.map(|(a, _)| a.len())
+		.sum::<usize>();
+	(prefix, old.len() - suffix, new.len() - suffix)
 }
 
 #[cfg(test)]

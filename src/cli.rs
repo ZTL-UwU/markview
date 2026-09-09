@@ -11,6 +11,7 @@ pub(crate) enum Mode {
 	Smoke,
 }
 pub(crate) struct LaunchOptions {
+	pub(crate) offline: bool,
 	pub(crate) mode: Mode,
 	pub(crate) path: Option<PathBuf>,
 	pub(crate) output: Option<PathBuf>,
@@ -28,6 +29,7 @@ pub(crate) struct LaunchOptions {
 impl Default for LaunchOptions {
 	fn default() -> Self {
 		Self {
+			offline: false,
 			mode: Mode::Window,
 			path: None,
 			output: None,
@@ -90,11 +92,12 @@ fn parse_arguments(
 		match text.as_ref() {
 			"-h" | "--help" => {
 				println!(
-					"Markview — native Markdown reading\n\nmarkview [FILE] [--style ID ...]\nmarkview ss install FILE.mvss.toml [--force]\nmarkview --render FILE --output preview.png [--dark] [--scale 2]\nmarkview --bench FILE [--iterations 100] [--output metrics.json]\nmarkview --smoke-test FILE [--output window.png]\n\nOptions: --width N --height N --column N --font-size N --scroll N\n         --scale N --style ID --dark --light --left --no-hyphens --greedy\n\nKeyboard: Ctrl+O open · Ctrl+T styles · Ctrl+ +/- font size\n          Ctrl+[ / ] column width · Ctrl+L alignment · Ctrl+H hyphenation\n          arrows / PageUp / PageDown / Home / End scroll\n          drag the scrollbar · Shift+wheel scroll wide blocks · Tab/Enter toolbar\n          click a link to open http, https or mailto in the system browser\n          drag / Shift+click select · Ctrl+A all · Ctrl+C copy · Ctrl+, settings\n\n--render and --bench use the real GPU pipeline offscreen.\n--greedy is a typography comparison mode."
+					"Markview — native Markdown reading\n\nmarkview [FILE] [--style ID ...]\nmarkview ss install FILE.mvss.toml [--force]\nmarkview --render FILE --output preview.png [--dark] [--scale 2]\nmarkview --bench FILE [--iterations 100] [--output metrics.json]\nmarkview --smoke-test FILE [--output window.png]\n\nOptions: --width N --height N --column N --font-size N --scroll N\n         --scale N --style ID --dark --light --left --no-hyphens --greedy\n         --offline\n\nImages: local files, file:, http(s): and data: URIs; bitmap and SVG.\n        An image alone in its block is centered, otherwise it is inline.\n        Animated images show their first frame; --offline blocks the network.\n\nKeyboard: Ctrl+O open · Ctrl+T styles · Ctrl+ +/- font size\n          Ctrl+[ / ] column width · Ctrl+L alignment · Ctrl+H hyphenation\n          arrows / PageUp / PageDown / Home / End scroll\n          drag the scrollbar · Shift+wheel scroll wide blocks · Tab/Enter toolbar\n          click a link to open http, https or mailto in the system browser\n          drag / Shift+click select · Ctrl+A all · Ctrl+C copy · Ctrl+, settings\n\n--render and --bench use the real GPU pipeline offscreen.\n--greedy is a typography comparison mode."
 				);
 				return Ok(None);
 			}
 			"--render" => out.mode = Mode::Render,
+			"--offline" => out.offline = true,
 			"--bench" => out.mode = Mode::Bench,
 			"--smoke-test" => out.mode = Mode::Smoke,
 			"--output" | "-o" => {

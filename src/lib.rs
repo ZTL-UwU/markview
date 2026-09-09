@@ -5,6 +5,7 @@ pub mod app;
 mod benchmark;
 mod cli;
 mod file;
+mod images;
 mod platform;
 mod settings;
 mod state;

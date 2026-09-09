@@ -155,6 +155,7 @@ TOML 内联表使用 `=`，不是 JSON 的 `:`。`format_version = 1` 和非负�
 | 文档块 | `body`、`p`、`h1`～`h6`、`blockquote`、`list`、`list_item`、`footnote` |
 | 行内文字 | `em`、`strong`、`strong_em`、`link`、`code`、`del`、`sup` |
 | 代码 | `code_block`、`code_block.label` |
+| 图片 | `img`、`img.caption`、`img.placeholder` |
 | 表格 | `table`、`table.header`、`table.cell` |
 | 标记与公式 | `list.marker`、`task_marker`、`hr`、`math` |
 | 阅读器 | `selection`、`scrollbar` |
@@ -173,12 +174,46 @@ TOML 内联表使用 `=`，不是 JSON 的 `:`。`format_version = 1` 和非负�
 | `hr` | `color`、`border_width`、`space_before`、`space_after` |
 | `math` | `color`、`size`；使用数学引擎专用字体，公式显式非黑色颜色保留 |
 | `selection` | `background` |
+| `img` | `background`、`border_color`、`border_width`、`padding`、`align` |
+| `img.caption` | `source`、`align`、`color`、`font`、`weight`、`size`、`decoration`、`background`、`line_height`、`space_before`、`space_after` |
+| `img.placeholder` | `color`、`font`、`weight`、`size`、`decoration`、`background` |
 | `scrollbar` | 颜色 `track`、`thumb`、`thumb_hover`；尺寸 `thickness`、`thickness_hover`、`overflow_thickness`、`overflow_thickness_hover`、`gutter` |
 | `ui` 和其子表 | 基础文字和颜色字段，额外 `muted`、`accent`、`error`、`border_color` |
 | `ui` | 额外 `shadow`、`scrim` |
 | `ui.button` | 额外 `hover_background`、`active_background`、`disabled_color`、`focus_color` |
 
 UI 不开放控件间距、尺寸或布局；文字缩放以控件的默认文字大小为基础。
+
+## 图片与 caption
+
+```toml
+[img]
+align = "center"
+padding = 0.3
+border_width = 1.0
+border_color = "#D8DEE3"
+background = "#FFFFFF"
+
+[img.caption]
+source = "title_or_alt"
+align = "center"
+size = 0.8
+line_height = 1.4
+space_before = 0.35
+space_after = 0.0
+color = "#69747E"
+
+[img.placeholder]
+size = 0.78
+color = "#69747E"
+background = "#EFF1F3"
+```
+
+`img.align` 接受 `left`、`center`、`right`，仅控制纯图片段落；与正文混排的图片仍是行内元素，不产生文字环绕。表格单元格的居中或右对齐优先。图片边框和内边距占用布局空间，图片连同外框保持在可用宽度内；背景显示在透明像素及内边距后方。本版本不支持图片圆角或裁切。
+
+仅含一张图片（可包裹链接）的段落额外显示 caption，多图段落和正文混排不显示。默认 `source = "title_or_alt"`：优先使用 Markdown 图片标题或 HTML `title`，空白标题回退到 `alt`。可改为 `title`、`alt`，或 `none` 关闭；没有对应文字时不留空白。caption 按纯文本显示，在段落可用宽度内换行，使用独立的对齐与字体规则；超长不可断单词沿用溢出滚动处理。
+
+caption 和 placeholder 都支持 I 形指针、逐字拖选、双击选词及复制，并参与字数统计。已加载的图片本身仍按 alt 参与复制；caption 作为独立文字另行复制。占位框按显示的提示或错误文字选择，选中过省略号时复制对应的完整错误内容。加载状态或 caption 来源变化后，保留未变化文字的选择，清除涉及已替换文字的选择；单纯字号、颜色、宽度变化保留选择。caption 颜色变化只重绘，来源、字号、间距和对齐变化重新排版。
 
 ## 单位与继承
 

@@ -85,7 +85,11 @@ impl App {
 			self.session.counts,
 			self.interaction.selection_counts.map(|(_, counts)| counts),
 			warning,
-			self.interaction.hover.as_deref().unwrap_or(&self.status),
+			self.interaction
+				.hover_image
+				.as_deref()
+				.or(self.interaction.hover.as_deref())
+				.unwrap_or(&self.status),
 			width,
 			height,
 		));

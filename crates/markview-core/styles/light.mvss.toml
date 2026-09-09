@@ -191,6 +191,28 @@ space_after = 0.8
 [selection]
 background = "#315D8647"
 
+[img]
+align = "center"
+padding = 0.0
+border_width = 0.0
+border_color = "#D8DEE3"
+background = "#00000000"
+
+[img.caption]
+source = "title_or_alt"
+align = "center"
+size = 0.8
+line_height = 1.4
+space_before = 0.25
+space_after = 0.0
+color = "#69747E"
+
+[img.placeholder]
+size = 0.78
+color = "#69747E"
+background = "#EFF1F3"
+font = [{ family = "sans-serif" }, { family = "sans-serif[cjk]" }, { family = "emoji" }]
+
 [scrollbar]
 track = "#D8DEE3"
 thumb = "#69747E"

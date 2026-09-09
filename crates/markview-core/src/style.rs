@@ -49,6 +49,9 @@ pub enum Role {
 	Statusbar,
 	Panel,
 	Button,
+	Image,
+	ImageCaption,
+	ImagePlaceholder,
 }
 impl Role {
 	pub const ALL: &'static [(Self, &'static str)] = &[
@@ -88,6 +91,9 @@ impl Role {
 		(Self::Statusbar, "ui.statusbar"),
 		(Self::Panel, "ui.panel"),
 		(Self::Button, "ui.button"),
+		(Self::Image, "img"),
+		(Self::ImageCaption, "img.caption"),
+		(Self::ImagePlaceholder, "img.placeholder"),
 	];
 	pub fn name(self) -> &'static str {
 		Self::ALL.iter().find(|(r, _)| *r == self).unwrap().1
@@ -278,9 +284,50 @@ impl Padding {
 		}
 	}
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptionSource {
+	#[default]
+	None,
+	Title,
+	Alt,
+	TitleOrAlt,
+}
+impl CaptionSource {
+	pub fn text(self, image: &crate::image::ImageSpec) -> Option<&str> {
+		let text = match self {
+			Self::None => return None,
+			Self::Title => &image.title,
+			Self::Alt => &image.alt,
+			Self::TitleOrAlt if !image.title.trim().is_empty() => &image.title,
+			Self::TitleOrAlt => &image.alt,
+		};
+		(!text.trim().is_empty()).then_some(text.trim())
+	}
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextAlign {
+	Left,
+	Center,
+	Right,
+}
+impl From<TextAlign> for crate::document::CellAlign {
+	fn from(value: TextAlign) -> Self {
+		match value {
+			TextAlign::Left => Self::Left,
+			TextAlign::Center => Self::Center,
+			TextAlign::Right => Self::Right,
+		}
+	}
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
+	pub source: Option<CaptionSource>,
+	pub align: Option<TextAlign>,
 	pub color: Option<Color>,
 	pub background: Option<Color>,
 	pub border_color: Option<Color>,
@@ -316,6 +363,8 @@ impl Rule {
 	pub fn overlay(&mut self, higher: &Self) {
 		macro_rules! merge { ($($f:ident),*) => { $(if higher.$f.is_some(){self.$f=higher.$f.clone();})* }; }
 		merge!(
+			source,
+			align,
 			color,
 			background,
 			border_color,
@@ -756,6 +805,7 @@ impl Stylesheet {
 		let mut s = String::new();
 		for &(role, _) in Role::ALL {
 			let r = self.rule(role);
+			s.push_str(&format!("{:?}{:?}", r.source, r.align));
 			s.push_str(&format!(
 				"{role:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
 				r.font,
@@ -864,6 +914,31 @@ fn validate_field(role: Role, key: &str) -> Result<()> {
 	use Role::*;
 	let allowed = if role == Selection {
 		key == "background"
+	} else if role == Image {
+		matches!(
+			key,
+			"background"
+				| "border_color"
+				| "border_width"
+				| "padding" | "align"
+		)
+	} else if role == ImageCaption {
+		matches!(
+			key,
+			"source"
+				| "align" | "color"
+				| "font" | "weight"
+				| "size" | "decoration"
+				| "background"
+				| "line_height"
+				| "space_before"
+				| "space_after"
+		)
+	} else if role == ImagePlaceholder {
+		matches!(
+			key,
+			"color" | "font" | "weight" | "size" | "decoration" | "background"
+		)
 	} else if role == Scrollbar {
 		matches!(
 			key,

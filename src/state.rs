@@ -62,6 +62,7 @@ pub(crate) struct InteractionState {
 	pub(crate) modifiers: ModifiersState,
 	pub(crate) cursor: (f32, f32),
 	pub(crate) hover: Option<String>,
+	pub(crate) hover_image: Option<String>,
 	/// The wide block whose horizontal scrollbar the pointer is over.
 	pub(crate) hover_overflow: Option<(usize, usize)>,
 	pub(crate) focus: Option<Command>,
@@ -255,7 +256,7 @@ impl ReaderSession {
 		// A metadata-only change re-reads identical bytes; only a real content
 		// change may invalidate reading positions.
 		let changed = reader.document.content_id != self.accepted_content_id;
-		if changed {
+		if changed || !self.snapshot.same_reading_text(&reader.layout) {
 			self.counts = reader
 				.layout
 				.select_all(reader.content_version)
@@ -284,7 +285,23 @@ impl ReaderSession {
 		self.snapshot = reader.layout;
 		self.accepted_revision = reader.content_version;
 		self.follow_update = false;
-		self.horizontal.clear();
+		self.horizontal.retain(|(bi, oi), offset| {
+			if changed {
+				return false;
+			}
+			if let Some(o) = self
+				.snapshot
+				.blocks
+				.get(*bi)
+				.and_then(|b| b.layout.overflow.get(*oi))
+			{
+				*offset =
+					offset.clamp(0., (o.content_width - o.rect.w).max(0.));
+				true
+			} else {
+				false
+			}
+		});
 		changed
 	}
 }

@@ -22,12 +22,18 @@ pub enum Patch {
 /// Meaning of a single inline HTML fragment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Inline {
+	Image(crate::image::ImageSpec),
 	/// Drop it: comment, declaration, stray closing tag.
 	Ignore,
 	/// Open a style scope; the matching close tag ends it.
-	Open { name: String, patch: Patch },
+	Open {
+		name: String,
+		patch: Patch,
+	},
 	/// Close the innermost scope with this name.
-	Close { name: String },
+	Close {
+		name: String,
+	},
 	/// A hard line break (`<br>`).
 	Break,
 	/// Unsupported markup: keep the literal source.
@@ -37,6 +43,7 @@ pub enum Inline {
 /// A styled run produced from a raw HTML block.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Span {
+	pub image: Option<crate::image::ImageSpec>,
 	pub text: String,
 	/// Style patches in opening order.
 	pub styles: Vec<Patch>,
@@ -59,6 +66,7 @@ pub enum Block {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Tag {
+	Image(crate::image::ImageSpec),
 	/// Comment, declaration or processing instruction.
 	Comment,
 	Open {
@@ -84,6 +92,7 @@ enum Token {
 /// Interpret one inline HTML fragment as produced by the Markdown parser.
 pub fn inline(fragment: &str) -> Inline {
 	match classify(fragment) {
+		Tag::Image(image) => Inline::Image(image),
 		Tag::Comment => Inline::Ignore,
 		Tag::Open { name, patch } => Inline::Open { name, patch },
 		Tag::Close { name } => Inline::Close { name },
@@ -110,6 +119,11 @@ pub fn block(source: &str) -> Block {
 			Token::Tag(t) => t,
 		};
 		match classify(&fragment) {
+			Tag::Image(image) => spans.push(Span {
+				image: Some(image),
+				text: String::new(),
+				styles: styles.clone(),
+			}),
 			Tag::Comment => {}
 			Tag::Unknown => return Block::Unsupported,
 			Tag::Void { name } => {
@@ -187,6 +201,20 @@ fn classify(fragment: &str) -> Tag {
 		return Tag::Void { name };
 	}
 	let attrs = &body[name.len()..];
+	if name == "img" {
+		let dimension = |name| {
+			attribute(attrs, name)
+				.and_then(|v| v.parse::<u32>().ok())
+				.filter(|v| *v > 0)
+		};
+		return Tag::Image(crate::image::ImageSpec {
+			src: attribute(attrs, "src").unwrap_or_default(),
+			alt: attribute(attrs, "alt").unwrap_or_default(),
+			title: attribute(attrs, "title").unwrap_or_default(),
+			width: dimension("width"),
+			height: dimension("height"),
+		});
+	}
 	if let Some(patch) = patch(&name, attrs) {
 		return Tag::Open { name, patch };
 	}
@@ -239,38 +267,41 @@ fn tag_name(body: &str) -> &str {
 /// Read one attribute value; `class`, `style` and the rest are simply ignored.
 fn attribute(attrs: &str, name: &str) -> Option<String> {
 	let mut rest = attrs;
-	loop {
-		let start = rest.find(|c: char| c.is_ascii_alphabetic())?;
-		rest = &rest[start..];
+	while !rest.is_empty() {
+		rest = rest.trim_start().trim_start_matches('/');
 		let end = rest
-			.find(|c: char| {
-				!(c.is_ascii_alphanumeric() || c == '-' || c == ':' || c == '_')
-			})
+			.find(|c: char| c.is_whitespace() || c == '=')
 			.unwrap_or(rest.len());
-		let key = &rest[..end];
-		let after = rest[end..].trim_start();
-		if key.eq_ignore_ascii_case(name) {
-			let after = after.strip_prefix('=')?.trim_start();
-			let value = match after.chars().next() {
-				Some(quote @ ('"' | '\'')) => {
-					let body = &after[1..];
-					&body[..body.find(quote)?]
-				}
-				_ => {
-					let len =
-						after.find(char::is_whitespace).unwrap_or(after.len());
-					&after[..len]
-				}
-			};
-			return Some(value.to_string());
+		if end == 0 {
+			rest = &rest[1..];
+			continue;
 		}
-		rest = &rest[end..];
-		if rest.is_empty() {
-			return None;
+		let key = &rest[..end];
+		rest = rest[end..].trim_start();
+		let Some(value) = rest.strip_prefix('=') else {
+			continue;
+		};
+		rest = value.trim_start();
+		let value = match rest.chars().next() {
+			Some(quote @ ('"' | '\'')) => {
+				let body = &rest[1..];
+				let end = body.find(quote)?;
+				rest = &body[end + 1..];
+				&body[..end]
+			}
+			_ => {
+				let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+				let value = &rest[..end];
+				rest = &rest[end..];
+				value
+			}
+		};
+		if key.eq_ignore_ascii_case(name) {
+			return Some(html_escape::decode_html_entities(value).into_owned());
 		}
 	}
+	None
 }
-
 fn tokenize(source: &str) -> Vec<Token> {
 	let mut tokens = Vec::new();
 	let mut i = 0;
@@ -358,12 +389,14 @@ fn push_span(spans: &mut Vec<Span>, text: String, styles: &[Patch]) {
 		return;
 	}
 	if let Some(last) = spans.last_mut()
+		&& last.image.is_none()
 		&& last.styles == styles
 	{
 		last.text.push_str(&text);
 		return;
 	}
 	spans.push(Span {
+		image: None,
 		text,
 		styles: styles.to_vec(),
 	});
@@ -373,6 +406,10 @@ fn push_span(spans: &mut Vec<Span>, text: String, styles: &[Patch]) {
 fn normalize(spans: Vec<Span>) -> Vec<Span> {
 	let mut out: Vec<Span> = Vec::new();
 	for span in spans {
+		if span.image.is_some() {
+			out.push(span);
+			continue;
+		}
 		let text = if out.is_empty() {
 			span.text.trim_start()
 		} else {
@@ -383,6 +420,7 @@ fn normalize(spans: Vec<Span>) -> Vec<Span> {
 		}
 		let mut merged = false;
 		if let Some(last) = out.last_mut()
+			&& last.image.is_none()
 			&& last.styles == span.styles
 		{
 			last.text.push_str(text);
@@ -390,6 +428,7 @@ fn normalize(spans: Vec<Span>) -> Vec<Span> {
 		}
 		if !merged {
 			out.push(Span {
+				image: None,
 				text: text.to_string(),
 				styles: span.styles,
 			});
@@ -399,7 +438,7 @@ fn normalize(spans: Vec<Span>) -> Vec<Span> {
 		.iter()
 		.enumerate()
 		.rev()
-		.find(|(_, span)| !span.text.trim().is_empty())
+		.find(|(_, span)| span.image.is_some() || !span.text.trim().is_empty())
 		.map_or(0, |(i, _)| i + 1);
 	out.truncate(keep);
 	if let Some(last) = out.last_mut() {
@@ -434,7 +473,7 @@ mod tests {
 			inline("<a href=\"/a?x=1&amp;y=2\" title=\"z\">"),
 			Inline::Open {
 				name: "a".into(),
-				patch: Patch::Link("/a?x=1&amp;y=2".into())
+				patch: Patch::Link("/a?x=1&y=2".into())
 			}
 		);
 		assert_eq!(
@@ -453,7 +492,7 @@ mod tests {
 	fn unsupported_markup_keeps_the_source() {
 		assert_eq!(inline("<span>"), Inline::Literal);
 		assert_eq!(inline("</span>"), Inline::Literal);
-		assert_eq!(inline("<img src=\"a.png\">"), Inline::Literal);
+		assert!(matches!(inline("<img src=\"a.png\">"), Inline::Image(_)));
 		assert_eq!(inline("not a tag"), Inline::Literal);
 	}
 
@@ -466,6 +505,7 @@ mod tests {
 			Block::Heading {
 				level: 2,
 				text: vec![Span {
+					image: None,
 					text: "Title".into(),
 					styles: vec![]
 				}]
@@ -475,14 +515,17 @@ mod tests {
 			block("<p>a <em>b</em> c</p>\n"),
 			Block::Paragraph(vec![
 				Span {
+					image: None,
 					text: "a ".into(),
 					styles: vec![]
 				},
 				Span {
+					image: None,
 					text: "b".into(),
 					styles: vec![Patch::Italic]
 				},
 				Span {
+					image: None,
 					text: " c".into(),
 					styles: vec![]
 				},
@@ -506,6 +549,7 @@ mod tests {
 			Block::Heading {
 				level: 1,
 				text: vec![Span {
+					image: None,
 					text: "Hello world".into(),
 					styles: vec![]
 				}]
@@ -542,6 +586,7 @@ mod tests {
 		assert_eq!(
 			block("<p>a < b</p>\n"),
 			Block::Paragraph(vec![Span {
+				image: None,
 				text: "a < b".into(),
 				styles: vec![]
 			}])
@@ -551,6 +596,7 @@ mod tests {
 			Block::Heading {
 				level: 2,
 				text: vec![Span {
+					image: None,
 					text: "中文".into(),
 					styles: vec![]
 				}]

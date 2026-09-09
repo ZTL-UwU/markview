@@ -141,6 +141,11 @@ impl View<'_> {
 }
 
 pub struct Renderer {
+	image_pipeline: wgpu::RenderPipeline,
+	image_cache: HashMap<(String, u64), (wgpu::BindGroup, u64)>,
+	image_runs: Vec<(std::ops::Range<u32>, (String, u64))>,
+	image_demand: HashMap<String, markview_core::image::ImageDemand>,
+	images: markview_core::image::ImageSnapshot,
 	pointer: Option<(f32, f32)>,
 	stylesheet: Option<Arc<markview_core::style::Stylesheet>>,
 	instance: wgpu::Instance,
@@ -444,6 +449,17 @@ impl Renderer {
 			})] }),
 			primitive: Default::default(), depth_stencil: None, multisample: Default::default(), multiview_mask: None, cache: None,
 		});
+		let image_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+			label: Some("sRGB images"), layout: None,
+			vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[wgpu::VertexBufferLayout {
+				array_stride: std::mem::size_of::<Vertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex,
+				attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4],
+			}] },
+			fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("image_fs"), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState {
+				format, blend: Some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL,
+			})] }),
+			primitive: Default::default(), depth_stencil: None, multisample: Default::default(), multiview_mask: None, cache: None,
+		});
 		let atlas = device.create_texture(&wgpu::TextureDescriptor {
 			label: Some("4 MiB glyph mask atlas"),
 			size: wgpu::Extent3d {
@@ -489,6 +505,11 @@ impl Renderer {
 			mapped_at_creation: false,
 		});
 		let mut r = Self {
+			image_pipeline,
+			image_cache: HashMap::new(),
+			image_runs: Vec::new(),
+			image_demand: HashMap::new(),
+			images: Default::default(),
 			instance,
 			surface,
 			config,
@@ -529,7 +550,13 @@ impl Renderer {
 	}
 
 	pub fn gpu_bytes(&self) -> u64 {
-		(ATLAS_SIZE * ATLAS_SIZE) as u64 + self.vertex_capacity as u64
+		(ATLAS_SIZE * ATLAS_SIZE) as u64
+			+ self.vertex_capacity as u64
+			+ self
+				.image_cache
+				.values()
+				.map(|(_, bytes)| bytes)
+				.sum::<u64>()
 	}
 	pub fn clear_raster_cache(&mut self) {
 		self.reset_atlas();
@@ -948,6 +975,137 @@ impl Renderer {
 		hovered: bool,
 	) {
 		match draw {
+			Draw::Image {
+				src, version, rect, ..
+			} => {
+				let rect = Rect {
+					x: rect.x + dx,
+					y: rect.y + dy,
+					..*rect
+				};
+				if rect.intersect(clip).is_none() {
+					return;
+				}
+				let key = (src.clone(), *version);
+				let demand = markview_core::image::ImageDemand {
+					size: (
+						(rect.w * view.scale).ceil().clamp(1., 4000.) as u32,
+						(rect.h * view.scale).ceil().clamp(1., 4000.) as u32,
+					),
+					needs_pixels: !self.image_cache.contains_key(&key),
+				};
+				self.image_demand
+					.entry(src.clone())
+					.and_modify(|d| d.merge(demand))
+					.or_insert(demand);
+				if !self.image_cache.contains_key(&key) {
+					let pixels = self
+						.images
+						.pixels
+						.decoded
+						.lock()
+						.unwrap()
+						.get(src)
+						.cloned();
+					let Some(pixels) = pixels else {
+						return;
+					};
+					if pixels.width
+						> self.device.limits().max_texture_dimension_2d
+						|| pixels.height
+							> self.device.limits().max_texture_dimension_2d
+					{
+						return;
+					}
+					let bytes = pixels.rgba.len() as u64;
+					if self.image_cache.values().map(|(_, b)| b).sum::<u64>()
+						+ bytes > 256 * 1024 * 1024
+					{
+						self.image_cache.retain(|key, _| {
+							self.image_runs.iter().any(|(_, used)| used == key)
+						});
+					}
+					if self.image_cache.values().map(|(_, b)| b).sum::<u64>()
+						+ bytes > 256 * 1024 * 1024
+					{
+						return;
+					}
+					let texture =
+						self.device.create_texture(&wgpu::TextureDescriptor {
+							label: Some("document image"),
+							size: wgpu::Extent3d {
+								width: pixels.width,
+								height: pixels.height,
+								depth_or_array_layers: 1,
+							},
+							mip_level_count: 1,
+							sample_count: 1,
+							dimension: wgpu::TextureDimension::D2,
+							format: wgpu::TextureFormat::Rgba8UnormSrgb,
+							usage: wgpu::TextureUsages::TEXTURE_BINDING
+								| wgpu::TextureUsages::COPY_DST,
+							view_formats: &[],
+						});
+					self.queue.write_texture(
+						texture.as_image_copy(),
+						&pixels.rgba,
+						wgpu::TexelCopyBufferLayout {
+							offset: 0,
+							bytes_per_row: Some(pixels.width * 4),
+							rows_per_image: Some(pixels.height),
+						},
+						texture.size(),
+					);
+					let sampler =
+						self.device.create_sampler(&wgpu::SamplerDescriptor {
+							mag_filter: wgpu::FilterMode::Linear,
+							min_filter: wgpu::FilterMode::Linear,
+							..Default::default()
+						});
+					let group = self.device.create_bind_group(
+						&wgpu::BindGroupDescriptor {
+							label: Some("document image"),
+							layout: &self
+								.image_pipeline
+								.get_bind_group_layout(0),
+							entries: &[
+								wgpu::BindGroupEntry {
+									binding: 0,
+									resource:
+										wgpu::BindingResource::TextureView(
+											&texture.create_view(
+												&Default::default(),
+											),
+										),
+								},
+								wgpu::BindGroupEntry {
+									binding: 1,
+									resource: wgpu::BindingResource::Sampler(
+										&sampler,
+									),
+								},
+							],
+						},
+					);
+					self.image_cache.insert(key.clone(), (group, bytes));
+				}
+				let start = self.vertices.len() as u32;
+				self.image_demand.get_mut(src).unwrap().needs_pixels = false;
+				self.quad(
+					rect,
+					Rect {
+						x: 0.,
+						y: 0.,
+						w: ATLAS_SIZE as f32,
+						h: ATLAS_SIZE as f32,
+					},
+					[1.; 4],
+					clip,
+					view,
+				);
+				self.image_runs
+					.push((start..self.vertices.len() as u32, key));
+			}
 			Draw::Glyph(g) => self.glyph_quad(
 				g,
 				dx,
@@ -1184,6 +1342,16 @@ impl Renderer {
 		overlay: &[Draw],
 	) {
 		self.vertices.clear();
+		self.image_runs.clear();
+		self.images = snapshot.images.clone();
+		self.image_cache.retain(|(src, version), _| {
+			snapshot
+				.images
+				.entries
+				.get(src)
+				.is_some_and(|i| i.version == *version && i.error.is_none())
+		});
+		self.image_demand.clear();
 		let full = Rect {
 			x: 0.0,
 			y: 0.0,
@@ -1262,6 +1430,7 @@ impl Renderer {
 						),
 					)
 					| Draw::Glyph(_)
+					| Draw::Image { .. }
 					| Draw::Math { .. } => foreground.push((draw, dx, dy, clip, hovered)),
 					Draw::Rect(..) | Draw::Box { .. } => {
 						backgrounds.push((draw, dx, dy, clip, hovered))
@@ -1352,6 +1521,13 @@ impl Renderer {
 		for draw in overlay {
 			self.draw(draw, 0.0, 0.0, full, view, false);
 		}
+		// Publish atomically; the loader must never observe a half-painted frame.
+		self.images
+			.pixels
+			.demand
+			.lock()
+			.unwrap()
+			.clone_from(&self.image_demand);
 	}
 
 	pub fn render(
@@ -1422,7 +1598,19 @@ impl Renderer {
 			pass.set_pipeline(&self.pipeline);
 			pass.set_bind_group(0, &self.bind_group, &[]);
 			pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-			pass.draw(0..self.vertices.len() as u32, 0..1);
+			let mut cursor = 0;
+			for (range, key) in &self.image_runs {
+				pass.set_pipeline(&self.pipeline);
+				pass.set_bind_group(0, &self.bind_group, &[]);
+				pass.draw(cursor..range.start, 0..1);
+				pass.set_pipeline(&self.image_pipeline);
+				pass.set_bind_group(0, &self.image_cache[key].0, &[]);
+				pass.draw(range.clone(), 0..1);
+				cursor = range.end;
+			}
+			pass.set_pipeline(&self.pipeline);
+			pass.set_bind_group(0, &self.bind_group, &[]);
+			pass.draw(cursor..self.vertices.len() as u32, 0..1);
 		}
 		Ok(self.queue.submit([encoder.finish()]))
 	}

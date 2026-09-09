@@ -19,3 +19,6 @@ fn linear(c: vec3<f32>) -> vec3<f32> {
 @fragment fn fs(in: VertexOut) -> @location(0) vec4<f32> {
     return vec4<f32>(in.color.rgb, in.color.a * textureSample(atlas, atlas_sampler, in.uv).r);
 }
+@fragment fn image_fs(in: VertexOut) -> @location(0) vec4<f32> {
+    return textureSample(atlas, atlas_sampler, in.uv);
+}

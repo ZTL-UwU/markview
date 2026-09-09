@@ -83,6 +83,12 @@ impl Rect {
 
 #[derive(Clone, Debug)]
 pub enum Draw {
+	Image {
+		src: String,
+		version: u64,
+		rect: Rect,
+		title: String,
+	},
 	Glyph(Glyph),
 	Rect(Rect, Paint),
 	Box {
@@ -106,7 +112,9 @@ impl Draw {
 				g.x += x;
 				g.y += y;
 			}
-			Self::Rect(r, _) | Self::Box { rect: r, .. } => {
+			Self::Rect(r, _)
+			| Self::Box { rect: r, .. }
+			| Self::Image { rect: r, .. } => {
 				r.x += x;
 				r.y += y;
 			}
@@ -158,6 +166,7 @@ pub struct PlacedBlock {
 
 #[derive(Clone, Debug, Default)]
 pub struct LayoutSnapshot {
+	pub images: crate::image::ImageSnapshot,
 	pub document_box: Option<Draw>,
 	pub blocks: Vec<PlacedBlock>,
 	pub height: f32,
@@ -168,6 +177,31 @@ pub struct LayoutSnapshot {
 }
 
 impl LayoutSnapshot {
+	pub fn image_title_at(
+		&self,
+		x: f32,
+		y: f32,
+		horizontal: &HashMap<(usize, usize), f32>,
+	) -> Option<&str> {
+		for (bi, b) in self.blocks.iter().enumerate() {
+			if y < b.y || y > b.y + b.layout.height {
+				continue;
+			}
+			for (i, d) in b.layout.draws.iter().enumerate() {
+				if let Draw::Image { rect, title, .. } = d {
+					let (offset, clip) =
+						b.layout.command_view(i, bi, horizontal);
+					if !title.is_empty()
+						&& clip.is_none_or(|r| r.contains(x, y - b.y))
+						&& rect.contains(x + offset, y - b.y)
+					{
+						return Some(title);
+					}
+				}
+			}
+		}
+		None
+	}
 	/// The link under a point in document coordinates: `x` from the column's
 	/// left edge, `y` from the top of the document including the scroll offset.
 	pub fn link_at(

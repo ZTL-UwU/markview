@@ -11,6 +11,7 @@ use std::{collections::HashMap, fs, path::Path, time::Instant};
 
 #[derive(Serialize, Clone)]
 pub struct Timing {
+	pub image_prepare_ms: f64,
 	pub read_ms: f64,
 	pub parse_ms: f64,
 	pub layout_ms: f64,
@@ -90,11 +91,13 @@ pub fn run(
 	theme: Theme,
 	iterations: usize,
 	options: LayoutOptions,
+	offline: bool,
 ) -> Result<()> {
 	let init = Instant::now();
 	let mut renderer = pollster::block_on(Renderer::new(None))?;
 	renderer.set_stylesheet(options.stylesheet.clone());
 	let mut engine = LayoutEngine::new();
+	let mut images = crate::images::Images::new(offline);
 	engine.validate_stylesheet(&options.stylesheet)?;
 	let _ =
 		engine.label("Markview", 14.0, 0.0, 0.0, crate::layout::Paint::Text);
@@ -129,17 +132,36 @@ pub fn run(
 		let t = Instant::now();
 		let doc = document::parse(text);
 		let parse_ms = t.elapsed().as_secs_f64() * 1000.0;
+		let image_start = Instant::now();
+		images.prepare(&doc, path, 1);
+		images.wait();
+		let mut image_prepare_ms = image_start.elapsed().as_secs_f64() * 1000.;
 		let t = Instant::now();
-		latest = engine.layout(&doc, &options);
-		let layout_ms = t.elapsed().as_secs_f64() * 1000.0;
+		latest = engine.layout_with_images(&doc, &options, &images.snapshot);
+		let mut layout_ms = t.elapsed().as_secs_f64() * 1000.0;
 		let t = Instant::now();
 		let submission = renderer.render(&latest, &view, &[], &target)?;
 		renderer.wait(Some(submission))?;
+		let mut gpu_prepare_and_complete_ms = t.elapsed().as_secs_f64() * 1000.;
+		let t = Instant::now();
+		images.wait();
+		image_prepare_ms += t.elapsed().as_secs_f64() * 1000.;
+		if latest.images.entries != images.snapshot.entries {
+			let t = Instant::now();
+			latest =
+				engine.layout_with_images(&doc, &options, &images.snapshot);
+			layout_ms += t.elapsed().as_secs_f64() * 1000.;
+			let t = Instant::now();
+			let submission = renderer.render(&latest, &view, &[], &target)?;
+			renderer.wait(Some(submission))?;
+			gpu_prepare_and_complete_ms += t.elapsed().as_secs_f64() * 1000.;
+		}
 		Ok(Timing {
+			image_prepare_ms,
 			read_ms,
 			parse_ms,
 			layout_ms,
-			gpu_prepare_and_complete_ms: t.elapsed().as_secs_f64() * 1000.0,
+			gpu_prepare_and_complete_ms,
 			total_ms: start.elapsed().as_secs_f64() * 1000.0,
 		})
 	};

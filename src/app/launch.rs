@@ -39,6 +39,7 @@ pub(super) fn run() -> Result<()> {
 				args.theme.unwrap_or_default(),
 				args.iterations,
 				args.options,
+				args.offline,
 			);
 		}
 		let mut renderer = pollster::block_on(Renderer::new(None))?;
@@ -46,7 +47,16 @@ pub(super) fn run() -> Result<()> {
 		let mut engine = LayoutEngine::new();
 		engine.validate_stylesheet(&args.options.stylesheet)?;
 		let doc = document::parse(read_document(path)?);
-		let snapshot = engine.layout(&doc, &args.options);
+		let mut images = crate::images::Images::new(args.offline);
+		images.prepare(&doc, path, 1);
+		images.wait();
+		let mut snapshot =
+			engine.layout_with_images(&doc, &args.options, &images.snapshot);
+		for info in images.snapshot.entries.values() {
+			if let Some(error) = &info.error {
+				eprintln!("Image: {error}");
+			}
+		}
 		let target = renderer.offscreen(args.width, args.height);
 		let horizontal = HashMap::new();
 		let view = View {
@@ -73,6 +83,23 @@ pub(super) fn run() -> Result<()> {
 			&target.create_view(&Default::default()),
 		)?;
 		renderer.wait(Some(index))?;
+		// The first frame publishes the actual physical sizes, including DPI
+		// and explicit HTML dimensions. Export the settled vector raster.
+		images.wait();
+		if snapshot.images.entries != images.snapshot.entries {
+			snapshot = engine.layout_with_images(
+				&doc,
+				&args.options,
+				&images.snapshot,
+			);
+			let index = renderer.render(
+				&snapshot,
+				&view,
+				&[],
+				&target.create_view(&Default::default()),
+			)?;
+			renderer.wait(Some(index))?;
+		}
 		let output = args.output.as_ref().unwrap();
 		if let Some(parent) =
 			output.parent().filter(|p| !p.as_os_str().is_empty())

@@ -60,15 +60,17 @@ macOS 可用 Command 代替 Ctrl。默认字号 18、正文行距至少 1.65、�
 | 脚注、GitHub 提示块 | 编号脚注与提示引用块 |
 | 行内、块级数学 | RaTeX 原生解析与绘制 |
 | 原始 HTML | 注释忽略；与 Markdown 同义的简单标签按相同语义排版，属性忽略；其余标签显示源码 |
-| 图片 | 显示替代文本，不读取本地图片或发起网络请求 |
+| 图片 | 独立成段时居中，与文字同段时按行内元素排版；支持本地、`file:`、`http(s):` 与 `data:` 地址 |
 
 数学分隔符采用 Comrak 的 `math_dollars`、`math_code` 规则：`$...$`、`$$...$$`、GitHub 数学代码片段和标记为 `math` 的围栏代码块。金额中的美元符号可写为 `\$`。本版不启用 `\(...\)` / `\[...\]` 扩展。
 
-原始 HTML 只解释与 Markdown 同义的简单标签：行内 `<b>` `<strong>` `<i>` `<em>` `<del>` `<s>` `<code>` `<kbd>` `<sup>` `<a href>` `<br>`，以及独占一行的 `<h1>`–`<h6>`、`<p>`、`<hr>`。`<!-- 注释 -->` 直接丢弃，`class`、`style` 等属性不参与解析，其他标签仍按源码显示。
+原始 HTML 只解释与 Markdown 同义的简单标签：行内 `<b>` `<strong>` `<i>` `<em>` `<del>` `<s>` `<code>` `<kbd>` `<sup>` `<a href>` `<br>`，以及独占一行的 `<h1>`–`<h6>`、`<p>`、`<hr>`。`<img src alt title width height>` 也按图片语义处理，只写一个方向时按原始比例补全另一个方向。`<!-- 注释 -->` 直接丢弃，`class`、`style` 等属性不参与解析，其他标签仍按源码显示。
+
+图片独立成段时居中显示，宽度不超过栏宽；与文字同处一段时按行内元素排版，行高随图片增高，文字位于图片上方或下方，不会环绕在两侧。位图支持 PNG、JPEG、GIF、WebP、BMP 和 ICO；SVG 使用矢量渲染，脚本与外部资源不会加载；动图只显示第一帧。地址相对文档所在目录解析，也接受 `file:`、`http(s):` 和 `data:` 地址；`--offline` 拒绝网络图片。加载失败时占位框显示替代文本与原因，图片本身按替代文本复制，图注和占位文字支持逐字选择复制。
 
 RaTeX 支持分式、根号、上下标、积分、矩阵等；不支持的语法、尚未写完的公式或超过 16 KiB 的单条公式显示 LaTeX 源码。行内公式内部不换行，超宽公式单独占行并可横向滚动。数学中的黑色使用样式表的公式文字颜色，其他显式颜色保留。
 
-目前支持基本选择复制和持久化阅读设置。搜索、目录、图片、高亮、系统文件关联、完整辅助功能、打印导出及多文档工作区尚未实现。链接只把 http、https、mailto 交给系统处理；相对路径与站内锚点不跳转。优先验证中英文；其他复杂文字继承底层塑形能力，但混合方向段落尚未做全面质量验证。彩色 emoji 暂用单色轮廓显示。GFM 的 HTML 显示策略与网页渲染不同。
+目前支持基本选择复制、图片渲染和持久化阅读设置。搜索、目录、高亮、系统文件关联、完整辅助功能、打印导出及多文档工作区尚未实现。链接只把 http、https、mailto 交给系统处理；相对路径与站内锚点不跳转。优先验证中英文；其他复杂文字继承底层塑形能力，但混合方向段落尚未做全面质量验证。彩色 emoji 暂用单色轮廓显示。GFM 的 HTML 显示策略与网页渲染不同。
 
 选择复制输出阅读文本：代码保留原始空白，表格用制表符分列、换行分行，公式按整体选择并输出 LaTeX。排版生成的断字号不会被复制。改字号、栏宽保留选择；文件语义内容变化后清除选择（仅元数据变化或读取失败则保留）。拖选到正文视口上下边缘可自动滚动。第一版不提供 Markdown 源码复制、双击选词和完整键盘选择导航。
 
@@ -94,6 +96,8 @@ hyphenate = true
 
 ## 实现与边界
 
+图片样式通过 MVSS 的 `img`、`img.caption`、`img.placeholder` 控制。独立单图默认显示 caption，优先使用 title，否则使用 alt；`[img.caption] source = "none"` 可关闭。图注支持字体、颜色、对齐、行距及上下间距，图片支持背景、边框和内边距。详见 [图片与 caption 配置](docs/stylesheets.md#图片与-caption)。
+
 采用三个 crate 的 Cargo workspace：`markview` 管理桌面应用与平台服务，`markview-core` 管理文档、阅读文本和排版，`markview-render` 管理 GPU 渲染。根目录的运行命令不变。
 
 `Comrak AST → Document → ReaderSnapshot（文档 + LayoutSnapshot）→ 可见区绘制 → wgpu`
@@ -104,7 +108,8 @@ hyphenate = true
 - `layout` 使用 Parley/Fontique 塑形，ICU4X 提供合法断点，hypher 提供英语断字。`linebreak` 实现整段动态规划、伸缩胶、断字惩罚、相邻行松紧等级与强制换行。断行后重新塑形并校验宽度。正文默认两端对齐、末行左对齐；极松的行允许保留参差行尾，避免无限拉大空隙。排版同时按行记录链接片段矩形，供悬停与点击命中测试，跨行链接不会把中间的正文一并框住。
 - 正常段落使用优化断行。每段最多评估 250,000 次候选连接，超预算或无可行方案时按合法断点贪心降级；诊断工具报告降级数。不可拆分对象保持原尺寸并局部滚动。
 - `math` 直接使用 RaTeX DisplayList，缓存最多 256 个公式结果。正文与数学共用 GPU 字形缓存。
-- `render` 使用 Swash 栅格化字形，tiny-skia 栅格化特殊数学路径，固定 4 MiB R8 图集，按实际 DPI 缓存。字形使用四档水平亚像素相位，基线对齐物理像素，位图逐像素显示，避免小数位置上的二次滤波导致文字模糊。大路径分块处理。图集满时清空并重建当前可见帧，不使用已失效的 UV；单个可见帧仍超过图集上限时报告错误。
+- `image` 保存图片语义、解码后的像素和按来源索引的元数据。加载在独立线程完成：单张最多 32 MiB、1600 万像素，网络 15 s 超时且重定向只走 http(s)，`--offline` 拒绝网络来源，解码线程捕获 panic 并转为错误。像素到达后复用同一内容版本重新布局，只失效受影响的块，选择与阅读位置不变。
+- `render` 使用 Swash 栅格化字形，tiny-skia 栅格化特殊数学路径，固定 4 MiB R8 图集，按实际 DPI 缓存。字形使用四档水平亚像素相位，基线对齐物理像素，位图逐像素显示，避免小数位置上的二次滤波导致文字模糊。大路径分块处理。图集满时清空并重建当前可见帧，不使用已失效的 UV；单个可见帧仍超过图集上限时报告错误。图片按来源和版本缓存为 sRGB 纹理并线性采样，可见 SVG 的实际显示尺寸回传给加载器用于按需重绘；CPU 像素与 GPU 纹理各有 256 MiB 预算。
 - `watch` 监控父目录，30 ms 静默防抖、100 ms 最长等待；另有 500 ms 元数据轮询补偿。独立的 `worker` 只保存最新待处理请求，主线程只接收最新版本结果；字号与栏宽调整复用已解析文档，不重新读文件。布局缓存最多 256 个块 / 100,000 条绘制指令，仅保留当前文档的缓存。
 - `app` 在选择、控件或指针下的链接变化时重绘：悬停显示目标地址并改为手型光标，点击通过 `open` 调用系统默认程序，只放行 http、https、mailto 三种 scheme。
 - 静止阅读时事件循环等待事件，不持续绘制。字形资源、布局快照与临时缓冲仍可能随文档复杂度增长；100 MB 目标适用于声明的普通文档基准，不是任意输入的硬上限。
@@ -120,10 +125,14 @@ cargo build --release --locked
 # 设置面板与选择高亮的真实 GPU 回归截图
 cargo test --locked settings_and_selection_frame -- --ignored
 
+# 解码后的位图与 SVG 确实进入 GPU 帧的真实管线回归
+cargo test --locked gpu_frame_draws_decoded_images -- --ignored
+
 # 使用真实 wgpu 管线离屏绘制，输出 PNG
 target/release/markview --render examples/welcome.md --output artifacts/light.png
 target/release/markview --render examples/welcome.md --dark --scroll 780 --output artifacts/dark.png
 target/release/markview --render examples/welcome.md --scale 2 --width 1600 --height 1200 --output artifacts/2x.png
+target/release/markview --render examples/images.md --width 800 --height 1800 --output artifacts/images.png
 
 # 原生窗口首帧冒烟测试；首次文档帧完成后自动退出
 target/release/markview --smoke-test examples/welcome.md --output artifacts/window.png
@@ -136,7 +145,7 @@ target/release/markview --bench tests/fixtures/ordinary-10k.md --output artifact
 target/release/markview --bench tests/fixtures/math-10k.md --output artifacts/math-bench.json
 ```
 
-`--render` / `--bench` 的 width、height 指物理像素，`--scale` 指像素与逻辑单位之比。窗口模式使用系统 DPI，width、height 指逻辑窗口尺寸。`--greedy` 供同字体、同栏宽的断行对照；`--left`、`--no-hyphens`、`--font-size`、`--column` 可调整排版。
+`--render` / `--bench` 的 width、height 指物理像素，`--scale` 指像素与逻辑单位之比。窗口模式使用系统 DPI，width、height 指逻辑窗口尺寸。`--greedy` 供同字体、同栏宽的断行对照；`--left`、`--no-hyphens`、`--font-size`、`--column` 可调整排版；`--offline` 禁用网络图片。
 
 窗口启动时在终端打印实际 DPR、物理帧缓冲尺寸和逻辑窗口尺寸；跨屏缩放变化也会记录。无需手动把 DPR 固定为 2，系统的分数缩放比例同样会用于字形栅格化。
 

@@ -31,6 +31,7 @@ font_size = 18.0
 width = 760.0
 justify = true
 hyphenate = true
+cjk-type = "none" # SC、TC、JP 或 none
 ```
 
 `paper > dark > light 基础`：左侧优先，同一元素逐字段合并，所有数组整体替换。样式表可以只写少数覆盖项。
@@ -41,6 +42,8 @@ hyphenate = true
 [[fontdef]]
 id = "monospace"
 lookfor = ["Consolas", "Fira Code"]
+
+# 同一 id 可用 type = "SC"、"TC"、"JP" 分别定义 CJK 变种；省略 type 表示普通字体
 
 [code]
 font = [{ family = "monospace" }]

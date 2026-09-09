@@ -154,12 +154,20 @@ impl App {
 			Command::Hyphens => {
 				self.settings.hyphenate = !self.settings.hyphenate
 			}
+			Command::CjkType(value) => {
+				self.settings.cjk_type = value;
+				self.setting_changed(Some(Setting::CjkType));
+				self.request(false);
+				self.redraw();
+				return;
+			}
 		}
 		let field = match action {
 			Command::Smaller | Command::Larger => Some(Setting::FontSize),
 			Command::Narrower | Command::Wider => Some(Setting::Width),
 			Command::Align => Some(Setting::Justify),
 			Command::Hyphens => Some(Setting::Hyphenate),
+			Command::CjkType(_) => Some(Setting::CjkType),
 			_ => None,
 		};
 		self.setting_changed(field);

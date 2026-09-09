@@ -1,6 +1,6 @@
 //! Reader controls and settings panel.
 use super::*;
-use markview_core::style::{ColorField as C, Role, TextAppearance};
+use markview_core::style::{CjkType, ColorField as C, Role, TextAppearance};
 impl App {
 	pub(super) fn buttons(&mut self) -> Vec<Button> {
 		let (width, height, _) = self.dimensions();
@@ -257,7 +257,7 @@ fn draw_footer(
 
 pub(super) fn panel_rect(width: f32, height: f32) -> Rect {
 	let w = 540.0_f32.min((width - 32.0).max(0.0));
-	let h = 440.0_f32.min((height - 32.0).max(0.0));
+	let h = 480.0_f32.min((height - 32.0).max(0.0));
 	Rect {
 		x: (width - w) / 2.0,
 		y: (height - h) / 2.0,
@@ -267,7 +267,7 @@ pub(super) fn panel_rect(width: f32, height: f32) -> Rect {
 }
 fn row_geometry(rect: Rect) -> (f32, f32) {
 	let top = if rect.h < 360.0 { 60.0 } else { 94.0 };
-	(top, (rect.h - top - 48.0) / 5.0)
+	(top, (rect.h - top - 48.0) / 6.0)
 }
 fn controls(
 	shaper: &mut TextShaper,
@@ -309,19 +309,28 @@ fn controls(
 				if settings.hyphenate { "On" } else { "Off" },
 				Command::Hyphens,
 			)],
+			vec![
+				("SC", Command::CjkType(CjkType::Sc)),
+				("TC", Command::CjkType(CjkType::Tc)),
+				("JP", Command::CjkType(CjkType::Jp)),
+				("none", Command::CjkType(CjkType::None)),
+			],
 		]
 		.into_iter()
 		.enumerate()
 		{
 			let count = entries.len();
+			let button_width =
+				(168.0 - 4.0 * (count - 1) as f32) / count as f32;
 			for (j, (label, action)) in entries.into_iter().enumerate() {
 				buttons.push(Button {
 					label,
 					action,
 					rect: Rect {
-						x: rect.x + rect.w - 188.0 + j as f32 * 88.0,
+						x: rect.x + rect.w - 20.0 - 168.0
+							+ j as f32 * (button_width + 4.0),
 						y: rect.y + top + i as f32 * row,
-						w: if count == 1 { 168.0 } else { 80.0 },
+						w: button_width,
 						h: (row - 4.0).min(32.0),
 					},
 				});
@@ -493,6 +502,7 @@ fn draw_controls(
 			format!("Column width · {:.1} px", settings.width),
 			"Alignment".into(),
 			"English hyphenation".into(),
+			format!("CJK type · {:?}", settings.cjk_type),
 		]
 		.iter()
 		.enumerate()

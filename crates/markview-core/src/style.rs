@@ -1,7 +1,7 @@
 //! Markview Stylesheet v1: strict parsing, field-wise cascading and semantic text styles.
 use crate::{document::TextStyle, scene::Paint};
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
 	collections::BTreeMap,
 	sync::{Arc, OnceLock},
@@ -211,10 +211,47 @@ pub struct Font {
 	pub variant: Variant,
 	pub weight: Option<u16>,
 }
+#[derive(
+	Clone,
+	Copy,
+	Debug,
+	Default,
+	PartialEq,
+	Eq,
+	PartialOrd,
+	Ord,
+	Hash,
+	Serialize,
+	Deserialize,
+)]
+pub enum CjkType {
+	#[serde(rename = "SC")]
+	Sc,
+	#[serde(rename = "TC")]
+	Tc,
+	#[serde(rename = "JP")]
+	Jp,
+	#[default]
+	#[serde(rename = "none")]
+	None,
+}
+#[derive(
+	Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize,
+)]
+pub enum FontDefType {
+	#[serde(rename = "SC")]
+	Sc,
+	#[serde(rename = "TC")]
+	Tc,
+	#[serde(rename = "JP")]
+	Jp,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FontDefinition {
 	pub id: String,
+	#[serde(default)]
+	pub r#type: Option<FontDefType>,
 	pub lookfor: Vec<String>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -330,6 +367,8 @@ pub struct Stylesheet {
 	/// Version of the theme represented by this stylesheet.
 	pub version: u64,
 	pub fontdefs: BTreeMap<String, FontDefinition>,
+	fontdef_variants: BTreeMap<(String, Option<FontDefType>), FontDefinition>,
+	cjk_type: CjkType,
 	pub meta: Metadata,
 	pub rules: BTreeMap<Role, Rule>,
 }
@@ -366,9 +405,13 @@ impl Stylesheet {
 				{
 					bail!("fontdef {:?}: invalid id or lookfor", def.id);
 				}
-				let id = def.id.clone();
-				if out.insert(id.clone(), def).is_some() {
-					bail!("fontdef {id:?}: duplicate id");
+				let key = (def.id.clone(), def.r#type);
+				if out.insert(key.clone(), def).is_some() {
+					bail!(
+						"fontdef {:?} type {:?}: duplicate definition",
+						key.0,
+						key.1
+					);
 				}
 			}
 			out
@@ -390,10 +433,13 @@ impl Stylesheet {
 		};
 		let mut out = Self {
 			version,
-			fontdefs,
+			fontdefs: BTreeMap::new(),
+			fontdef_variants: fontdefs,
+			cjk_type: CjkType::None,
 			meta,
 			..Self::default()
 		};
+		out.resolve_fontdefs();
 		fn visit(
 			out: &mut Stylesheet,
 			name: &str,
@@ -478,12 +524,44 @@ impl Stylesheet {
 			.unwrap_or_else(|| EMPTY.get_or_init(Rule::default))
 	}
 	pub fn merge(&mut self, higher: &Self) {
-		for (id, def) in &higher.fontdefs {
-			self.fontdefs.insert(id.clone(), def.clone());
+		for (key, def) in &higher.fontdef_variants {
+			self.fontdef_variants.insert(key.clone(), def.clone());
 		}
+		self.resolve_fontdefs();
 		for (r, v) in &higher.rules {
 			self.rules.entry(*r).or_default().overlay(v);
 		}
+	}
+	fn resolve_fontdefs(&mut self) {
+		let mut resolved = BTreeMap::new();
+		for ((id, ty), def) in &self.fontdef_variants {
+			if ty.is_none() {
+				resolved.insert(id.clone(), def.clone());
+			}
+		}
+		if self.cjk_type != CjkType::None {
+			let selected = match self.cjk_type {
+				CjkType::Sc => FontDefType::Sc,
+				CjkType::Tc => FontDefType::Tc,
+				CjkType::Jp => FontDefType::Jp,
+				CjkType::None => unreachable!(),
+			};
+			for ((id, ty), def) in &self.fontdef_variants {
+				if *ty == Some(selected) {
+					resolved.insert(id.clone(), def.clone());
+				}
+			}
+		}
+		self.fontdefs = resolved;
+	}
+	pub fn set_cjk_type(&mut self, cjk_type: CjkType) {
+		self.cjk_type = cjk_type;
+		self.resolve_fontdefs();
+	}
+	pub fn has_fontdef_variant(&self, id: &str) -> bool {
+		self.fontdef_variants
+			.keys()
+			.any(|(candidate, _)| candidate == id)
 	}
 	pub fn apply_font_overrides(
 		&mut self,
@@ -781,9 +859,22 @@ mod tests {
 			"format_version=1\nversion=1\n[em]\ncolorz='#ffffff'",
 			"format_version=1\nversion=1\n[ui]\npadding=2",
 			"format_version=1\nversion=1\n[math]\nfont=[{family='serif'}]",
+			"format_version=1\nversion=1\n[[fontdef]]\nid='cjk'\ntype='none'\nlookfor=['serif']",
 		] {
 			assert!(Stylesheet::parse(bad).is_err(), "{bad}");
 		}
+	}
+	#[test]
+	fn fontdefs_are_selected_by_cjk_type() {
+		let source = "format_version=1\nversion=1\n[[fontdef]]\nid='cjk'\ntype='SC'\nlookfor=['SC']\n[[fontdef]]\nid='cjk'\ntype='TC'\nlookfor=['TC']";
+		let mut sheet = Stylesheet::parse(source).unwrap();
+		assert!(!sheet.fontdefs.contains_key("cjk"));
+		sheet.set_cjk_type(CjkType::Sc);
+		assert_eq!(sheet.fontdefs["cjk"].lookfor, ["SC"]);
+		sheet.set_cjk_type(CjkType::Tc);
+		assert_eq!(sheet.fontdefs["cjk"].lookfor, ["TC"]);
+		sheet.set_cjk_type(CjkType::Jp);
+		assert!(!sheet.fontdefs.contains_key("cjk"));
 	}
 	#[test]
 	fn cascade_arrays_and_font_defaults() {

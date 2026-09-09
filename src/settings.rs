@@ -1,6 +1,7 @@
 //! Reader preferences, isolated from launch flags and document state.
 use crate::{layout::LayoutOptions, render::Theme};
 use anyhow::{Context, Result, bail};
+use markview_core::style::CjkType;
 use serde::{Deserialize, Serialize};
 use std::{fs, io::Write, path::PathBuf};
 
@@ -14,6 +15,7 @@ pub struct ReaderSettings {
 	pub width: f32,
 	pub justify: bool,
 	pub hyphenate: bool,
+	pub cjk_type: CjkType,
 }
 impl Default for ReaderSettings {
 	fn default() -> Self {
@@ -26,6 +28,7 @@ impl Default for ReaderSettings {
 			width: 760.0,
 			justify: true,
 			hyphenate: true,
+			cjk_type: default_cjk_type(),
 		}
 	}
 }
@@ -43,6 +46,7 @@ pub enum Setting {
 	Width,
 	Justify,
 	Hyphenate,
+	CjkType,
 }
 impl ReaderSettings {
 	pub fn layout_options(
@@ -84,6 +88,7 @@ impl ReaderSettings {
 			Setting::Width => self.width = other.width,
 			Setting::Justify => self.justify = other.justify,
 			Setting::Hyphenate => self.hyphenate = other.hyphenate,
+			Setting::CjkType => self.cjk_type = other.cjk_type,
 		}
 	}
 }
@@ -106,6 +111,25 @@ struct Config {
 	width: f32,
 	justify: bool,
 	hyphenate: bool,
+	#[serde(rename = "cjk-type")]
+	cjk_type: Option<CjkType>,
+}
+fn default_cjk_type() -> CjkType {
+	let Some(locale) = sys_locale::get_locale() else {
+		return CjkType::Sc;
+	};
+	let locale = locale.to_ascii_lowercase().replace('_', "-");
+	if locale.starts_with("ja-") || locale == "ja" {
+		CjkType::Jp
+	} else if locale.starts_with("zh-")
+		&& ["tw", "hk", "mo", "hant"]
+			.iter()
+			.any(|part| locale.split('-').any(|item| item == *part))
+	{
+		CjkType::Tc
+	} else {
+		CjkType::Sc
+	}
 }
 impl Default for Config {
 	fn default() -> Self {
@@ -119,6 +143,7 @@ impl Default for Config {
 			width: settings.width,
 			justify: settings.justify,
 			hyphenate: settings.hyphenate,
+			cjk_type: Some(settings.cjk_type),
 		}
 	}
 }
@@ -155,6 +180,7 @@ impl Config {
 			width: self.width,
 			justify: self.justify,
 			hyphenate: self.hyphenate,
+			cjk_type: self.cjk_type.unwrap_or_else(default_cjk_type),
 			..Default::default()
 		}
 	}
@@ -342,6 +368,7 @@ impl SettingsStore {
 					Setting::Width,
 					Setting::Justify,
 					Setting::Hyphenate,
+					Setting::CjkType,
 				];
 				self.saved = effective.clone();
 				self.saved.style = None;
@@ -383,6 +410,7 @@ impl SettingsStore {
 			width: self.saved.width,
 			justify: self.saved.justify,
 			hyphenate: self.saved.hyphenate,
+			cjk_type: Some(self.saved.cjk_type),
 		};
 		let values = toml_edit::ser::to_document(&config)?;
 		let mut document = self

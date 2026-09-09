@@ -1,6 +1,6 @@
 //! User stylesheet discovery and atomic installation. Bundled IDs cannot be shadowed.
 use anyhow::{Context, Result, bail};
-use markview_core::style::Stylesheet;
+use markview_core::style::{CjkType, Stylesheet};
 use std::{
 	fs,
 	io::Write,
@@ -45,6 +45,13 @@ pub fn validate_id(id: &str) -> Result<()> {
 	Ok(())
 }
 pub fn load(ids: &[String], dir: Option<&Path>) -> Result<Arc<Stylesheet>> {
+	load_with_cjk_type(ids, dir, CjkType::None)
+}
+pub fn load_with_cjk_type(
+	ids: &[String],
+	dir: Option<&Path>,
+	cjk_type: CjkType,
+) -> Result<Arc<Stylesheet>> {
 	let mut sheet = (*Stylesheet::bundled(false)).clone();
 	for id in ids.iter().rev() {
 		validate_id(id)?;
@@ -64,6 +71,7 @@ pub fn load(ids: &[String], dir: Option<&Path>) -> Result<Arc<Stylesheet>> {
 			}
 		}
 	}
+	sheet.set_cjk_type(cjk_type);
 	Ok(Arc::new(sheet))
 }
 #[derive(Clone, Debug)]

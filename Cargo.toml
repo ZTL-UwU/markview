@@ -42,6 +42,7 @@ ratex-types = "=0.1.14"
 ratex-font = "=0.1.14"
 ratex-katex-fonts = "=0.1.14"
 rfd = "0.16"
+sys-locale = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 swash = "0.2.9"
@@ -59,6 +60,7 @@ notify.workspace = true
 open.workspace = true
 pollster.workspace = true
 rfd.workspace = true
+sys-locale.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 winit.workspace = true

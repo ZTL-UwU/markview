@@ -1,41 +1,57 @@
 format_version = 1
 version = 1
+
 [meta]
 name = "Dark"
 description = "Markview's default dark stylesheet"
+
 [body]
 color = "#DDE2E7"
 background = "#20252B"
+
 [link]
 color = "#8FB9DD"
+
 [link.hover]
 color = "#B7D8F2"
+
 [code]
 background = "#2A3139"
+
 [code_block]
 background = "#2A3139"
+
 [code_block.label]
 color = "#98A5B1"
+
 [blockquote]
 border_color = "#8FB9DD"
+
 [list.marker]
 color = "#98A5B1"
+
 [task_marker]
 color = "#8FB9DD"
 background = "#20252B"
 border_color = "#8FB9DD"
+
 [table]
 border_color = "#414C58"
+
 [table.header]
 background = "#2A3139"
+
 [hr]
 color = "#414C58"
+
 [selection]
 background = "#8FB9DD47"
+
 [scrollbar]
 track = "#414C58"
 thumb = "#98A5B1"
 thumb_hover = "#8FB9DD"
+
 [ui]
 color = "#DDE2E7"
 background = "#20252B"
@@ -43,8 +59,10 @@ muted = "#98A5B1"
 accent = "#8FB9DD"
 border_color = "#414C58"
 error = "#F39A9A"
+
 [ui.panel]
 background = "#252E38F0"
+
 [ui.button]
 background = "#2A3139"
 hover_background = "#35414F"

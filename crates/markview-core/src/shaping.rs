@@ -4,7 +4,7 @@ use crate::{
 	document::TextStyle,
 	scene::{Draw, Glyph, Paint},
 };
-use anyhow::{Result, bail};
+use anyhow::Result;
 use parley::{
 	FontContext, FontStyle, FontWeight, LayoutContext, StyleProperty,
 };
@@ -58,46 +58,17 @@ impl TextShaper {
 		}
 	}
 	pub fn set_stylesheet(&mut self, stylesheet: Arc<Stylesheet>) {
+		self.faces.clear();
 		self.appearance =
 			stylesheet.text(&TextAppearance::default(), Role::Body);
 		self.stylesheet = stylesheet;
 	}
-	fn has_family(&mut self, name: &str) -> bool {
-		let generic = match name {
-			"serif" => Some(parley::GenericFamily::Serif),
-			"sans-serif" => Some(parley::GenericFamily::SansSerif),
-			"monospace" => Some(parley::GenericFamily::Monospace),
-			_ => None,
-		};
-		if let Some(generic) = generic {
-			let ids: Vec<_> =
-				self.fonts.collection.generic_families(generic).collect();
-			ids.into_iter()
-				.any(|id| self.fonts.collection.family(id).is_some())
-		} else {
-			self.fonts.collection.family_by_name(name).is_some()
-		}
-	}
 	pub fn validate_stylesheet(
 		&mut self,
-		stylesheet: &Stylesheet,
+		_stylesheet: &Stylesheet,
 	) -> Result<()> {
-		for (id, def) in &stylesheet.fontdefs {
-			if !def.lookfor.iter().any(|name| self.has_family(name)) {
-				bail!(
-					"fontdef {id:?}: none of the requested fonts are installed"
-				);
-			}
-		}
-		for rule in stylesheet.rules.values() {
-			if let Some(fonts) = &rule.font {
-				for font in fonts {
-					if !stylesheet.fontdefs.contains_key(&font.family) {
-						bail!("font {:?}: undefined fontdef", font.family);
-					}
-				}
-			}
-		}
+		// An unavailable lookfor list is an ignored fallback, not an invalid
+		// stylesheet. choose_font skips it and continues with later candidates.
 		Ok(())
 	}
 	fn choose_font(
@@ -147,12 +118,18 @@ impl TextShaper {
 						.into_iter()
 						.collect()
 				} else {
-					// Low-level tests may construct partial stylesheets.
-					self.fonts
-						.collection
-						.family_by_name(&candidate.family)
-						.into_iter()
-						.collect()
+					// Partial stylesheets used by low-level callers may omit the
+					// fontdef table entirely. A declared-but-unselected variant,
+					// however, is intentionally unavailable.
+					if self.stylesheet.has_fontdef_variant(&candidate.family) {
+						Vec::new()
+					} else {
+						self.fonts
+							.collection
+							.family_by_name(&candidate.family)
+							.into_iter()
+							.collect()
+					}
 				};
 				for family in families {
 					let Some(info) = family.match_font(

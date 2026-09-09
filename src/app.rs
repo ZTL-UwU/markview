@@ -126,6 +126,7 @@ impl App {
 			width: args.options.width,
 			justify: args.options.justify,
 			hyphenate: args.options.hyphenate,
+			cjk_type: settings.cjk_type,
 		};
 		for field in &args.overrides {
 			settings.copy_field(&explicit, *field);
@@ -143,13 +144,19 @@ impl App {
 		});
 		let mut style_warning = None;
 		if let Some(ids) = &settings.style {
-			match crate::stylesheet::load(
+			match crate::stylesheet::load_with_cjk_type(
 				ids,
 				crate::stylesheet::directory().as_deref(),
+				settings.cjk_type,
 			) {
 				Ok(sheet) => settings.stylesheet = sheet,
 				Err(e) => style_warning = Some(format!("Styles: {e:#}")),
 			}
+		}
+		if settings.style.is_none() {
+			let mut sheet = (*settings.stylesheet).clone();
+			sheet.set_cjk_type(settings.cjk_type);
+			settings.stylesheet = Arc::new(sheet);
 		}
 		if style_warning.is_none() {
 			match crate::stylesheet::apply_font_overrides(
@@ -216,9 +223,10 @@ impl App {
 				.into(),
 			]
 		});
-		match crate::stylesheet::load(
+		match crate::stylesheet::load_with_cjk_type(
 			&ids,
 			crate::stylesheet::directory().as_deref(),
+			self.settings.cjk_type,
 		) {
 			Ok(sheet) => {
 				let result = crate::stylesheet::apply_font_overrides(

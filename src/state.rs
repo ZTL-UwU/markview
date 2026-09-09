@@ -15,6 +15,7 @@ pub(crate) enum Command {
 	Wider,
 	Align,
 	Hyphens,
+	CjkType(markview_core::style::CjkType),
 	Settings,
 	Reset,
 	OpenConfig,

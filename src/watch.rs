@@ -47,6 +47,19 @@ pub struct FileWatch {
 }
 impl FileWatch {
 	pub fn new(path: PathBuf, changed: impl Fn() + Send + 'static) -> Self {
+		Self::observe(path, false, changed)
+	}
+	pub fn directory(
+		path: PathBuf,
+		changed: impl Fn() + Send + 'static,
+	) -> Self {
+		Self::observe(path, true, changed)
+	}
+	fn observe(
+		path: PathBuf,
+		directory: bool,
+		changed: impl Fn() + Send + 'static,
+	) -> Self {
 		let stop = Arc::new(AtomicBool::new(false));
 		let (tx, rx) = mpsc::sync_channel(64);
 		let target = path.clone();
@@ -58,7 +71,9 @@ impl FileWatch {
 					}
 					if event.paths.is_empty()
 						|| event.paths.iter().any(|p| {
-							p == &target || p.file_name() == target.file_name()
+							p == &target
+								|| (directory && p.starts_with(&target))
+								|| p.file_name() == target.file_name()
 						}) {
 						let _ = tx.try_send(());
 					}
@@ -71,7 +86,11 @@ impl FileWatch {
 		if let Some(w) = &mut watcher
 			&& w.watch(
 				path.parent().unwrap_or(Path::new(".")),
-				RecursiveMode::NonRecursive,
+				if directory {
+					RecursiveMode::Recursive
+				} else {
+					RecursiveMode::NonRecursive
+				},
 			)
 			.is_err()
 		{
@@ -81,7 +100,7 @@ impl FileWatch {
 		let flag = stop.clone();
 		let handle = thread::spawn(move || {
 			let mut pending = Debounce::default();
-			let mut stamp = file_stamp(&path);
+			let mut stamp = observed_stamp(&path, directory);
 			let mut poll_at = Instant::now() + Duration::from_millis(500);
 			while !flag.load(Ordering::Relaxed) {
 				let now = Instant::now();
@@ -105,7 +124,7 @@ impl FileWatch {
 				let now = Instant::now();
 				// A cheap metadata poll also recovers lost events on native watchers.
 				if now >= poll_at {
-					let next = file_stamp(&path);
+					let next = observed_stamp(&path, directory);
 					if next != stamp {
 						pending.push(now);
 						stamp = next;
@@ -113,7 +132,7 @@ impl FileWatch {
 					poll_at = now + Duration::from_millis(500);
 				}
 				if pending.take_due(now) {
-					stamp = file_stamp(&path);
+					stamp = observed_stamp(&path, directory);
 					changed();
 				}
 			}
@@ -132,6 +151,26 @@ impl Drop for FileWatch {
 			let _ = t.join();
 		}
 	}
+}
+
+type FileStamp = Option<(u64, Option<SystemTime>)>;
+fn observed_stamp(path: &Path, directory: bool) -> Vec<(PathBuf, FileStamp)> {
+	if !directory {
+		return vec![(path.into(), file_stamp(path))];
+	}
+	let mut values: Vec<_> = fs::read_dir(path)
+		.into_iter()
+		.flatten()
+		.flatten()
+		.filter(|e| e.path().extension().is_some_and(|e| e == "toml"))
+		.map(|e| {
+			let p = e.path();
+			let stamp = file_stamp(&p);
+			(p, stamp)
+		})
+		.collect();
+	values.sort_by(|a, b| a.0.cmp(&b.0));
+	values
 }
 
 fn file_stamp(path: &Path) -> Option<(u64, Option<SystemTime>)> {
@@ -184,5 +223,35 @@ mod tests {
 		assert_eq!(read_document(&path).unwrap(), "");
 		fs::write(&path, "\u{feff}中文").unwrap();
 		assert_eq!(read_document(&path).unwrap(), "中文");
+	}
+}
+
+#[cfg(test)]
+mod stylesheet_tests {
+	use super::*;
+	#[test]
+	fn directory_created_after_watch_and_atomic_edits_are_seen() {
+		let tmp = tempfile::tempdir().unwrap();
+		let dir = tmp.path().join("styles");
+		let (tx, rx) = mpsc::channel();
+		let _watch = FileWatch::directory(dir.clone(), move || {
+			let _ = tx.send(());
+		});
+		fs::create_dir(&dir).unwrap();
+		let path = dir.join("a.mvss.toml");
+		fs::write(&path, "format_version=1\nversion=1").unwrap();
+		rx.recv_timeout(Duration::from_secs(3)).unwrap();
+		while rx.try_recv().is_ok() {}
+		let replacement = dir.join("a.tmp");
+		fs::write(
+			&replacement,
+			"format_version=1\nversion=1\n[em]\ncolor='#ffffff'",
+		)
+		.unwrap();
+		fs::rename(replacement, &path).unwrap();
+		rx.recv_timeout(Duration::from_secs(3)).unwrap();
+		while rx.try_recv().is_ok() {}
+		fs::remove_file(path).unwrap();
+		rx.recv_timeout(Duration::from_secs(3)).unwrap();
 	}
 }

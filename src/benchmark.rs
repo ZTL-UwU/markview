@@ -93,7 +93,9 @@ pub fn run(
 ) -> Result<()> {
 	let init = Instant::now();
 	let mut renderer = pollster::block_on(Renderer::new(None))?;
+	renderer.set_stylesheet(options.stylesheet.clone());
 	let mut engine = LayoutEngine::new();
+	engine.validate_stylesheet(&options.stylesheet)?;
 	let _ =
 		engine.label("Markview", 14.0, 0.0, 0.0, crate::layout::Paint::Text);
 	let texture = renderer.offscreen(width, height);
@@ -102,6 +104,7 @@ pub fn run(
 	let horizontal = HashMap::new();
 	let mut view = View {
 		selection: None,
+		hovered_link: None,
 		revision: 0,
 		width,
 		height,

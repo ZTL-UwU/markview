@@ -9,7 +9,6 @@ use winit::keyboard::ModifiersState;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
 	Open,
-	Theme,
 	Smaller,
 	Larger,
 	Narrower,
@@ -20,6 +19,13 @@ pub(crate) enum Command {
 	Reset,
 	OpenConfig,
 	SystemTheme,
+	Styles,
+	StyleToggle(usize),
+	StyleUp(usize),
+	StyleDown(usize),
+	StylePrev,
+	StyleNext,
+	StylesFolder,
 }
 
 #[derive(Default)]
@@ -42,6 +48,7 @@ pub(crate) struct ReaderSession {
 pub(crate) struct InteractionState {
 	pub(crate) selection_counts: Option<(TextSelection, TextCounts)>,
 	pub(crate) panel_open: bool,
+	pub(crate) styles_open: bool,
 	pub(crate) selection: Option<TextSelection>,
 	pub(crate) pointer_down: Option<Drag>,
 	pub(crate) dragged: bool,
@@ -50,6 +57,7 @@ pub(crate) struct InteractionState {
 	pub(crate) cursor: (f32, f32),
 	pub(crate) hover: Option<String>,
 	pub(crate) focus: Option<Command>,
+	pub(crate) pressed: Option<Command>,
 }
 
 /// An in-flight press: where it started and the link it would activate.

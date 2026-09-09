@@ -7,6 +7,9 @@ use std::{fs, io::Write, path::PathBuf};
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReaderSettings {
 	pub theme: Theme,
+	pub style: Option<Vec<String>>,
+	pub fontdef_overrides: Vec<FontDefOverride>,
+	pub stylesheet: std::sync::Arc<markview_core::style::Stylesheet>,
 	pub font_size: f32,
 	pub width: f32,
 	pub justify: bool,
@@ -16,12 +19,22 @@ impl Default for ReaderSettings {
 	fn default() -> Self {
 		Self {
 			theme: Theme::default(),
+			style: None,
+			fontdef_overrides: Vec::new(),
+			stylesheet: markview_core::style::Stylesheet::bundled(false),
 			font_size: 18.0,
 			width: 760.0,
 			justify: true,
 			hyphenate: true,
 		}
 	}
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FontDefOverride {
+	pub id: String,
+	#[serde(rename = "override")]
+	pub replacement: String,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Setting {
@@ -43,9 +56,15 @@ impl ReaderSettings {
 			justify: self.justify,
 			hyphenate: self.hyphenate,
 			greedy,
+			stylesheet: self.stylesheet.clone(),
 		}
 	}
 	pub fn validate(&self) -> Result<()> {
+		if let Some(ids) = &self.style {
+			for id in ids {
+				crate::stylesheet::validate_id(id)?;
+			}
+		}
 		if !self.font_size.is_finite()
 			|| !(10.0..=40.0).contains(&self.font_size)
 			|| !self.width.is_finite()
@@ -57,7 +76,10 @@ impl ReaderSettings {
 	}
 	pub fn copy_field(&mut self, other: &Self, field: Setting) {
 		match field {
-			Setting::Theme => self.theme = other.theme,
+			Setting::Theme => {
+				self.theme = other.theme;
+				self.style = other.style.clone();
+			}
 			Setting::FontSize => self.font_size = other.font_size,
 			Setting::Width => self.width = other.width,
 			Setting::Justify => self.justify = other.justify,
@@ -71,6 +93,14 @@ struct Config {
 	version: u32,
 	/// Absent means "follow the system theme"; only a user choice is stored.
 	#[serde(skip_serializing_if = "Option::is_none")]
+	style: Option<Vec<String>>,
+	#[serde(
+		rename = "fontdef-override",
+		default,
+		skip_serializing_if = "Vec::is_empty"
+	)]
+	fontdef_overrides: Vec<FontDefOverride>,
+	#[serde(skip_serializing_if = "Option::is_none")]
 	theme: Option<Theme>,
 	font_size: f32,
 	width: f32,
@@ -83,6 +113,8 @@ impl Default for Config {
 		Self {
 			version: 1,
 			theme: None,
+			style: None,
+			fontdef_overrides: Vec::new(),
 			font_size: settings.font_size,
 			width: settings.width,
 			justify: settings.justify,
@@ -91,10 +123,46 @@ impl Default for Config {
 	}
 }
 
+impl Config {
+	fn reader_settings(&self) -> ReaderSettings {
+		let style = self.style.clone().or_else(|| {
+			self.theme.map(|theme| {
+				vec![
+					if theme == Theme::Dark {
+						"dark"
+					} else {
+						"light"
+					}
+					.into(),
+				]
+			})
+		});
+		let theme = style
+			.as_ref()
+			.map(|ids| {
+				if ids.first().is_some_and(|id| id == "dark") {
+					Theme::Dark
+				} else {
+					Theme::Light
+				}
+			})
+			.unwrap_or_default();
+		ReaderSettings {
+			theme,
+			style,
+			fontdef_overrides: self.fontdef_overrides.clone(),
+			font_size: self.font_size,
+			width: self.width,
+			justify: self.justify,
+			hyphenate: self.hyphenate,
+			..Default::default()
+		}
+	}
+}
+
 pub struct SettingsStore {
 	path: Option<PathBuf>,
 	saved: ReaderSettings,
-	theme: Option<Theme>,
 	invalid: Option<Vec<u8>>,
 	dirty: bool,
 	pending: Vec<Setting>,
@@ -105,7 +173,6 @@ impl SettingsStore {
 		let mut store = Self {
 			path,
 			saved: ReaderSettings::default(),
-			theme: None,
 			invalid: None,
 			dirty: false,
 			pending: Vec::new(),
@@ -130,20 +197,13 @@ impl SettingsStore {
 					})();
 					match result {
 						Ok(config) => {
-							store.theme = config.theme;
-							store.saved = ReaderSettings {
-								theme: config.theme.unwrap_or_default(),
-								font_size: config.font_size,
-								width: config.width,
-								justify: config.justify,
-								hyphenate: config.hyphenate,
-							};
+							store.saved = config.reader_settings();
 							if let Err(error) = store.saved.validate() {
 								warning = Some(format!(
 									"Settings: {error}; using defaults"
 								));
 								store.saved = ReaderSettings::default();
-								store.theme = None;
+
 								store.invalid = Some(bytes);
 							}
 						}
@@ -188,20 +248,14 @@ impl SettingsStore {
 				config.version
 			);
 		}
-		let saved = ReaderSettings {
-			theme: config.theme.unwrap_or_default(),
-			font_size: config.font_size,
-			width: config.width,
-			justify: config.justify,
-			hyphenate: config.hyphenate,
-		};
+		let saved = config.reader_settings();
 		saved
 			.validate()
 			.context("Invalid settings; keeping current values")?;
 		let mut next = Self {
 			path: self.path.clone(),
 			saved,
-			theme: config.theme,
+
 			invalid: None,
 			dirty: self.dirty,
 			pending: self.pending.clone(),
@@ -209,9 +263,6 @@ impl SettingsStore {
 		};
 		for field in &self.pending {
 			next.saved.copy_field(&self.saved, *field);
-			if *field == Setting::Theme {
-				next.theme = self.theme;
-			}
 		}
 		next.pending = self.pending.clone();
 		next.dirty = self.dirty;
@@ -231,16 +282,9 @@ impl SettingsStore {
 				if config.version != 1 {
 					bail!("Unsupported legacy settings version");
 				}
-				let saved = ReaderSettings {
-					theme: config.theme.unwrap_or_default(),
-					font_size: config.font_size,
-					width: config.width,
-					justify: config.justify,
-					hyphenate: config.hyphenate,
-				};
+				let saved = config.reader_settings();
 				saved.validate()?;
 				self.saved = saved;
-				self.theme = config.theme;
 			}
 			self.dirty = true;
 			self.flush()?;
@@ -252,10 +296,16 @@ impl SettingsStore {
 	}
 	/// The saved theme, or `None` while the reader still follows the system.
 	pub fn theme_preference(&self) -> Option<Theme> {
-		self.theme
+		self.saved.style.as_ref().map(|ids| {
+			if ids.first().is_some_and(|id| id == "dark") {
+				Theme::Dark
+			} else {
+				Theme::Light
+			}
+		})
 	}
 	pub fn follow_system(&mut self) {
-		self.theme = None;
+		self.saved.style = None;
 		if !self.pending.contains(&Setting::Theme) {
 			self.pending.push(Setting::Theme);
 		}
@@ -273,7 +323,16 @@ impl SettingsStore {
 				}
 				self.saved.copy_field(effective, field);
 				if field == Setting::Theme {
-					self.theme = Some(effective.theme);
+					self.saved.style = effective.style.clone().or_else(|| {
+						Some(vec![
+							if effective.theme == Theme::Dark {
+								"dark"
+							} else {
+								"light"
+							}
+							.into(),
+						])
+					});
 				}
 			}
 			None => {
@@ -285,7 +344,7 @@ impl SettingsStore {
 					Setting::Hyphenate,
 				];
 				self.saved = effective.clone();
-				self.theme = None;
+				self.saved.style = None;
 			}
 		}
 		self.dirty = true;
@@ -317,7 +376,9 @@ impl SettingsStore {
 		self.saved.validate()?;
 		let config = Config {
 			version: 1,
-			theme: self.theme,
+			theme: None,
+			style: self.saved.style.clone(),
+			fontdef_overrides: self.saved.fontdef_overrides.clone(),
 			font_size: self.saved.font_size,
 			width: self.saved.width,
 			justify: self.saved.justify,
@@ -340,10 +401,37 @@ impl SettingsStore {
 			}
 			document[key] = value;
 		}
-		if self.theme.is_none() {
-			document.remove("theme");
+		let mut comments = String::new();
+		for key in [Some("theme"), config.style.is_none().then_some("style")]
+			.into_iter()
+			.flatten()
+		{
+			if let Some(prefix) = document
+				.key(key)
+				.and_then(|k| k.leaf_decor().prefix())
+				.and_then(|p| p.as_str())
+				&& prefix.contains('#')
+			{
+				comments.push_str(prefix);
+				if !prefix.ends_with('\n') {
+					comments.push('\n');
+				}
+			}
+			if let Some(suffix) = document
+				.get(key)
+				.and_then(|v| v.as_value())
+				.and_then(|v| v.decor().suffix())
+				.and_then(|p| p.as_str())
+				&& suffix.contains('#')
+			{
+				comments.push_str(suffix.trim_start());
+				if !suffix.ends_with('\n') {
+					comments.push('\n');
+				}
+			}
+			document.remove(key);
 		}
-		let bytes = document.to_string().into_bytes();
+		let bytes = format!("{comments}{document}").into_bytes();
 		let mut temp = tempfile::NamedTempFile::new_in(parent)?;
 		temp.write_all(&bytes)?;
 		temp.as_file().sync_all()?;
@@ -539,5 +627,53 @@ mod tests {
 				== b"broken json")
 		);
 		assert!(SettingsStore::load(Some(path)).1.is_none());
+	}
+}
+
+#[cfg(test)]
+mod stylesheet_tests {
+	use super::*;
+	#[test]
+	fn stylesheet_lists_migrate_merge_and_preserve_personal_preferences() {
+		let tmp = tempfile::tempdir().unwrap();
+		let path = tmp.path().join("settings.toml");
+		fs::write(
+			&path,
+			"# Preferences\ntheme='dark'\nfont_size=23\nwidth=900\n",
+		)
+		.unwrap();
+		let (mut store, warning) = SettingsStore::load(Some(path.clone()));
+		assert!(warning.is_none());
+		assert_eq!(store.settings().style, Some(vec!["dark".into()]));
+		let mut ui = store.settings();
+		ui.style = Some(vec!["paper".into(), "dark".into()]);
+		store.changed(&ui, Some(Setting::Theme));
+		fs::write(&path,"# Preferences\ntheme='light'\nstyle=['external']\nfont_size=25\nwidth=960\n").unwrap();
+		store.flush().unwrap();
+		let source = fs::read_to_string(&path).unwrap();
+		assert!(source.contains("# Preferences"));
+		assert!(!source.contains("theme"));
+		let (loaded, warning) = SettingsStore::load(Some(path));
+		assert!(warning.is_none());
+		assert_eq!(loaded.settings().style, ui.style);
+		assert_eq!(loaded.settings().font_size, 25.);
+		assert_eq!(loaded.settings().width, 960.);
+	}
+	#[test]
+	fn empty_style_overrides_legacy_theme_and_survives_save() {
+		let tmp = tempfile::tempdir().unwrap();
+		let path = tmp.path().join("settings.toml");
+		fs::write(&path, "theme='dark'\nstyle=[]").unwrap();
+		let (mut store, _) = SettingsStore::load(Some(path.clone()));
+		assert_eq!(store.settings().style, Some(vec![]));
+		assert_eq!(store.settings().theme, Theme::Light);
+		let mut ui = store.settings();
+		ui.font_size = 22.;
+		store.changed(&ui, Some(Setting::FontSize));
+		store.flush().unwrap();
+		assert_eq!(
+			SettingsStore::load(Some(path)).0.settings().style,
+			Some(vec![])
+		);
 	}
 }

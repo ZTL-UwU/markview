@@ -6,4 +6,5 @@ pub mod linebreak;
 pub mod math;
 pub mod scene;
 pub mod shaping;
+pub mod style;
 pub mod text;

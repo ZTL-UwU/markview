@@ -40,6 +40,7 @@ enum Event {
 	Ready(Box<Update>),
 	Changed(PathBuf),
 	SettingsChanged,
+	StylesChanged,
 	Open(Option<PathBuf>),
 	DeviceLost,
 }
@@ -67,6 +68,10 @@ struct App {
 	worker: Worker,
 	watch: Option<FileWatch>,
 	_settings_watch: Option<FileWatch>,
+	_styles_watch: Option<FileWatch>,
+	style_entries: Vec<crate::stylesheet::Entry>,
+	style_page: usize,
+	style_warning: Option<String>,
 	ui: TextShaper,
 	settings: ReaderSettings,
 	settings_store: SettingsStore,
@@ -109,6 +114,13 @@ impl App {
 		});
 		let mut settings = settings_store.settings();
 		let explicit = ReaderSettings {
+			fontdef_overrides: settings.fontdef_overrides.clone(),
+			style: args.style.clone().or_else(|| {
+				args.theme.map(|t| {
+					vec![if t == Theme::Dark { "dark" } else { "light" }.into()]
+				})
+			}),
+			stylesheet: args.options.stylesheet.clone(),
 			theme: args.theme.unwrap_or_default(),
 			font_size: args.options.font_size,
 			width: args.options.width,
@@ -118,6 +130,47 @@ impl App {
 		for field in &args.overrides {
 			settings.copy_field(&explicit, *field);
 		}
+		let directory = crate::stylesheet::directory();
+		let style_entries = crate::stylesheet::catalog(
+			directory.as_deref(),
+			settings.style.as_deref(),
+		);
+		let styles_watch = directory.map(|dir| {
+			let proxy = proxy.clone();
+			FileWatch::directory(dir, move || {
+				let _ = proxy.send_event(Event::StylesChanged);
+			})
+		});
+		let mut style_warning = None;
+		if let Some(ids) = &settings.style {
+			match crate::stylesheet::load(
+				ids,
+				crate::stylesheet::directory().as_deref(),
+			) {
+				Ok(sheet) => settings.stylesheet = sheet,
+				Err(e) => style_warning = Some(format!("Styles: {e:#}")),
+			}
+		}
+		if style_warning.is_none() {
+			match crate::stylesheet::apply_font_overrides(
+				settings.stylesheet.clone(),
+				&settings.fontdef_overrides,
+			) {
+				Ok(sheet) => settings.stylesheet = sheet,
+				Err(e) => style_warning = Some(format!("Styles: {e:#}")),
+			}
+		}
+		let mut ui = TextShaper::new();
+		if style_warning.is_none()
+			&& let Err(error) = ui.validate_stylesheet(&settings.stylesheet)
+		{
+			style_warning = Some(format!("Styles: {error:#}"));
+		}
+		ui.set_stylesheet(settings.stylesheet.clone());
+		ui.appearance = settings.stylesheet.text(
+			&markview_core::style::TextAppearance::default(),
+			markview_core::style::Role::Ui,
+		);
 		Self {
 			interaction: InteractionState::default(),
 			session: ReaderSession::default(),
@@ -128,7 +181,11 @@ impl App {
 			worker,
 			watch: None,
 			_settings_watch: settings_watch,
-			ui: TextShaper::new(),
+			_styles_watch: styles_watch,
+			style_entries,
+			style_page: 0,
+			style_warning,
+			ui,
 			settings,
 			settings_store,
 			settings_warning,
@@ -142,6 +199,60 @@ impl App {
 			first_frame: None,
 			started: Instant::now(),
 			fatal: None,
+		}
+	}
+	fn reload_styles(&mut self) {
+		self.style_entries = crate::stylesheet::catalog(
+			crate::stylesheet::directory().as_deref(),
+			self.settings.style.as_deref(),
+		);
+		let ids = self.settings.style.clone().unwrap_or_else(|| {
+			vec![
+				if self.settings.theme == Theme::Dark {
+					"dark"
+				} else {
+					"light"
+				}
+				.into(),
+			]
+		});
+		match crate::stylesheet::load(
+			&ids,
+			crate::stylesheet::directory().as_deref(),
+		) {
+			Ok(sheet) => {
+				let result = crate::stylesheet::apply_font_overrides(
+					sheet,
+					&self.settings.fontdef_overrides,
+				)
+				.and_then(|sheet| {
+					self.ui.validate_stylesheet(&sheet)?;
+					Ok(sheet)
+				});
+				match result {
+					Ok(sheet) => {
+						let reflow = sheet.layout_key()
+							!= self.settings.stylesheet.layout_key();
+						self.settings.stylesheet = sheet.clone();
+						self.ui.set_stylesheet(sheet.clone());
+						self.ui.appearance = sheet.text(
+							&markview_core::style::TextAppearance::default(),
+							markview_core::style::Role::Ui,
+						);
+						if let Some(renderer) = &mut self.renderer {
+							renderer.set_stylesheet(sheet);
+						}
+						self.style_warning = None;
+						if reflow {
+							self.request(false);
+						}
+					}
+					Err(e) => {
+						self.style_warning = Some(format!("Styles: {e:#}"))
+					}
+				}
+			}
+			Err(e) => self.style_warning = Some(format!("Styles: {e:#}")),
 		}
 	}
 	fn dimensions(&self) -> (f32, f32, f32) {
@@ -336,10 +447,14 @@ impl App {
 			bottom: BOTTOM + 10.0,
 			theme: self.settings.theme,
 			horizontal: &self.session.horizontal,
+			hovered_link: self.interaction.hover.as_deref(),
 		};
 		let Some(renderer) = &mut self.renderer else {
 			return Ok(());
 		};
+		renderer.set_pointer(
+			(!self.interaction.panel_open).then_some(self.interaction.cursor),
+		);
 		let (frame, suboptimal) = match renderer.acquire(window.clone())? {
 			crate::render::FrameStatus::Ready(frame, suboptimal) => {
 				(frame, suboptimal)
@@ -401,7 +516,9 @@ impl App {
 		Ok(())
 	}
 	fn gpu(&mut self) -> Result<()> {
-		let renderer = pollster::block_on(Renderer::new(self.window.clone()))?;
+		let mut renderer =
+			pollster::block_on(Renderer::new(self.window.clone()))?;
+		renderer.set_stylesheet(self.settings.stylesheet.clone());
 		let proxy = self.proxy.clone();
 		renderer.on_device_lost(move || {
 			let _ = proxy.send_event(Event::DeviceLost);
@@ -428,7 +545,9 @@ impl ApplicationHandler<Event> for App {
 						.with_min_inner_size(LogicalSize::new(500, 300)),
 				)?,
 			);
-			if self.args.theme.is_none()
+			if self.args.mode == Mode::Window
+				&& self.args.theme.is_none()
+				&& self.args.style.is_none()
 				&& self.settings_store.theme_preference().is_none()
 				&& let Some(theme) = system_theme(&window)
 			{
@@ -444,6 +563,7 @@ impl ApplicationHandler<Event> for App {
 				size.height as f64 / scale,
 			);
 			self.window = Some(window);
+			self.reload_styles();
 			self.gpu()?;
 			if let Some(path) = self.args.path.clone() {
 				self.open(path);
@@ -458,6 +578,13 @@ impl ApplicationHandler<Event> for App {
 	}
 	fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Event) {
 		match event {
+			Event::StylesChanged => {
+				self.style_entries = crate::stylesheet::scan(
+					crate::stylesheet::directory().as_deref(),
+				);
+				self.reload_styles();
+				self.redraw();
+			}
 			Event::SettingsChanged => {
 				match self.settings_store.reload() {
 					Ok(_) => {
@@ -583,6 +710,8 @@ impl ApplicationHandler<Event> for App {
 				self.refresh_hover();
 				if self.interaction.panel_open
 					|| old.1 < TOP || self.interaction.cursor.1 < TOP
+					|| old.0 > self.dimensions().0 - 16.
+					|| self.interaction.cursor.0 > self.dimensions().0 - 16.
 				{
 					self.redraw();
 				}
@@ -609,6 +738,7 @@ impl ApplicationHandler<Event> for App {
 					)
 				}) {
 					self.interaction.focus = Some(button.action);
+					self.interaction.pressed = Some(button.action);
 					self.action(button.action);
 				} else if self.interaction.panel_open {
 					if !self.pointer_in_panel() {
@@ -642,6 +772,7 @@ impl ApplicationHandler<Event> for App {
 				state: ElementState::Released,
 				..
 			} => {
+				self.interaction.pressed = None;
 				let link = self.link_at(
 					self.interaction.cursor.0,
 					self.interaction.cursor.1,
@@ -655,6 +786,7 @@ impl ApplicationHandler<Event> for App {
 				self.redraw();
 			}
 			WindowEvent::Focused(false) => {
+				self.interaction.pressed = None;
 				self.interaction.pointer_down = None;
 				self.interaction.drag_at = None;
 				self.interaction.modifiers = Default::default();
@@ -712,7 +844,7 @@ impl ApplicationHandler<Event> for App {
 							"o" if !self.panel_has_focus() => {
 								self.action(Command::Open)
 							}
-							"t" => self.action(Command::Theme),
+							"t" => self.action(Command::Styles),
 							"-" => self.action(Command::Smaller),
 							"+" | "=" => self.action(Command::Larger),
 							"[" => self.action(Command::Narrower),
@@ -797,6 +929,7 @@ impl ApplicationHandler<Event> for App {
 						Key::Named(NamedKey::Escape) => {
 							self.interaction.focus = None;
 							self.interaction.panel_open = false;
+							self.interaction.styles_open = false;
 							self.interaction.selection = None;
 							self.interaction.pointer_down = None;
 							self.interaction.drag_at = None;

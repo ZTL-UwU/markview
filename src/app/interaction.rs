@@ -3,6 +3,79 @@ use super::*;
 impl App {
 	pub(super) fn action(&mut self, action: Command) {
 		match action {
+			Command::Styles => {
+				self.interaction.panel_open = true;
+				self.interaction.styles_open = !self.interaction.styles_open;
+				self.style_entries = crate::stylesheet::catalog(
+					crate::stylesheet::directory().as_deref(),
+					self.settings.style.as_deref(),
+				);
+				self.style_page = 0;
+				self.interaction.focus = None;
+				self.redraw();
+				return;
+			}
+			Command::StylesFolder => {
+				let result = crate::stylesheet::directory()
+					.ok_or_else(|| anyhow::anyhow!("No stylesheet directory"))
+					.and_then(|dir| {
+						std::fs::create_dir_all(&dir)?;
+						open::that_detached(dir)?;
+						Ok(())
+					});
+				if let Err(e) = result {
+					self.style_warning = Some(format!("{e:#}"));
+				}
+				self.redraw();
+				return;
+			}
+			Command::StylePrev => {
+				self.style_page = self.style_page.saturating_sub(1);
+				self.redraw();
+				return;
+			}
+			Command::StyleNext => {
+				self.style_page += 1;
+				self.redraw();
+				return;
+			}
+			Command::StyleToggle(index)
+			| Command::StyleUp(index)
+			| Command::StyleDown(index) => {
+				let Some(entry) = self.style_entries.get(index) else {
+					return;
+				};
+				let mut ids = self.settings.style.clone().unwrap_or_default();
+				let position = ids.iter().position(|id| id == &entry.id);
+				match action {
+					Command::StyleToggle(_) => {
+						if position.is_some() {
+							ids.retain(|id| id != &entry.id);
+						} else if entry.error.is_none() {
+							ids.insert(0, entry.id.clone());
+						} else {
+							return;
+						}
+					}
+					Command::StyleUp(_) => {
+						if let Some(i) = position.filter(|i| *i > 0) {
+							ids.swap(i, i - 1);
+						}
+					}
+					Command::StyleDown(_) => {
+						if let Some(i) = position.filter(|i| i + 1 < ids.len())
+						{
+							ids.swap(i, i + 1);
+						}
+					}
+					_ => {}
+				}
+				self.settings.style = Some(ids);
+				self.setting_changed(Some(Setting::Theme));
+				self.reload_styles();
+				self.redraw();
+				return;
+			}
 			Command::OpenConfig => {
 				let result = self.settings_store.ensure_file().and_then(|()| {
 					open::that_detached(self.settings_store.path().unwrap())
@@ -18,6 +91,7 @@ impl App {
 			Command::SystemTheme => {
 				self.args.overrides.retain(|f| *f != Setting::Theme);
 				self.args.theme = None;
+				self.args.style = None;
 				self.settings_store.follow_system();
 				self.apply_saved_settings();
 				self.save_at =
@@ -26,10 +100,11 @@ impl App {
 			}
 			Command::Settings => {
 				self.interaction.panel_open = !self.interaction.panel_open;
+				self.interaction.styles_open = false;
 				self.interaction.pointer_down = None;
 				self.interaction.drag_at = None;
 				self.interaction.focus =
-					self.interaction.panel_open.then_some(Command::Theme);
+					self.interaction.panel_open.then_some(Command::Styles);
 				self.refresh_hover();
 				self.redraw();
 				return;
@@ -59,16 +134,6 @@ impl App {
 						.pick_file();
 					let _ = proxy.send_event(Event::Open(path));
 				});
-				return;
-			}
-			Command::Theme => {
-				self.settings.theme = if self.settings.theme == Theme::Light {
-					Theme::Dark
-				} else {
-					Theme::Light
-				};
-				self.setting_changed(Some(Setting::Theme));
-				self.redraw();
 				return;
 			}
 			Command::Smaller => {
@@ -107,6 +172,8 @@ impl App {
 			.retain(|f| field.is_some_and(|changed| changed != *f));
 		if field.is_none() || field == Some(Setting::Theme) {
 			self.args.theme = None;
+			self.args.style = None;
+			self.reload_styles();
 		}
 		if self.args.mode == Mode::Window {
 			self.settings_store.changed(&self.settings, field);
@@ -206,6 +273,7 @@ impl App {
 		let previous = self.settings.clone();
 		let options = self.options();
 		self.settings = self.settings_store.settings();
+		self.settings.stylesheet = previous.stylesheet.clone();
 		if self.settings_store.theme_preference().is_none() {
 			self.settings.theme = self
 				.window
@@ -216,7 +284,10 @@ impl App {
 		for field in &self.args.overrides {
 			self.settings.copy_field(&previous, *field);
 		}
-		if self.options() != options {
+		self.reload_styles();
+		if self.options() != options
+			&& self.session.requested_options.as_ref() != Some(&self.options())
+		{
 			self.request(false);
 		}
 		if self.settings != previous {

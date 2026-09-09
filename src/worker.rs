@@ -124,6 +124,11 @@ impl Worker {
 								return Err("Superseded".into());
 							}
 							let start = Instant::now();
+							engine
+								.validate_stylesheet(
+									&request.options.stylesheet,
+								)
+								.map_err(|e| format!("Fonts: {e:#}"))?;
 							let layout =
 								engine.layout(&document, &request.options);
 							update.layout_ms =

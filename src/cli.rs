@@ -19,6 +19,8 @@ pub(crate) struct LaunchOptions {
 	pub(crate) scale: f32,
 	pub(crate) scroll: f32,
 	pub(crate) theme: Option<Theme>,
+	pub(crate) style: Option<Vec<String>>,
+	pub(crate) install: Option<(PathBuf, bool)>,
 	pub(crate) iterations: usize,
 	pub(crate) options: LayoutOptions,
 	pub(crate) overrides: Vec<Setting>,
@@ -34,6 +36,8 @@ impl Default for LaunchOptions {
 			scale: 1.0,
 			scroll: 0.0,
 			theme: None,
+			style: None,
+			install: None,
 			iterations: 100,
 			options: LayoutOptions::default(),
 			overrides: Vec::new(),
@@ -48,11 +52,35 @@ fn parse_arguments(
 	args: impl IntoIterator<Item = std::ffi::OsString>,
 ) -> Result<Option<LaunchOptions>> {
 	let mut out = LaunchOptions::default();
-	let mut args = args.into_iter();
+	let mut args = args.into_iter().peekable();
+	if args.peek().is_some_and(|a| a == "ss") {
+		args.next();
+		if args.next().as_deref() != Some(std::ffi::OsStr::new("install")) {
+			bail!("Usage: markview ss install FILE.mvss.toml [--force]");
+		}
+		let mut path = None;
+		let mut force = false;
+		for arg in args {
+			if arg == "--force" {
+				force = true;
+			} else if path.is_none() {
+				path = Some(PathBuf::from(arg));
+			} else {
+				bail!("Install one stylesheet at a time");
+			}
+		}
+		out.install = Some((
+			path.context("ss install requires a stylesheet path")?,
+			force,
+		));
+		return Ok(Some(out));
+	}
 	while let Some(arg) = args.next() {
 		let text = arg.to_string_lossy();
 		match text.as_ref() {
-			"--dark" | "--light" => out.overrides.push(Setting::Theme),
+			"--dark" | "--light" | "--style" => {
+				out.overrides.push(Setting::Theme)
+			}
 			"--font-size" => out.overrides.push(Setting::FontSize),
 			"--column" => out.overrides.push(Setting::Width),
 			"--left" => out.overrides.push(Setting::Justify),
@@ -62,7 +90,7 @@ fn parse_arguments(
 		match text.as_ref() {
 			"-h" | "--help" => {
 				println!(
-					"Markview — native Markdown reading\n\nmarkview [FILE]\nmarkview --render FILE --output preview.png [--dark] [--scale 2]\nmarkview --bench FILE [--iterations 100] [--output metrics.json]\nmarkview --smoke-test FILE [--output window.png]\n\nOptions: --width N --height N --column N --font-size N --scroll N\n         --scale N --dark --light --left --no-hyphens --greedy\n\nKeyboard: Ctrl+O open · Ctrl+T theme · Ctrl+ +/- font size\n          Ctrl+[ / ] column width · Ctrl+L alignment · Ctrl+H hyphenation\n          arrows / PageUp / PageDown / Home / End scroll\n          Shift+wheel scroll wide blocks · Tab/Enter toolbar\n          click a link to open http, https or mailto in the system browser\n          drag / Shift+click select · Ctrl+A all · Ctrl+C copy · Ctrl+, settings\n\n--render and --bench use the real GPU pipeline offscreen.\n--greedy is a typography comparison mode."
+					"Markview — native Markdown reading\n\nmarkview [FILE] [--style ID ...]\nmarkview ss install FILE.mvss.toml [--force]\nmarkview --render FILE --output preview.png [--dark] [--scale 2]\nmarkview --bench FILE [--iterations 100] [--output metrics.json]\nmarkview --smoke-test FILE [--output window.png]\n\nOptions: --width N --height N --column N --font-size N --scroll N\n         --scale N --style ID --dark --light --left --no-hyphens --greedy\n\nKeyboard: Ctrl+O open · Ctrl+T styles · Ctrl+ +/- font size\n          Ctrl+[ / ] column width · Ctrl+L alignment · Ctrl+H hyphenation\n          arrows / PageUp / PageDown / Home / End scroll\n          Shift+wheel scroll wide blocks · Tab/Enter toolbar\n          click a link to open http, https or mailto in the system browser\n          drag / Shift+click select · Ctrl+A all · Ctrl+C copy · Ctrl+, settings\n\n--render and --bench use the real GPU pipeline offscreen.\n--greedy is a typography comparison mode."
 				);
 				return Ok(None);
 			}
@@ -73,6 +101,17 @@ fn parse_arguments(
 				out.output = Some(
 					args.next().context("--output requires a path")?.into(),
 				)
+			}
+			"--style" => {
+				let id = args
+					.next()
+					.context("--style requires an ID")?
+					.into_string()
+					.map_err(|_| {
+						anyhow::anyhow!("Stylesheet ID must be UTF-8")
+					})?;
+				crate::stylesheet::validate_id(&id)?;
+				out.style.get_or_insert_with(Vec::new).push(id);
 			}
 			"--dark" => out.theme = Some(Theme::Dark),
 			"--light" => out.theme = Some(Theme::Light),
@@ -126,6 +165,9 @@ fn parse_arguments(
 			}
 		}
 	}
+	if out.style.is_some() && out.theme.is_some() {
+		bail!("--style conflicts with --light and --dark");
+	}
 	if out.mode != Mode::Window && out.path.is_none() {
 		bail!("This mode requires a Markdown file");
 	}
@@ -164,5 +206,43 @@ mod tests {
 		assert!(
 			parse_arguments(["--font-size", "NaN"].map(Into::into)).is_err()
 		);
+	}
+}
+
+#[cfg(test)]
+mod stylesheet_tests {
+	use super::*;
+	#[test]
+	fn stylesheet_arguments_are_ordered_and_install_is_independent() {
+		let args = parse_arguments(
+			[
+				"--render",
+				"sample.md",
+				"--output",
+				"/tmp/sample.png",
+				"--style",
+				"a",
+				"--style",
+				"dark",
+			]
+			.map(Into::into),
+		)
+		.unwrap()
+		.unwrap();
+		assert_eq!(args.style, Some(vec!["a".into(), "dark".into()]));
+		for flags in [
+			["--style", "a", "--dark"],
+			["--light", "--style", "a"],
+			["--style", "../a", "sample.md"],
+		] {
+			assert!(parse_arguments(flags.map(Into::into)).is_err());
+		}
+		let args = parse_arguments(
+			["ss", "install", "a.mvss.toml", "--force"].map(Into::into),
+		)
+		.unwrap()
+		.unwrap();
+		assert_eq!(args.install, Some((PathBuf::from("a.mvss.toml"), true)));
+		assert!(args.path.is_none());
 	}
 }

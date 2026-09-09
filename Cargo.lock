@@ -1620,13 +1620,18 @@ dependencies = [
 name = "markview-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "comrak",
  "hypher",
  "icu_segmenter",
  "parley",
+ "ratex-katex-fonts",
  "ratex-layout",
  "ratex-parser",
  "ratex-types",
+ "serde",
+ "swash",
+ "toml_edit",
  "unicode-segmentation",
 ]
 

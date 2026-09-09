@@ -4,6 +4,8 @@ use parley::FontData;
 use std::{collections::HashMap, ops::Range, sync::Arc};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Paint {
+	Styled(crate::style::Role, crate::style::ColorField),
+	Cascade(u128, crate::style::ColorField),
 	#[default]
 	Text,
 	Muted,
@@ -15,6 +17,34 @@ pub enum Paint {
 	Border,
 	Background,
 	Error,
+}
+
+impl Paint {
+	pub fn cascade(
+		self,
+		role: crate::style::Role,
+		field: crate::style::ColorField,
+	) -> Self {
+		let chain = match self {
+			Self::Cascade(v, _) => v,
+			Self::Styled(r, _) => r as u128 + 1,
+			_ => crate::style::Role::Body as u128 + 1,
+		};
+		// A repeated container replaces its earlier occurrence. This keeps the
+		// finite semantic ancestry compact even for deeply nested lists/quotes.
+		let mut remaining = chain;
+		let mut compact = 0;
+		let mut shift = 0;
+		while remaining != 0 {
+			let id = remaining & 63;
+			remaining >>= 6;
+			if id != role as u128 + 1 {
+				compact |= id << shift;
+				shift += 6;
+			}
+		}
+		Self::Cascade((compact << 6) | (role as u128 + 1), field)
+	}
 }
 
 #[derive(Clone, Debug)]
@@ -55,7 +85,19 @@ impl Rect {
 pub enum Draw {
 	Glyph(Glyph),
 	Rect(Rect, Paint),
-	Math { math: Arc<MathBox>, x: f32, y: f32 },
+	Box {
+		rect: Rect,
+		role: crate::style::Role,
+		radius: f32,
+		border: f32,
+		left_only: bool,
+	},
+	Math {
+		math: Arc<MathBox>,
+		paint: Paint,
+		x: f32,
+		y: f32,
+	},
 }
 impl Draw {
 	pub fn translate(&mut self, x: f32, y: f32) {
@@ -64,7 +106,7 @@ impl Draw {
 				g.x += x;
 				g.y += y;
 			}
-			Self::Rect(r, _) => {
+			Self::Rect(r, _) | Self::Box { rect: r, .. } => {
 				r.x += x;
 				r.y += y;
 			}
@@ -113,6 +155,7 @@ pub struct PlacedBlock {
 
 #[derive(Clone, Debug, Default)]
 pub struct LayoutSnapshot {
+	pub document_box: Option<Draw>,
 	pub blocks: Vec<PlacedBlock>,
 	pub height: f32,
 	pub width: f32,

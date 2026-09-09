@@ -4,6 +4,24 @@ pub(super) fn run() -> Result<()> {
 	let Some(mut args) = arguments()? else {
 		return Ok(());
 	};
+	if let Some((source, force)) = &args.install {
+		let dir = crate::stylesheet::directory()
+			.ok_or_else(|| anyhow::anyhow!("No user stylesheet directory"))?;
+		let (id, path) = crate::stylesheet::install(source, &dir, *force)?;
+		println!("Installed {id}: {}", path.display());
+		return Ok(());
+	}
+	let ids = args.style.clone().or_else(|| {
+		args.theme.map(|t| {
+			vec![if t == Theme::Dark { "dark" } else { "light" }.into()]
+		})
+	});
+	if let Some(ids) = &ids {
+		args.options.stylesheet = crate::stylesheet::load(
+			ids,
+			crate::stylesheet::directory().as_deref(),
+		)?;
+	}
 	if args.mode == Mode::Render || args.mode == Mode::Bench {
 		args.options.width = args
 			.options
@@ -24,13 +42,16 @@ pub(super) fn run() -> Result<()> {
 			);
 		}
 		let mut renderer = pollster::block_on(Renderer::new(None))?;
+		renderer.set_stylesheet(args.options.stylesheet.clone());
 		let mut engine = LayoutEngine::new();
+		engine.validate_stylesheet(&args.options.stylesheet)?;
 		let doc = document::parse(read_document(path)?);
 		let snapshot = engine.layout(&doc, &args.options);
 		let target = renderer.offscreen(args.width, args.height);
 		let horizontal = HashMap::new();
 		let view = View {
 			selection: None,
+			hovered_link: None,
 			scroll: args.scroll,
 			horizontal: &horizontal,
 			revision: 0,

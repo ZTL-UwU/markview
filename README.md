@@ -28,7 +28,7 @@ sudo apt-get install libfontconfig1-dev libxkbcommon-dev libwayland-dev fonts-no
 | 操作 | 快捷键 |
 | --- | --- |
 | 打开文件 | Ctrl+O |
-| 明暗主题 | Ctrl+T |
+| 样式表列表 | Ctrl+T |
 | 增减字号 | Ctrl+加号 / 减号，或 Ctrl+滚轮 |
 | 调整栏宽 | Ctrl+[ / Ctrl+]，或在 Settings 中调整 |
 | 两端 / 左对齐 | Ctrl+L |
@@ -66,20 +66,20 @@ macOS 可用 Command 代替 Ctrl。默认字号 18、正文行距至少 1.65、�
 
 原始 HTML 只解释与 Markdown 同义的简单标签：行内 `<b>` `<strong>` `<i>` `<em>` `<del>` `<s>` `<code>` `<kbd>` `<sup>` `<a href>` `<br>`，以及独占一行的 `<h1>`–`<h6>`、`<p>`、`<hr>`。`<!-- 注释 -->` 直接丢弃，`class`、`style` 等属性不参与解析，其他标签仍按源码显示。
 
-RaTeX 支持分式、根号、上下标、积分、矩阵等；不支持的语法、尚未写完的公式或超过 16 KiB 的单条公式显示 LaTeX 源码。行内公式内部不换行，超宽公式单独占行并可横向滚动。数学中的黑色随主题映射为正文色，其他显式颜色保留。
+RaTeX 支持分式、根号、上下标、积分、矩阵等；不支持的语法、尚未写完的公式或超过 16 KiB 的单条公式显示 LaTeX 源码。行内公式内部不换行，超宽公式单独占行并可横向滚动。数学中的黑色使用样式表的公式文字颜色，其他显式颜色保留。
 
 目前支持基本选择复制和持久化阅读设置。搜索、目录、图片、高亮、系统文件关联、完整辅助功能、打印导出及多文档工作区尚未实现。链接只把 http、https、mailto 交给系统处理；相对路径与站内锚点不跳转。优先验证中英文；其他复杂文字继承底层塑形能力，但混合方向段落尚未做全面质量验证。彩色 emoji 暂用单色轮廓显示。GFM 的 HTML 显示策略与网页渲染不同。
 
 选择复制输出阅读文本：代码保留原始空白，表格用制表符分列、换行分行，公式按整体选择并输出 LaTeX。排版生成的断字号不会被复制。改字号、栏宽保留选择；文件语义内容变化后清除选择（仅元数据变化或读取失败则保留）。拖选到正文视口上下边缘可自动滚动。第一版不提供 Markdown 源码复制、双击选词和完整键盘选择导航。
 
-设置窗口以半透明浮层居中显示，可调整主题、字号、栏宽、对齐与英语断字；点击外部或按 Escape 关闭。UI 更改自动保存，System 恢复跟随系统主题，Reset defaults 恢复所有默认值。
+设置窗口以半透明浮层居中显示，可选择和排序样式表、调整字号、栏宽、对齐与英语断字；点击外部或按 Escape 关闭。UI 更改自动保存，System 恢复跟随系统主题，Reset defaults 恢复所有默认值。
 
 配置使用 `settings.toml`，通过设置窗口的 Open settings.toml 打开。Linux 默认路径为 `~/.config/markview/settings.toml`（支持 `XDG_CONFIG_HOME`）；macOS 和 Windows 路径见 [架构文档](docs/architecture.md)。首次启动自动创建文件；存在旧版 `settings.json` 时迁移有效设置，并保留原文件。
 
 ```toml
 version = 1
-# 省略 theme 即跟随系统；也可填 "light" 或 "dark"
-theme = "dark"
+# 省略 style 即跟随系统；左侧优先，空数组固定使用亮色基础
+style = ["dark"]
 font_size = 18.0 # 10–40 逻辑像素
 width = 760.0 # 240–1600 逻辑像素
 justify = true
@@ -89,6 +89,8 @@ hyphenate = true
 保存 TOML 后实时应用，无需重启，兼容编辑器的原子替换保存。解析失败或数值越界时保留当前设置，并在状态栏提示；修复文件后自动恢复。UI 保存保留注释和额外字段，同期外部修改与 UI 修改按字段合并，同一字段以待保存的 UI 值为准。
 
 设置优先级为默认值 → 用户配置 → 显式 CLI 参数；UI 调整某字段后解除该字段的 CLI 覆盖，Reset defaults 解除全部覆盖。浮层不改变正文栏宽。`--render`、`--bench`、`--smoke-test` 不读取个人配置，确保结果可复现。
+
+样式表由用户编写，使用 `.mvss.toml` 后缀；`markview ss install FILE.mvss.toml` 安装到本用户的样式目录。设置中的 Styles… 或 `Ctrl+T` 打开列表，保存文件后实时应用。完整格式、字体回退与安装行为见 [样式表文档](docs/stylesheets.md)。
 
 ## 实现与边界
 

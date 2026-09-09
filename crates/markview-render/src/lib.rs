@@ -40,36 +40,7 @@ pub enum Theme {
 }
 impl Theme {
 	pub fn color(self, p: Paint) -> [f32; 4] {
-		let rgb = match (self, p) {
-			(Self::Light, Paint::Glass) => 0xf3f6f9,
-			(Self::Dark, Paint::Glass) => 0x252e38,
-			(_, Paint::Scrim | Paint::Shadow) => 0x101923,
-			(Self::Light, Paint::Text) => 0x262b30,
-			(Self::Light, Paint::Muted) => 0x69747e,
-			(Self::Light, Paint::Accent) => 0x315d86,
-			(Self::Light, Paint::Panel) => 0xeff1f3,
-			(Self::Light, Paint::Border) => 0xd8dee3,
-			(Self::Light, Paint::Background) => 0xfafaf8,
-			(Self::Light, Paint::Error) => 0xa13f3f,
-			(Self::Dark, Paint::Text) => 0xdde2e7,
-			(Self::Dark, Paint::Muted) => 0x98a5b1,
-			(Self::Dark, Paint::Accent) => 0x8fb9dd,
-			(Self::Dark, Paint::Panel) => 0x2a3139,
-			(Self::Dark, Paint::Border) => 0x414c58,
-			(Self::Dark, Paint::Background) => 0x20252b,
-			(Self::Dark, Paint::Error) => 0xf39a9a,
-		};
-		[
-			((rgb >> 16) & 255) as f32 / 255.0,
-			((rgb >> 8) & 255) as f32 / 255.0,
-			(rgb & 255) as f32 / 255.0,
-			match p {
-				Paint::Glass => 0.94,
-				Paint::Scrim => 0.24,
-				Paint::Shadow => 0.18,
-				_ => 1.0,
-			},
-		]
+		markview_core::style::Stylesheet::bundled(self == Self::Dark).paint(p)
 	}
 }
 
@@ -147,6 +118,7 @@ pub struct View<'a> {
 	pub bottom: f32,
 	pub theme: Theme,
 	pub horizontal: &'a HashMap<(usize, usize), f32>,
+	pub hovered_link: Option<&'a str>,
 }
 
 impl View<'_> {
@@ -163,6 +135,8 @@ impl View<'_> {
 }
 
 pub struct Renderer {
+	pointer: Option<(f32, f32)>,
+	stylesheet: Option<Arc<markview_core::style::Stylesheet>>,
 	instance: wgpu::Instance,
 	surface: Option<wgpu::Surface<'static>>,
 	config: Option<wgpu::SurfaceConfiguration>,
@@ -191,6 +165,156 @@ pub enum FrameStatus {
 	Occluded,
 }
 impl Renderer {
+	pub fn set_pointer(&mut self, pointer: Option<(f32, f32)>) {
+		self.pointer = pointer;
+	}
+
+	pub fn set_stylesheet(
+		&mut self,
+		style: Arc<markview_core::style::Stylesheet>,
+	) {
+		self.stylesheet = Some(style);
+	}
+	fn color(&self, paint: Paint, theme: Theme) -> [f32; 4] {
+		self.stylesheet
+			.as_ref()
+			.map_or_else(|| theme.color(paint), |s| s.paint(paint))
+	}
+	fn hover_paint(paint: Paint) -> Paint {
+		use markview_core::style::Role;
+		match paint {
+			Paint::Styled(Role::Link, field) => {
+				Paint::Styled(Role::LinkHover, field)
+			}
+			Paint::Cascade(mut chain, field) => {
+				let mut out = 0u128;
+				let mut shift = 0;
+				while chain != 0 {
+					let id = chain & 63;
+					chain >>= 6;
+					let id = if id == Role::Link as u128 + 1 {
+						Role::LinkHover as u128 + 1
+					} else {
+						id
+					};
+					out |= id << shift;
+					shift += 6;
+				}
+				Paint::Cascade(out, field)
+			}
+			paint => paint,
+		}
+	}
+
+	fn rounded(
+		&mut self,
+		r: Rect,
+		radius: f32,
+		color: [f32; 4],
+		clip: Rect,
+		view: &View<'_>,
+	) {
+		if color[3] == 0.
+			|| r.w <= 0.
+			|| r.h <= 0.
+			|| r.intersect(clip).is_none()
+		{
+			return;
+		}
+		let radius = radius.min(r.w / 2.).min(r.h / 2.).max(0.);
+		if radius < 0.5 {
+			self.solid(r, color, clip, view);
+			return;
+		}
+		self.solid(
+			Rect {
+				y: r.y + radius,
+				h: (r.h - 2. * radius).max(0.),
+				..r
+			},
+			color,
+			clip,
+			view,
+		);
+		let steps = (radius * view.scale).ceil().max(1.) as usize;
+		for i in 0..steps {
+			let y = i as f32 * radius / steps as f32;
+			let h = radius / steps as f32;
+			let d = radius - y - h / 2.;
+			let inset = radius - (radius * radius - d * d).max(0.).sqrt();
+			for top in [r.y + y, r.y + r.h - y - h] {
+				self.solid(
+					Rect {
+						x: r.x + inset,
+						y: top,
+						w: (r.w - 2. * inset).max(0.),
+						h,
+					},
+					color,
+					clip,
+					view,
+				);
+			}
+		}
+	}
+	fn rounded_border(
+		&mut self,
+		r: Rect,
+		radius: f32,
+		border: f32,
+		color: [f32; 4],
+		clip: Rect,
+		view: &View<'_>,
+	) {
+		let b = border.min(r.w / 2.).min(r.h / 2.).max(0.);
+		let radius = radius.min(r.w / 2.).min(r.h / 2.).max(0.);
+		let step = 1. / view.scale;
+		let start = ((clip.y - r.y).max(0.) / step).floor() as usize;
+		let rows =
+			((clip.y + clip.h - r.y).min(r.h).max(0.) / step).ceil() as usize;
+		for i in start..rows {
+			let y = i as f32 * step;
+			let h = step.min(r.h - y);
+			let cy = y + h / 2.;
+			let edge = |rad: f32, dy: f32| {
+				if dy >= rad {
+					0.
+				} else {
+					rad - (rad * rad - (rad - dy).powi(2)).max(0.).sqrt()
+				}
+			};
+			let inset = edge(radius, cy.min(r.h - cy));
+			if cy < b || cy >= r.h - b {
+				self.solid(
+					Rect {
+						x: r.x + inset,
+						y: r.y + y,
+						w: (r.w - 2. * inset).max(0.),
+						h,
+					},
+					color,
+					clip,
+					view,
+				);
+			} else {
+				let inner =
+					b + edge((radius - b).max(0.), (cy - b).min(r.h - b - cy));
+				for x in [r.x + inset, r.x + r.w - inner] {
+					self.solid(
+						Rect {
+							x,
+							y: r.y + y,
+							w: (inner - inset).max(0.),
+							h,
+						},
+						color,
+						clip,
+						view,
+					);
+				}
+			}
+		}
+	}
 	pub fn acquire(&mut self, window: Arc<Window>) -> Result<FrameStatus> {
 		let size = window.inner_size();
 		let surface = self.surface.as_ref().context("No window surface")?;
@@ -374,6 +498,8 @@ impl Renderer {
 			shelf: (2, 0, 2),
 			scaler: ScaleContext::new(),
 			math_fonts: HashMap::new(),
+			stylesheet: None,
+			pointer: None,
 			fallback: None,
 			vertices: Vec::new(),
 			vertex_buffer,
@@ -635,9 +761,14 @@ impl Renderer {
 		self.math_fonts.insert(name.into(), font.clone());
 		Some(font)
 	}
-	fn math_color(color: ratex_types::Color, theme: Theme) -> [f32; 4] {
+	fn math_color(
+		&self,
+		color: ratex_types::Color,
+		theme: Theme,
+		paint: Paint,
+	) -> [f32; 4] {
 		if color.r == 0.0 && color.g == 0.0 && color.b == 0.0 {
-			theme.color(Paint::Text)
+			self.color(paint, theme)
 		} else {
 			[color.r, color.g, color.b, color.a]
 		}
@@ -808,13 +939,21 @@ impl Renderer {
 		dy: f32,
 		clip: Rect,
 		view: &View<'_>,
+		hovered: bool,
 	) {
 		match draw {
 			Draw::Glyph(g) => self.glyph_quad(
 				g,
 				dx,
 				dy,
-				view.theme.color(g.paint),
+				self.color(
+					if hovered {
+						Self::hover_paint(g.paint)
+					} else {
+						g.paint
+					},
+					view.theme,
+				),
 				clip,
 				view,
 			),
@@ -824,11 +963,60 @@ impl Renderer {
 					y: r.y + dy,
 					..*r
 				},
-				view.theme.color(*paint),
+				self.color(
+					if hovered {
+						Self::hover_paint(*paint)
+					} else {
+						*paint
+					},
+					view.theme,
+				),
 				clip,
 				view,
 			),
-			Draw::Math { math, x, y } => {
+			Draw::Box {
+				rect,
+				role,
+				radius,
+				border,
+				left_only,
+			} => {
+				let rect = Rect {
+					x: rect.x + dx,
+					y: rect.y + dy,
+					..*rect
+				};
+				let background = self.color(
+					Paint::Styled(
+						*role,
+						markview_core::style::ColorField::Background,
+					),
+					view.theme,
+				);
+				self.rounded(rect, *radius, background, clip, view);
+				if *border > 0. {
+					let color = self.color(
+						Paint::Styled(
+							*role,
+							markview_core::style::ColorField::BorderColor,
+						),
+						view.theme,
+					);
+					if *left_only {
+						self.solid(
+							Rect { w: *border, ..rect },
+							color,
+							clip,
+							view,
+						);
+					} else {
+						self.rounded_border(
+							rect, *radius, *border, color, clip, view,
+						);
+					}
+				}
+			}
+			Draw::Math { math, x, y, paint } => {
 				let (x, y) = (x + dx, y + dy);
 				if intersect(
 					Rect {
@@ -854,7 +1042,8 @@ impl Renderer {
 							char_code,
 							color,
 						} => {
-							let color = Self::math_color(*color, view.theme);
+							let color =
+								self.math_color(*color, view.theme, *paint);
 							if let Some(data) = self.math_font(font) {
 								let ch = ratex_font::FontId::parse(font)
 									.map_or_else(
@@ -922,7 +1111,8 @@ impl Renderer {
 								w: *width as f32 * size,
 								h: (*thickness as f32 * size).max(0.6),
 							};
-							let color = Self::math_color(*color, view.theme);
+							let color =
+								self.math_color(*color, view.theme, *paint);
 							if *dashed {
 								let mut left = 0.0;
 								while left < rect.w {
@@ -955,7 +1145,7 @@ impl Renderer {
 								w: *width as f32 * size,
 								h: *height as f32 * size,
 							},
-							Self::math_color(*color, view.theme),
+							self.math_color(*color, view.theme, *paint),
 							clip,
 							view,
 						),
@@ -971,7 +1161,7 @@ impl Renderer {
 							x + *px as f32 * size,
 							y + *py as f32 * size,
 							size,
-							Self::math_color(*color, view.theme),
+							self.math_color(*color, view.theme, *paint),
 							clip,
 							view,
 						),
@@ -995,13 +1185,23 @@ impl Renderer {
 			h: view.height as f32 / view.scale,
 		};
 		let clip = view.viewport().clip();
+		if let Some(background) = &snapshot.document_box {
+			self.draw(
+				background,
+				view.left,
+				view.top - view.scroll,
+				clip,
+				view,
+				false,
+			);
+		}
 		let start = snapshot
 			.blocks
 			.partition_point(|b| b.y + b.layout.height < view.scroll);
 		// Selection sits above block and code backgrounds but below glyphs, so a
 		// highlight never tints the text it covers.
-		let mut backgrounds: Vec<(&Draw, f32, f32, Rect)> = Vec::new();
-		let mut foreground: Vec<(&Draw, f32, f32, Rect)> = Vec::new();
+		let mut backgrounds: Vec<(&Draw, f32, f32, Rect, bool)> = Vec::new();
+		let mut foreground: Vec<(&Draw, f32, f32, Rect, bool)> = Vec::new();
 		let mut tracks: Vec<(Rect, [f32; 4])> = Vec::new();
 		for (index, block) in snapshot.blocks.iter().enumerate().skip(start) {
 			let dy = view.top + block.y - view.scroll;
@@ -1009,6 +1209,18 @@ impl Renderer {
 				break;
 			}
 			for (i, draw) in block.layout.draws.iter().enumerate() {
+				let hovered = view.hovered_link.is_some_and(|url| {
+					block.layout.links.iter().enumerate().any(|(n, link)| {
+						link.url == url
+							&& link.command <= i && block
+							.layout
+							.links
+							.get(n + 1)
+							.map_or(i < block.layout.draws.len(), |next| {
+								i < next.command
+							})
+					})
+				});
 				let (offset, local_clip) =
 					block.layout.command_view(i, index, view.horizontal);
 				let clip = if let Some(rect) = local_clip {
@@ -1027,10 +1239,23 @@ impl Renderer {
 				let dx = view.left - offset;
 				match draw {
 					// Strike-through and similar marks stay above the glyphs.
-					Draw::Rect(_, Paint::Text)
+					Draw::Rect(
+						_,
+						Paint::Text
+						| Paint::Cascade(
+							_,
+							markview_core::style::ColorField::Color,
+						)
+						| Paint::Styled(
+							_,
+							markview_core::style::ColorField::Color,
+						),
+					)
 					| Draw::Glyph(_)
-					| Draw::Math { .. } => foreground.push((draw, dx, dy, clip)),
-					Draw::Rect(..) => backgrounds.push((draw, dx, dy, clip)),
+					| Draw::Math { .. } => foreground.push((draw, dx, dy, clip, hovered)),
+					Draw::Rect(..) | Draw::Box { .. } => {
+						backgrounds.push((draw, dx, dy, clip, hovered))
+					}
 				}
 			}
 			for (oi, o) in block.layout.overflow.iter().enumerate() {
@@ -1042,23 +1267,55 @@ impl Renderer {
 					w: o.rect.w,
 					h: 2.0,
 				};
-				tracks.push((track, view.theme.color(Paint::Border)));
+				tracks.push((
+					track,
+					self.color(
+						Paint::Styled(
+							markview_core::style::Role::Scrollbar,
+							markview_core::style::ColorField::Track,
+						),
+						view.theme,
+					),
+				));
 				tracks.push((
 					Rect {
 						x: track.x + offset / o.content_width * track.w,
 						w: track.w * track.w / o.content_width,
 						..track
 					},
-					view.theme.color(Paint::Muted),
+					self.color(
+						Paint::Styled(
+							markview_core::style::Role::Scrollbar,
+							if self.pointer.is_some_and(|(x, y)| {
+								Rect {
+									x: track.x,
+									y: track.y - 4.,
+									w: track.w,
+									h: 10.,
+								}
+								.contains(x, y)
+							}) {
+								markview_core::style::ColorField::ThumbHover
+							} else {
+								markview_core::style::ColorField::Thumb
+							},
+						),
+						view.theme,
+					),
 				));
 			}
 		}
-		for (draw, dx, dy, clip) in backgrounds {
-			self.draw(draw, dx, dy, clip, view);
+		for (draw, dx, dy, clip, hovered) in backgrounds {
+			self.draw(draw, dx, dy, clip, view, hovered);
 		}
 		if let Some(selection) = view.selection {
-			let mut color = view.theme.color(Paint::Accent);
-			color[3] = 0.28;
+			let color = self.color(
+				Paint::Styled(
+					markview_core::style::Role::Selection,
+					markview_core::style::ColorField::Background,
+				),
+				view.theme,
+			);
 			for rect in snapshot.selection_rects_in(
 				selection,
 				view.horizontal,
@@ -1073,14 +1330,14 @@ impl Renderer {
 				);
 			}
 		}
-		for (draw, dx, dy, clip) in foreground {
-			self.draw(draw, dx, dy, clip, view);
+		for (draw, dx, dy, clip, hovered) in foreground {
+			self.draw(draw, dx, dy, clip, view, hovered);
 		}
 		for (rect, color) in tracks {
 			self.solid(rect, color, clip, view);
 		}
 		for draw in overlay {
-			self.draw(draw, 0.0, 0.0, full, view);
+			self.draw(draw, 0.0, 0.0, full, view, false);
 		}
 	}
 
@@ -1119,7 +1376,7 @@ impl Renderer {
 		}
 		let mut encoder =
 			self.device.create_command_encoder(&Default::default());
-		let c = view.theme.color(Paint::Background);
+		let c = self.color(Paint::Background, view.theme);
 		let linear = |v: f32| {
 			if v <= 0.04045 {
 				v as f64 / 12.92

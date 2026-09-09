@@ -8,5 +8,6 @@ mod file;
 mod platform;
 mod settings;
 mod state;
+mod stylesheet;
 mod watch;
 mod worker;

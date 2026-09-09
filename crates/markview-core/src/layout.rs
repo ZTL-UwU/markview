@@ -1,4 +1,5 @@
 //! Document layout and immutable snapshots, independent of a window or GPU.
+use crate::style::{ColorField, Decoration, Role};
 use crate::text::{TextCluster, TextNode};
 use crate::{
 	document::{
@@ -17,13 +18,14 @@ use std::{
 pub use crate::scene::*;
 pub use crate::shaping::TextShaper;
 use crate::shaping::{Cluster, Span};
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct LayoutOptions {
 	pub width: f32,
 	pub font_size: f32,
 	pub justify: bool,
 	pub hyphenate: bool,
 	pub greedy: bool,
+	pub stylesheet: Arc<crate::style::Stylesheet>,
 }
 impl Default for LayoutOptions {
 	fn default() -> Self {
@@ -33,7 +35,19 @@ impl Default for LayoutOptions {
 			justify: true,
 			hyphenate: true,
 			greedy: false,
+			stylesheet: crate::style::Stylesheet::bundled(false),
 		}
+	}
+}
+
+impl PartialEq for LayoutOptions {
+	fn eq(&self, other: &Self) -> bool {
+		self.width == other.width
+			&& self.font_size == other.font_size
+			&& self.justify == other.justify
+			&& self.hyphenate == other.hyphenate
+			&& self.greedy == other.greedy
+			&& self.stylesheet.layout_key() == other.stylesheet.layout_key()
 	}
 }
 
@@ -59,6 +73,7 @@ struct CacheKey {
 	justify: bool,
 	hyphenate: bool,
 	greedy: bool,
+	style: u64,
 }
 impl Default for LayoutEngine {
 	fn default() -> Self {
@@ -76,16 +91,32 @@ impl LayoutEngine {
 	pub fn clear_document_cache(&mut self) {
 		self.cache.clear();
 	}
+	pub fn validate_stylesheet(
+		&mut self,
+		stylesheet: &crate::style::Stylesheet,
+	) -> anyhow::Result<()> {
+		self.shaper.validate_stylesheet(stylesheet)
+	}
 
 	pub fn layout(
 		&mut self,
 		document: &Document,
 		options: &LayoutOptions,
 	) -> LayoutSnapshot {
+		self.shaper.set_stylesheet(options.stylesheet.clone());
 		let mut result = LayoutSnapshot {
 			width: options.width,
 			..Default::default()
 		};
+		let body = options.stylesheet.rule(Role::Body);
+		let padding = body
+			.padding
+			.as_ref()
+			.map(|p| p.sides().map(|v| v * options.font_size))
+			.unwrap_or([0.; 4]);
+		let content_width = (options.width - padding[1] - padding[3]).max(1.);
+		result.height =
+			padding[0] + body.space_before.unwrap_or(0.) * options.font_size;
 		let previous = std::mem::take(&mut self.cache);
 		let mut cached_draws = 0;
 		for block in &document.blocks {
@@ -96,13 +127,21 @@ impl LayoutEngine {
 				justify: options.justify,
 				hyphenate: options.hyphenate,
 				greedy: options.greedy,
+				style: options.stylesheet.layout_key(),
 			};
 			let layout = if let Some(cached) = previous.get(&key) {
 				result.reused += 1;
 				cached.clone()
 			} else {
 				let mut out = BlockLayout::default();
-				self.block(block, 0.0, 0.0, options.width, options, &mut out);
+				self.block(
+					block,
+					padding[3],
+					0.0,
+					content_width,
+					options,
+					&mut out,
+				);
 				Arc::new(out)
 			};
 			result.blocks.push(PlacedBlock {
@@ -111,7 +150,7 @@ impl LayoutEngine {
 				y: result.height,
 				layout: layout.clone(),
 			});
-			result.height += layout.height + options.font_size * 0.8;
+			result.height += layout.height;
 			result.degraded += layout.degraded;
 			result.math_errors += layout.math_errors;
 			cached_draws += layout.draws.len();
@@ -119,6 +158,20 @@ impl LayoutEngine {
 				self.cache.insert(key, layout);
 			}
 		}
+		result.height +=
+			padding[2] + body.space_after.unwrap_or(0.) * options.font_size;
+		result.document_box = Some(Draw::Box {
+			rect: Rect {
+				x: 0.,
+				y: 0.,
+				w: options.width,
+				h: result.height,
+			},
+			role: Role::Body,
+			radius: body.radius.unwrap_or(0.),
+			border: body.border_width.unwrap_or(0.),
+			left_only: false,
+		});
 		result
 	}
 
@@ -162,7 +215,16 @@ impl LayoutEngine {
 			match &inline.kind {
 				InlineKind::Text(t) => p.text.push_str(t),
 				InlineKind::Math { latex, display } => {
-					match self.math.layout(latex, *display, size) {
+					match self.math.layout(
+						latex,
+						*display,
+						size * self
+							.shaper
+							.stylesheet
+							.rule(Role::Math)
+							.size
+							.unwrap_or(1.),
+					) {
 						Ok(m) => {
 							p.math.insert(start, m);
 							p.text.push('\u{fffc}');
@@ -355,7 +417,7 @@ impl LayoutEngine {
 		let node = out.text.len();
 		out.text.push(TextNode::new(p.reading.clone(), ""));
 		if p.text.is_empty() {
-			return size * 1.65;
+			return size * self.shaper.appearance.line_height;
 		}
 		let units = self.units(&p, size, sans, opts.hyphenate && !sans);
 		let solution = if opts.greedy {
@@ -368,7 +430,7 @@ impl LayoutEngine {
 		let mut lines: std::collections::VecDeque<_> = solution.lines.into();
 		while let Some(mut line) = lines.pop_front() {
 			if line.units.is_empty() {
-				y_cursor += size * 1.65;
+				y_cursor += size * self.shaper.appearance.line_height;
 				continue;
 			}
 			let range = units[line.units.start].source.start
@@ -436,7 +498,8 @@ impl LayoutEngine {
 				.iter()
 				.map(|c| c.descent)
 				.fold(size * 0.2, f32::max);
-			let height = (size * 1.65).max(ascent + descent + size * 0.18);
+			let height = (size * self.shaper.appearance.line_height)
+				.max(ascent + descent + size * 0.18);
 			let baseline =
 				y_cursor + (height - ascent - descent) * 0.5 + ascent;
 			let mut flexibility = Vec::new();
@@ -514,7 +577,14 @@ impl LayoutEngine {
 						link = Some((url.to_string(), cursor));
 					}
 				}
-				if style.is_some_and(|s| s.code) {
+				let appearance = style
+					.map(|s| {
+						self.shaper
+							.stylesheet
+							.inline(&self.shaper.appearance, s)
+					})
+					.unwrap_or_else(|| self.shaper.appearance.clone());
+				if let Some(background) = appearance.background {
 					out.draws.push(Draw::Rect(
 						Rect {
 							x: cursor,
@@ -522,12 +592,15 @@ impl LayoutEngine {
 							w: c.width,
 							h: c.ascent + c.descent + 2.0,
 						},
-						Paint::Panel,
+						background,
 					));
 				}
 				if let Some(math) = p.math.get(&c.range.start) {
 					out.draws.push(Draw::Math {
 						math: math.clone(),
+						paint: appearance
+							.paint
+							.cascade(Role::Math, ColorField::Color),
 						x: cursor,
 						y: baseline - math.ascent,
 					});
@@ -538,15 +611,19 @@ impl LayoutEngine {
 						out.draws.push(Draw::Glyph(g));
 					}
 				}
-				if style.is_some_and(|s| s.strike) {
+				for decoration in &appearance.decoration {
 					out.draws.push(Draw::Rect(
 						Rect {
 							x: cursor,
-							y: baseline - size * 0.3,
+							y: if *decoration == Decoration::Strike {
+								baseline - size * 0.3
+							} else {
+								baseline + size * 0.12
+							},
 							w: c.width,
 							h: 1.0,
 						},
-						Paint::Text,
+						appearance.paint,
 					));
 				}
 				cursor += c.width + flex * ratio;
@@ -623,7 +700,7 @@ impl LayoutEngine {
 					x,
 					cursor,
 					width,
-					size * 1.1,
+					size,
 					false,
 					CellAlign::Center,
 					false,
@@ -665,14 +742,11 @@ impl LayoutEngine {
 		y: f32,
 		width: f32,
 		opts: &LayoutOptions,
-		gap: f32,
+		_gap: f32,
 		out: &mut BlockLayout,
 	) -> f32 {
 		let mut cursor = y;
-		for (i, block) in blocks.iter().enumerate() {
-			if i > 0 {
-				cursor += gap;
-			}
+		for block in blocks {
 			cursor += self.block(block, x, cursor, width, opts, out);
 		}
 		cursor - y
@@ -687,7 +761,77 @@ impl LayoutEngine {
 		opts: &LayoutOptions,
 		out: &mut BlockLayout,
 	) -> f32 {
-		let size = opts.font_size;
+		let role = match &block.kind {
+			BlockKind::Paragraph(_) => Role::P,
+			BlockKind::Heading { level, .. } => Role::heading(*level),
+			BlockKind::Code { .. } => Role::CodeBlock,
+			BlockKind::Quote { .. } => Role::Blockquote,
+			BlockKind::List { .. } => Role::List,
+			BlockKind::Table { .. } => Role::Table,
+			BlockKind::Footnote { .. } => Role::Footnote,
+			BlockKind::Rule => Role::Hr,
+		};
+		let previous = self.shaper.appearance.clone();
+		let rule = opts.stylesheet.rule(role).clone();
+		self.shaper.appearance = opts.stylesheet.text(&previous, role);
+		self.shaper.appearance.background = None;
+		let before = rule.space_before.unwrap_or(0.) * opts.font_size;
+		let after = rule.space_after.unwrap_or(0.) * opts.font_size;
+		let pad = rule
+			.padding
+			.as_ref()
+			.map(|p| p.sides().map(|v| v * opts.font_size))
+			.unwrap_or([0.; 4]);
+		let inner_y = y + before + pad[0];
+		let placeholder = out.draws.len();
+		out.draws.push(Draw::Box {
+			rect: Rect::default(),
+			role,
+			radius: rule.radius.unwrap_or(0.),
+			border: rule.border_width.unwrap_or(0.),
+			left_only: role == Role::Blockquote,
+		});
+		let height = self.block_inner(
+			block,
+			x + pad[3],
+			inner_y,
+			(width - pad[1] - pad[3]).max(1.),
+			opts,
+			out,
+		);
+		let box_height = pad[0] + height + pad[2];
+		out.draws[placeholder] = Draw::Box {
+			rect: Rect {
+				x,
+				y: y + before,
+				w: width,
+				h: box_height,
+			},
+			role,
+			radius: rule.radius.unwrap_or(0.),
+			border: if role == Role::Hr || role == Role::Table {
+				0.
+			} else {
+				rule.border_width.unwrap_or(0.)
+			},
+			left_only: role == Role::Blockquote,
+		};
+		self.shaper.appearance = previous;
+		let total = before + box_height + after;
+		out.height = out.height.max(y + total);
+		out.width = out.width.max(x + width);
+		total
+	}
+	fn block_inner(
+		&mut self,
+		block: &Block,
+		x: f32,
+		y: f32,
+		width: f32,
+		opts: &LayoutOptions,
+		out: &mut BlockLayout,
+	) -> f32 {
+		let size = opts.font_size * self.shaper.appearance.size;
 		let width = width.max(40.0);
 		let height = match &block.kind {
 			BlockKind::Paragraph(text) => self.rich(
@@ -702,55 +846,57 @@ impl LayoutEngine {
 				opts,
 				out,
 			),
-			BlockKind::Heading { level, text } => {
-				let factor = [1.9, 1.5, 1.25, 1.1, 1.0, 0.95]
-					[(*level as usize).saturating_sub(1).min(5)];
-				let mut text = text.clone();
-				for s in &mut text {
-					s.style.bold = true;
-				}
-				let top = if *level == 1 { 3.0 } else { size * 0.6 };
-				top + self.rich(
-					&text,
-					x,
-					y + top,
-					width,
-					size * factor,
-					true,
-					CellAlign::Left,
-					false,
-					opts,
-					out,
-				)
-			}
+			BlockKind::Heading { text, .. } => self.rich(
+				text,
+				x,
+				y,
+				width,
+				size,
+				true,
+				CellAlign::Left,
+				false,
+				opts,
+				out,
+			),
 			BlockKind::Rule => {
 				out.draws.push(Draw::Rect(
 					Rect {
 						x,
-						y: y + size * 0.5,
+						y,
 						w: width,
-						h: 1.0,
+						h: opts
+							.stylesheet
+							.rule(Role::Hr)
+							.border_width
+							.unwrap_or(1.),
 					},
-					Paint::Border,
+					Paint::Styled(Role::Hr, ColorField::Color),
 				));
-				size
+				opts.stylesheet.rule(Role::Hr).border_width.unwrap_or(1.)
 			}
 			BlockKind::Code { language, text } => {
 				let node = out.text.len();
 				out.text.push(TextNode::new(text.clone(), "\n\n"));
 				let mut line_offset = 0;
-				let start = out.draws.len();
-				out.draws.push(Draw::Rect(Rect::default(), Paint::Panel));
-				let mut cursor = y + 12.0;
+
+				let mut cursor = y;
 				if !language.is_empty() {
+					let rule = opts.stylesheet.rule(Role::CodeLabel);
+					cursor += rule.space_before.unwrap_or(0.) * opts.font_size;
+					let label = opts
+						.stylesheet
+						.text(&self.shaper.appearance, Role::CodeLabel);
+					let label_size = opts.font_size * label.size;
+					let label_height = label_size * label.line_height;
 					out.draws.extend(self.shaper.label(
 						language,
-						size * 0.67,
-						x + 14.0,
-						cursor + size * 0.7,
-						Paint::Muted,
+						opts.font_size,
+						x,
+						cursor + label_size,
+						Paint::Styled(Role::CodeLabel, ColorField::Color),
 					));
-					cursor += size * 1.3;
+					cursor += label_height
+						+ rule.space_after.unwrap_or(0.) * opts.font_size;
 				}
 				let content_start = out.draws.len();
 				let mut natural = 0.0_f32;
@@ -760,13 +906,27 @@ impl LayoutEngine {
 					let spans = [Span {
 						range: 0..line.len(),
 						style: TextStyle {
-							code: true,
+							code: false,
 							..Default::default()
 						},
 					}];
 					let clusters =
 						self.shaper.shape(&line, &spans, size, false);
-					let mut left = x + 14.0;
+					let line_ascent = clusters
+						.iter()
+						.map(|c| c.ascent)
+						.fold(size * 0.8, f32::max);
+					let line_descent = clusters
+						.iter()
+						.map(|c| c.descent)
+						.fold(size * 0.2, f32::max);
+					let line_height = (size
+						* self.shaper.appearance.line_height)
+						.max(line_ascent + line_descent);
+					let baseline = cursor
+						+ (line_height - line_ascent - line_descent) * 0.5
+						+ line_ascent;
+					let mut left = x;
 					for c in clusters {
 						let start = offsets[c.range.start];
 						let end = offsets[c.range.end];
@@ -785,77 +945,80 @@ impl LayoutEngine {
 								x: left,
 								y: cursor,
 								w: c.width.max(1.0),
-								h: size * 1.45,
+								h: line_height,
 							},
 							rtl: c.rtl,
 							command: out.draws.len(),
 						});
 						for mut g in c.glyphs {
 							g.x += left;
-							g.y += cursor + size;
+							g.y += baseline;
 							out.draws.push(Draw::Glyph(g));
 						}
 						left += c.width;
 					}
-					natural = natural.max(left - x + 14.0);
-					cursor += size * 1.45;
+					natural = natural.max(left - x);
+					cursor += line_height;
 					line_offset += original.len() + 1;
 				}
-				let h = cursor - y + 12.0;
-				out.draws[start] =
-					Draw::Rect(Rect { x, y, w: width, h }, Paint::Panel);
+				let h = cursor - y;
 				if natural > width {
 					out.overflow.push(Overflow {
-						rect: Rect {
-							x: x + 10.0,
-							y,
-							w: width - 20.0,
-							h,
-						},
-						content_width: natural - 20.0,
+						rect: Rect { x, y, w: width, h },
+						content_width: natural,
 						commands: content_start..out.draws.len(),
 					});
 				}
 				h
 			}
 			BlockKind::Quote { label, blocks } => {
-				let index = out.draws.len();
-				out.draws.push(Draw::Rect(Rect::default(), Paint::Accent));
-				let mut top = y + 4.0;
+				let mut top = y;
 				if let Some(label) = label {
 					out.draws.extend(self.shaper.label(
 						label,
 						size * 0.8,
-						x + 20.0,
+						x,
 						top + size,
-						Paint::Accent,
+						Paint::Styled(Role::Blockquote, ColorField::Color),
 					));
-					top += size * 1.65;
+					top += size * self.shaper.appearance.line_height;
 				}
-				let h = top - y
+				top - y
 					+ self.children(
 						blocks,
-						x + 20.0,
+						x,
 						top,
-						width - 24.0,
+						width,
 						opts,
 						size * 0.6,
 						out,
-					) + 4.0;
-				out.draws[index] =
-					Draw::Rect(Rect { x, y, w: 3.0, h }, Paint::Accent);
-				h
+					)
 			}
 			BlockKind::List {
 				start,
-				tight,
+				tight: _,
 				items,
 			} => {
 				let mut top = y;
+				let list_appearance = self.shaper.appearance.clone();
+				let item_rule = opts.stylesheet.rule(Role::ListItem).clone();
+				let padding = item_rule
+					.padding
+					.as_ref()
+					.map(|p| p.sides().map(|v| v * opts.font_size))
+					.unwrap_or([0.; 4]);
 				for (i, item) in items.iter().enumerate() {
-					if i > 0 {
-						top += if *tight { 2.0 } else { size * 0.6 };
-					}
+					self.shaper.appearance =
+						opts.stylesheet.text(&list_appearance, Role::ListItem);
+					top +=
+						item_rule.space_before.unwrap_or(0.) * opts.font_size;
+					let box_y = top;
+					let box_index = out.draws.len();
+					out.draws.push(Draw::Rect(Rect::default(), Paint::Text));
+					top += padding[0];
+					let item_x = x + padding[3];
+					let item_width = (width - padding[1] - padding[3]).max(1.);
+
 					let marker = match item.checked {
 						Some(true) => "[x] ".into(),
 						Some(false) => "[ ] ".into(),
@@ -871,7 +1034,7 @@ impl LayoutEngine {
 							x,
 							y: top,
 							w: 25.0,
-							h: size * 1.65,
+							h: size * self.shaper.appearance.line_height,
 						},
 						rtl: false,
 						command: out.draws.len(),
@@ -884,22 +1047,45 @@ impl LayoutEngine {
 						30.0
 					};
 					if let Some(checked) = item.checked {
+						let task = opts
+							.stylesheet
+							.text(&self.shaper.appearance, Role::TaskMarker);
+						let marker_size = opts.font_size * task.size;
 						let r = Rect {
-							x: x + 2.0,
+							x: item_x + 2.,
 							y: top + size * 0.5,
-							w: size * 0.65,
-							h: size * 0.65,
+							w: marker_size * 0.7,
+							h: marker_size * 0.7,
 						};
-						out.draws.push(Draw::Rect(r, Paint::Accent));
-						if !checked {
-							out.draws.push(Draw::Rect(
-								Rect {
-									x: r.x + 1.5,
-									y: r.y + 1.5,
-									w: r.w - 3.0,
-									h: r.h - 3.0,
-								},
-								Paint::Background,
+						out.draws.push(Draw::Rect(
+							r,
+							Paint::Styled(
+								Role::TaskMarker,
+								ColorField::BorderColor,
+							),
+						));
+						out.draws.push(Draw::Rect(
+							Rect {
+								x: r.x + 1.,
+								y: r.y + 1.,
+								w: (r.w - 2.).max(0.),
+								h: (r.h - 2.).max(0.),
+							},
+							Paint::Styled(
+								Role::TaskMarker,
+								ColorField::Background,
+							),
+						));
+						if checked {
+							out.draws.extend(self.shaper.label(
+								"✓",
+								opts.font_size * 0.7,
+								r.x,
+								r.y + r.h,
+								Paint::Styled(
+									Role::TaskMarker,
+									ColorField::Color,
+								),
 							));
 						}
 					} else {
@@ -909,27 +1095,42 @@ impl LayoutEngine {
 						);
 						out.draws.extend(self.shaper.label(
 							&marker,
-							size * 0.9,
-							x + 2.0,
+							opts.font_size,
+							item_x + 2.0,
 							top + size * 1.15,
-							Paint::Muted,
+							Paint::Styled(Role::ListMarker, ColorField::Color),
 						));
 					}
 					top += self
 						.children(
 							&item.blocks,
-							x + indent,
+							item_x + indent,
 							top,
-							width - indent,
+							(item_width - indent).max(1.),
 							opts,
 							size * 0.6,
 							out,
 						)
-						.max(size * 1.65);
+						.max(size * self.shaper.appearance.line_height);
+					top += padding[2];
+					out.draws[box_index] = Draw::Box {
+						rect: Rect {
+							x,
+							y: box_y,
+							w: width,
+							h: top - box_y,
+						},
+						role: Role::ListItem,
+						radius: item_rule.radius.unwrap_or(0.),
+						border: item_rule.border_width.unwrap_or(0.),
+						left_only: false,
+					};
+					top += item_rule.space_after.unwrap_or(0.) * opts.font_size;
 					if let Some(node) = out.text.get_mut(first_child) {
 						node.separator = "";
 					}
 				}
+				self.shaper.appearance = list_appearance;
 				top - y
 			}
 			BlockKind::Table { align, rows } => {
@@ -941,10 +1142,10 @@ impl LayoutEngine {
 					size * 0.75,
 					x,
 					y + size,
-					Paint::Muted,
+					Paint::Styled(Role::Footnote, ColorField::Color),
 				));
 				let smaller = LayoutOptions {
-					font_size: size * 0.88,
+					font_size: opts.font_size,
 					..opts.clone()
 				};
 				self.children(
@@ -979,26 +1180,51 @@ impl LayoutEngine {
 	) -> f32 {
 		let n = align.len();
 		if n == 0 {
-			return 0.0;
+			return 0.;
 		}
-		let size = opts.font_size * 0.9;
-		let mut minima = vec![48.0_f32; n];
-		let mut preferred = vec![48.0_f32; n];
-		for row in rows {
+		let table_appearance = self.shaper.appearance.clone();
+		let table_rule = opts.stylesheet.rule(Role::Table).clone();
+		let mut minima = vec![48_f32; n];
+		let mut preferred = vec![48_f32; n];
+		let cell_rule = |header: bool| {
+			let mut rule = opts.stylesheet.rule(Role::TableCell).clone();
+			if header {
+				rule.overlay(opts.stylesheet.rule(Role::TableHeader));
+			}
+			rule
+		};
+		let cell_appearance = |header: bool| {
+			let base = opts.stylesheet.text(&table_appearance, Role::TableCell);
+			if header {
+				opts.stylesheet.text(&base, Role::TableHeader)
+			} else {
+				base
+			}
+		};
+		for (row_index, row) in rows.iter().enumerate() {
+			self.shaper.appearance = cell_appearance(row_index == 0);
+			let rule = cell_rule(row_index == 0);
+			let pad = rule
+				.padding
+				.as_ref()
+				.map(|p| p.sides().map(|v| v * opts.font_size))
+				.unwrap_or([0.; 4]);
+			let size = opts.font_size * self.shaper.appearance.size;
 			for (col, cell) in row.iter().enumerate().take(n) {
 				let p = self.prepare(cell, size, out);
 				let units = self.units(&p, size, false, false);
+				let inset = pad[1] + pad[3];
 				preferred[col] = preferred[col]
-					.max(units.iter().map(|u| u.width).sum::<f32>() + 24.0);
-				let mut segment = 0.0_f32;
+					.max(units.iter().map(|u| u.width).sum::<f32>() + inset);
+				let mut segment = 0_f32;
 				for u in &units {
 					segment += u.width;
 					if u.after.is_some() {
-						minima[col] = minima[col].max(segment + 24.0);
-						segment = 0.0;
+						minima[col] = minima[col].max(segment + inset);
+						segment = 0.;
 					}
 				}
-				minima[col] = minima[col].max(segment + 24.0);
+				minima[col] = minima[col].max(segment + inset);
 			}
 		}
 		let min: f32 = minima.iter().sum();
@@ -1008,7 +1234,7 @@ impl LayoutEngine {
 			.map(|i| {
 				minima[i]
 					+ if preferred_total > min {
-						(total - min) * (preferred[i] - minima[i]).max(0.0)
+						(total - min) * (preferred[i] - minima[i]).max(0.)
 							/ (preferred_total - min)
 					} else {
 						(total - min) / n as f32
@@ -1016,27 +1242,41 @@ impl LayoutEngine {
 			})
 			.collect();
 		let start = out.draws.len();
-		let mut top = y;
 		let overflow_start = out.overflow.len();
+		let mut top = y;
 		for (row_index, row) in rows.iter().enumerate() {
-			let background = out.draws.len();
-			out.draws.push(Draw::Rect(Rect::default(), Paint::Panel));
+			let header = row_index == 0;
+			let role = if header {
+				Role::TableHeader
+			} else {
+				Role::TableCell
+			};
+			let rule = cell_rule(header);
+			let pad = rule
+				.padding
+				.as_ref()
+				.map(|p| p.sides().map(|v| v * opts.font_size))
+				.unwrap_or([0.; 4]);
+			let before = rule.space_before.unwrap_or(0.) * opts.font_size;
+			let after = rule.space_after.unwrap_or(0.) * opts.font_size;
+			self.shaper.appearance = cell_appearance(header);
+			let size = opts.font_size * self.shaper.appearance.size;
 			let mut left = x;
-			let mut row_height = size * 2.0;
+			let mut row_height = size * self.shaper.appearance.line_height
+				+ pad[0] + pad[2]
+				+ before + after;
+			let mut boxes = Vec::new();
 			for col in 0..n {
+				let index = out.draws.len();
+				out.draws.push(Draw::Rect(Rect::default(), Paint::Text));
+				boxes.push((index, left, widths[col]));
 				if let Some(cell) = row.get(col) {
-					let mut cell = cell.clone();
-					if row_index == 0 {
-						for i in &mut cell {
-							i.style.bold = true;
-						}
-					}
 					let first_node = out.text.len();
 					let h = self.rich(
-						&cell,
-						left + 12.0,
-						top + 8.0,
-						widths[col] - 24.0,
+						cell,
+						left + pad[3],
+						top + before + pad[0],
+						(widths[col] - pad[1] - pad[3]).max(1.),
 						size,
 						false,
 						align[col],
@@ -1053,32 +1293,28 @@ impl LayoutEngine {
 							"\n\n"
 						};
 					}
-					row_height = row_height.max(h + 16.0);
+					row_height =
+						row_height.max(h + pad[0] + pad[2] + before + after);
 				}
 				left += widths[col];
 			}
-			out.draws[background] = Draw::Rect(
-				Rect {
-					x,
-					y: top,
-					w: total,
-					h: row_height,
-				},
-				if row_index % 2 == 0 {
-					Paint::Panel
-				} else {
-					Paint::Background
-				},
-			);
-			out.draws.push(Draw::Rect(
-				Rect {
-					x,
-					y: top + row_height - 1.0,
-					w: total,
-					h: 1.0,
-				},
-				Paint::Border,
-			));
+			for (index, left, w) in boxes {
+				out.draws[index] = Draw::Box {
+					rect: Rect {
+						x: left,
+						y: top + before,
+						w,
+						h: (row_height - before - after).max(0.),
+					},
+					role,
+					radius: rule.radius.unwrap_or(0.),
+					border: rule
+						.border_width
+						.or(table_rule.border_width)
+						.unwrap_or(0.),
+					left_only: false,
+				};
+			}
 			top += row_height;
 		}
 		if total > width + 0.5 {
@@ -1094,6 +1330,7 @@ impl LayoutEngine {
 				commands: start..out.draws.len(),
 			});
 		}
+		self.shaper.appearance = table_appearance;
 		top - y
 	}
 }
@@ -1411,5 +1648,105 @@ mod tests {
 				assert!(s.blocks.iter().all(|b| b.layout.overflow.is_empty()));
 			}
 		}
+	}
+}
+
+#[cfg(test)]
+mod stylesheet_tests {
+	use super::*;
+	fn sheet(source: &str) -> Arc<crate::style::Stylesheet> {
+		let mut s = (*crate::style::Stylesheet::bundled(false)).clone();
+		s.merge(&crate::style::Stylesheet::parse(source).unwrap());
+		Arc::new(s)
+	}
+	#[test]
+	fn live_colors_follow_semantics_without_reflow() {
+		let doc = crate::document::parse(
+			"> *English 中文*\n\n# Heading\n\n***Both*** [*link*](https://example.com)",
+		);
+		let mut engine = LayoutEngine::new();
+		let first = engine.layout(&doc, &LayoutOptions::default());
+		let stylesheet = sheet(
+			"format_version=1\nversion=1\n[blockquote]\ncolor='#123456'\n[em]\ncolor='#abcdef'\n[strong_em]\ncolor='#654321'\n[link]\ncolor='#102030'",
+		);
+		let second = engine.layout(
+			&doc,
+			&LayoutOptions {
+				stylesheet: stylesheet.clone(),
+				..Default::default()
+			},
+		);
+		assert_eq!(second.reused, doc.blocks.len());
+		assert_eq!(first.height, second.height);
+		let glyph = second.blocks[0]
+			.layout
+			.draws
+			.iter()
+			.find_map(|d| {
+				if let Draw::Glyph(g) = d {
+					Some(g)
+				} else {
+					None
+				}
+			})
+			.unwrap();
+		assert_eq!(
+			stylesheet.paint(glyph.paint),
+			crate::style::Color(0xabcdefff).rgba()
+		);
+		let last = &second.blocks.last().unwrap().layout;
+		let colors: Vec<_> = last
+			.draws
+			.iter()
+			.filter_map(|d| {
+				if let Draw::Glyph(g) = d {
+					Some(stylesheet.paint(g.paint))
+				} else {
+					None
+				}
+			})
+			.collect();
+		assert!(colors.contains(&crate::style::Color(0x654321ff).rgba()));
+		assert!(colors.contains(&crate::style::Color(0x102030ff).rgba()));
+	}
+	#[test]
+	fn geometry_changes_invalidate_cache_and_keep_reading_text() {
+		let doc = crate::document::parse(
+			"# Heading\n\nText\n\n- item\n\n| A | B |\n|---|---|\n| C | D |",
+		);
+		let mut engine = LayoutEngine::new();
+		let first = engine.layout(&doc, &LayoutOptions::default());
+		let options = LayoutOptions {
+			stylesheet: sheet(
+				"format_version=1\nversion=1\n[body]\npadding=1.0\n[h1]\nsize=2.5\n[p]\nline_height=2.0\n[list_item]\npadding=0.5\n[table.cell]\npadding=1.0",
+			),
+			..Default::default()
+		};
+		let second = engine.layout(&doc, &options);
+		assert_eq!(second.reused, 0);
+		assert!(second.height > first.height);
+		assert_eq!(
+			first.extract_text(first.select_all(1).unwrap(), 1),
+			second.extract_text(second.select_all(1).unwrap(), 1)
+		);
+		assert!(
+			second.blocks[0]
+				.layout
+				.draws
+				.iter()
+				.filter_map(|d| if let Draw::Glyph(g) = d {
+					Some(g.size)
+				} else {
+					None
+				})
+				.all(|size| size == 45.)
+		);
+		assert!(second.blocks[2].layout.draws.iter().any(|d| matches!(
+			d,
+			Draw::Box {
+				role: Role::ListItem,
+				..
+			}
+		)));
 	}
 }

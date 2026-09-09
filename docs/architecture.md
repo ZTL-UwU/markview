@@ -12,7 +12,7 @@ markview ──→ markview-render ──→ markview-core
 - **core** owns Markdown/HTML semantics, shaping, paragraph optimization,
   mathematics, immutable drawing geometry and logical reading text. It has no
   window, GPU, clipboard, filesystem observation or configuration dependencies.
-- **render** owns theme palettes, GPU resources, raster caches, window surface
+- **render** resolves semantic stylesheet colors and owns GPU resources, raster caches, window surface
   recovery, clipping and offscreen output. A small `TextShaper` supplies fallback
   glyphs; rendering does not instantiate a document layout engine.
 - **application** owns launch modes, platform effects, settings, reader sessions,
@@ -94,9 +94,9 @@ fields win conflicts; other external fields and TOML comments survive UI saves.
 The centered translucent modal captures input; outside click or Escape closes it.
 
 Window startup applies defaults, then user settings, then explicit CLI overrides.
-The desktop theme is only the default: once a user picks one it is stored as an
-optional field, so a later launch no longer follows the system, and Reset returns
-to following it. Only fields actually changed through controls are written back;
+An absent `style` list follows the desktop light/dark preference. A user choice
+saves an ordered stylesheet list; an empty list fixes the light base. Reset
+returns to following the system. Only fields actually changed through controls are written back;
 launch overrides alone never become preferences. Reset explicitly replaces all
 reading settings.
 Render, benchmark and smoke modes use defaults plus CLI flags and do not load or
@@ -120,3 +120,19 @@ and release build. `cargo test --workspace --locked settings_and_selection_frame
 it is a local regression check, not part of CI. Existing CLI rendering, benchmark
 and native reload smoke tools remain available. Windows/macOS cross checks verify
 compilation, not native runtime behavior.
+
+## Stylesheet pipeline
+
+`markview-core::style` strictly parses MVSS v1, merges sparse rules, resolves
+semantic text inheritance, and computes a geometry-only cache identity. Bundled
+light/dark TOML files use the same parser as user files. Glyphs carry compact
+semantic color ancestry, allowing color changes (including newly added rules)
+to repaint cached layouts without reshaping. Font candidates have independent
+face requirements and are checked for real style, weight and cluster coverage
+before Parley shapes the paragraph.
+
+The application owns stylesheet discovery, installation, selection and directory
+watching. The user `styles/` directory sits beside `settings.toml`. Loading a
+selected list is transactional: failures retain the last effective stylesheet,
+while the requested list remains available for diagnosis and repair. Rendering
+and layout receive the same effective stylesheet. See [the MVSS reference](stylesheets.md).

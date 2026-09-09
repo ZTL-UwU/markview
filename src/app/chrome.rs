@@ -1,9 +1,20 @@
 //! Reader controls and settings panel.
 use super::*;
+use markview_core::style::{ColorField as C, Role, TextAppearance};
 impl App {
 	pub(super) fn buttons(&self) -> Vec<Button> {
 		let (width, height, _) = self.dimensions();
-		controls(&self.settings, self.interaction.panel_open, width, height)
+		if self.interaction.styles_open {
+			style_controls(
+				&self.settings,
+				&self.style_entries,
+				self.style_page,
+				width,
+				height,
+			)
+		} else {
+			controls(&self.settings, self.interaction.panel_open, width, height)
+		}
 	}
 	pub(super) fn overlay(&mut self) -> Vec<Draw> {
 		let (width, height, _) = self.dimensions();
@@ -15,7 +26,7 @@ impl App {
 					w: width,
 					h: TOP,
 				},
-				Paint::Background,
+				Paint::Styled(Role::Toolbar, C::Background),
 			),
 			Draw::Rect(
 				Rect {
@@ -24,7 +35,7 @@ impl App {
 					w: width,
 					h: 1.0,
 				},
-				Paint::Border,
+				Paint::Styled(Role::Toolbar, C::BorderColor),
 			),
 			Draw::Rect(
 				Rect {
@@ -33,7 +44,7 @@ impl App {
 					w: width,
 					h: BOTTOM,
 				},
-				Paint::Background,
+				Paint::Styled(Role::Toolbar, C::Background),
 			),
 		];
 		let selection = self.interaction.selection.filter(|s| {
@@ -57,7 +68,9 @@ impl App {
 		let warning = if self.error {
 			Some(self.status.as_str())
 		} else {
-			self.settings_warning.as_deref()
+			self.style_warning
+				.as_deref()
+				.or(self.settings_warning.as_deref())
 		};
 		out.extend(draw_footer(
 			&mut self.ui,
@@ -78,13 +91,19 @@ impl App {
 			} else {
 				"The document is empty"
 			};
-			out.extend(self.ui.label(title, 26.0, x, y, Paint::Text));
+			out.extend(self.ui.label(
+				title,
+				26.0,
+				x,
+				y,
+				Paint::Styled(Role::Ui, C::Color),
+			));
 			out.extend(self.ui.label(
 				"Drop a file here or press Ctrl+O.",
 				15.0,
 				x,
 				y + 38.0,
-				Paint::Muted,
+				Paint::Styled(Role::Ui, C::Muted),
 			));
 		}
 		let viewport = self.viewport();
@@ -99,21 +118,49 @@ impl App {
 					* (track - h);
 			out.push(Draw::Rect(
 				Rect {
+					x: width - 7.,
+					y: TOP,
+					w: 3.,
+					h: track,
+				},
+				Paint::Styled(Role::Scrollbar, C::Track),
+			));
+			out.push(Draw::Rect(
+				Rect {
 					x: width - 7.0,
 					y,
 					w: 3.0,
 					h,
 				},
-				Paint::Muted,
+				Paint::Styled(
+					Role::Scrollbar,
+					if self.interaction.cursor.0 > width - 16. {
+						C::ThumbHover
+					} else {
+						C::Thumb
+					},
+				),
 			));
 		}
-		out.extend(draw_controls(
-			&mut self.ui,
-			&self.settings,
-			&self.interaction,
-			width,
-			height,
-		));
+		if self.interaction.styles_open {
+			out.extend(draw_styles(
+				&mut self.ui,
+				&self.settings,
+				&self.interaction,
+				&self.style_entries,
+				self.style_page,
+				width,
+				height,
+			));
+		} else {
+			out.extend(draw_controls(
+				&mut self.ui,
+				&self.settings,
+				&self.interaction,
+				width,
+				height,
+			));
+		}
 		out
 	}
 }
@@ -127,6 +174,10 @@ fn draw_footer(
 	width: f32,
 	height: f32,
 ) -> Vec<Draw> {
+	shaper.appearance = shaper.stylesheet.text(
+		&shaper.stylesheet.text(&TextAppearance::default(), Role::Ui),
+		Role::Statusbar,
+	);
 	let mut out = vec![
 		Draw::Rect(
 			Rect {
@@ -135,7 +186,7 @@ fn draw_footer(
 				w: width,
 				h: BOTTOM,
 			},
-			Paint::Background,
+			Paint::Styled(Role::Statusbar, C::Background),
 		),
 		Draw::Rect(
 			Rect {
@@ -144,7 +195,7 @@ fn draw_footer(
 				w: width,
 				h: 1.0,
 			},
-			Paint::Border,
+			Paint::Styled(Role::Statusbar, C::BorderColor),
 		),
 	];
 	let mut text = format!("{} chars · {} words", counts.chars, counts.words);
@@ -156,7 +207,13 @@ fn draw_footer(
 	}
 	let text = shaper.fit(&text, 11.0, width - 32.0);
 	let used = shaper.text_width(&text, 11.0);
-	out.extend(shaper.label(&text, 11.0, 16.0, height - 9.0, Paint::Muted));
+	out.extend(shaper.label(
+		&text,
+		11.0,
+		16.0,
+		height - 9.0,
+		Paint::Styled(Role::Statusbar, C::Muted),
+	));
 	let available = width - used - 56.0;
 	if !secondary.is_empty() && available >= 80.0 {
 		out.extend(shaper.right_label(
@@ -165,7 +222,7 @@ fn draw_footer(
 			available,
 			width - 16.0,
 			height - 9.0,
-			Paint::Muted,
+			Paint::Styled(Role::Statusbar, C::Muted),
 		));
 	}
 	if let Some(warning) = warning {
@@ -176,7 +233,7 @@ fn draw_footer(
 				w: width,
 				h: 24.0,
 			},
-			Paint::Background,
+			Paint::Styled(Role::Statusbar, C::Background),
 		));
 		let warning = shaper.fit(warning, 11.0, width - 32.0);
 		out.extend(shaper.label(
@@ -184,7 +241,7 @@ fn draw_footer(
 			11.0,
 			16.0,
 			height - BOTTOM - 8.0,
-			Paint::Error,
+			Paint::Styled(Role::Statusbar, C::Error),
 		));
 	}
 	out
@@ -210,11 +267,6 @@ fn controls(
 	width: f32,
 	height: f32,
 ) -> Vec<Button> {
-	let theme = if settings.theme == Theme::Light {
-		"Dark"
-	} else {
-		"Light"
-	};
 	if panel_open {
 		let rect = panel_rect(width, height);
 		let (top, row) = row_geometry(rect);
@@ -229,7 +281,10 @@ fn controls(
 			},
 		}];
 		for (i, entries) in [
-			vec![("System", Command::SystemTheme), (theme, Command::Theme)],
+			vec![
+				("System", Command::SystemTheme),
+				("Styles…", Command::Styles),
+			],
 			vec![("A−", Command::Smaller), ("A+", Command::Larger)],
 			vec![("W−", Command::Narrower), ("W+", Command::Wider)],
 			vec![(
@@ -310,6 +365,10 @@ fn draw_controls(
 	width: f32,
 	height: f32,
 ) -> Vec<Draw> {
+	shaper.appearance = shaper.stylesheet.text(
+		&shaper.stylesheet.text(&TextAppearance::default(), Role::Ui),
+		Role::Panel,
+	);
 	let mut out = Vec::new();
 	if interaction.panel_open {
 		let rect = panel_rect(width, height);
@@ -331,7 +390,13 @@ fn draw_controls(
 			},
 			Paint::Shadow,
 		));
-		out.push(Draw::Rect(rect, Paint::Glass));
+		out.push(Draw::Box {
+			rect,
+			role: Role::Panel,
+			radius: 0.,
+			border: 1.,
+			left_only: false,
+		});
 		out.push(Draw::Rect(
 			Rect {
 				x: rect.x,
@@ -339,7 +404,7 @@ fn draw_controls(
 				w: 3.0,
 				h: rect.h,
 			},
-			Paint::Accent,
+			Paint::Styled(Role::Panel, C::BorderColor),
 		));
 		let x = rect.x + 20.0;
 		out.extend(shaper.label(
@@ -347,7 +412,7 @@ fn draw_controls(
 			22.0,
 			x,
 			rect.y + 36.0,
-			Paint::Text,
+			Paint::Styled(Role::Panel, C::Color),
 		));
 		if rect.h >= 360.0 {
 			out.extend(shaper.label(
@@ -355,18 +420,22 @@ fn draw_controls(
 				12.0,
 				x,
 				rect.y + 61.0,
-				Paint::Muted,
+				Paint::Styled(Role::Panel, C::Muted),
 			));
 		}
 		let (top, row) = row_geometry(rect);
 		for (i, label) in [
 			format!(
-				"Theme · {}",
-				if settings.theme == Theme::Light {
-					"Light"
-				} else {
-					"Dark"
-				}
+				"Styles · {}",
+				settings
+					.style
+					.as_ref()
+					.map(|ids| if ids.is_empty() {
+						"Light base".into()
+					} else {
+						ids.join(", ")
+					})
+					.unwrap_or_else(|| "System".into())
 			),
 			format!("Text size · {:.1} px", settings.font_size),
 			format!("Column width · {:.1} px", settings.width),
@@ -376,18 +445,29 @@ fn draw_controls(
 		.iter()
 		.enumerate()
 		{
+			let label = shaper.fit(label, 13., rect.w - 218.);
 			out.extend(shaper.label(
-				label,
+				&label,
 				13.0,
 				x,
 				rect.y + top + i as f32 * row + 19.0,
-				Paint::Text,
+				Paint::Styled(Role::Panel, C::Color),
 			));
 		}
 	}
 	for b in controls(settings, interaction.panel_open, width, height) {
+		out.push(Draw::Box {
+			rect: b.rect,
+			role: Role::Button,
+			radius: 0.,
+			border: 1.,
+			left_only: false,
+		});
 		if interaction.focus == Some(b.action) {
-			out.push(Draw::Rect(b.rect, Paint::Accent));
+			out.push(Draw::Rect(
+				b.rect,
+				Paint::Styled(Role::Button, C::FocusColor),
+			));
 			out.push(Draw::Rect(
 				Rect {
 					x: b.rect.x + 1.0,
@@ -395,19 +475,32 @@ fn draw_controls(
 					w: b.rect.w - 2.0,
 					h: b.rect.h - 2.0,
 				},
-				Paint::Panel,
+				Paint::Styled(
+					Role::Button,
+					if interaction.pressed == Some(b.action) {
+						C::ActiveBackground
+					} else {
+						C::Background
+					},
+				),
 			));
 		} else if b.rect.contains(interaction.cursor.0, interaction.cursor.1) {
-			out.push(Draw::Rect(b.rect, Paint::Border));
+			out.push(Draw::Rect(
+				b.rect,
+				Paint::Styled(Role::Button, C::HoverBackground),
+			));
 		} else if interaction.panel_open {
-			out.push(Draw::Rect(b.rect, Paint::Panel));
+			out.push(Draw::Rect(
+				b.rect,
+				Paint::Styled(Role::Button, C::Background),
+			));
 		}
 		out.extend(shaper.label(
 			b.label,
 			13.0,
 			b.rect.x + 9.0,
 			b.rect.y + b.rect.h / 2.0 + 5.0,
-			Paint::Text,
+			Paint::Styled(Role::Button, C::Color),
 		));
 	}
 	out
@@ -526,6 +619,7 @@ mod gpu_tests {
 			let mut renderer = pollster::block_on(Renderer::new(None))?;
 			let horizontal = HashMap::new();
 			let view = View {
+				hovered_link: None,
 				width: (width * 1.25) as u32,
 				height: (height * 1.25) as u32,
 				scale: 1.25,
@@ -551,7 +645,368 @@ mod gpu_tests {
 				.join(filename);
 			std::fs::create_dir_all(output.parent().unwrap())?;
 			renderer.save_png(&target, &output)?;
+			if panel_open {
+				let mut settings = settings.clone();
+				settings.style = Some(vec!["paper".into(), "dark".into()]);
+				let mut entries =
+					crate::stylesheet::catalog(None, settings.style.as_deref());
+				let paper =
+					entries.iter_mut().find(|e| e.id == "paper").unwrap();
+				paper.name = "纸与墨".into();
+				paper.source = "/example/styles/paper.mvss.toml".into();
+				paper.error = None;
+				entries.push(crate::stylesheet::Entry {
+					id: "invalid".into(),
+					name: "Invalid stylesheet".into(),
+					source: "/example/styles/invalid.mvss.toml".into(),
+					error: Some("em.font: must not be empty".into()),
+				});
+				let overlay = draw_styles(
+					&mut TextShaper::new(),
+					&settings,
+					&interaction,
+					&entries,
+					0,
+					width,
+					height,
+				);
+				let submission = renderer.render(
+					&snapshot,
+					&view,
+					&overlay,
+					&target.create_view(&Default::default()),
+				)?;
+				renderer.wait(Some(submission))?;
+				renderer.save_png(
+					&target,
+					&output.with_file_name(format!("styles-{filename}")),
+				)?;
+			}
 		}
 		Ok(())
+	}
+}
+
+fn style_rows(rect: Rect) -> usize {
+	((rect.h - 142.) / 60.).floor().max(1.) as usize
+}
+fn style_order(
+	settings: &ReaderSettings,
+	entries: &[crate::stylesheet::Entry],
+) -> Vec<usize> {
+	let mut indices: Vec<_> = (0..entries.len()).collect();
+	indices.sort_by_key(|i| {
+		settings
+			.style
+			.as_ref()
+			.and_then(|ids| ids.iter().position(|id| id == &entries[*i].id))
+			.unwrap_or(usize::MAX)
+	});
+	indices
+}
+fn style_controls(
+	settings: &ReaderSettings,
+	entries: &[crate::stylesheet::Entry],
+	page: usize,
+	width: f32,
+	height: f32,
+) -> Vec<Button> {
+	let r = panel_rect(width, height);
+	let rows = style_rows(r);
+	let order = style_order(settings, entries);
+	let page = page.min(order.len().saturating_sub(1) / rows);
+	let mut out = vec![];
+	for (label, action, x, w) in [
+		("Back", Command::Styles, 20., 58.),
+		("System", Command::SystemTheme, 86., 74.),
+		("Close", Command::Settings, r.w - 78., 58.),
+		("Open styles folder", Command::StylesFolder, 20., 146.),
+	] {
+		out.push(Button {
+			label,
+			action,
+			rect: Rect {
+				x: r.x + x,
+				y: if action == Command::StylesFolder {
+					r.y + r.h - 38.
+				} else {
+					r.y + 16.
+				},
+				w,
+				h: 28.,
+			},
+		});
+	}
+	if page > 0 {
+		out.push(Button {
+			label: "Previous",
+			action: Command::StylePrev,
+			rect: Rect {
+				x: r.x + r.w - 190.,
+				y: r.y + r.h - 38.,
+				w: 82.,
+				h: 28.,
+			},
+		});
+	}
+	if (page + 1) * rows < order.len() {
+		out.push(Button {
+			label: "Next",
+			action: Command::StyleNext,
+			rect: Rect {
+				x: r.x + r.w - 100.,
+				y: r.y + r.h - 38.,
+				w: 80.,
+				h: 28.,
+			},
+		});
+	}
+	for (row, index) in
+		order.into_iter().skip(page * rows).take(rows).enumerate()
+	{
+		let e = &entries[index];
+		let pos = settings
+			.style
+			.as_ref()
+			.and_then(|ids| ids.iter().position(|id| id == &e.id));
+		let y = r.y + 84. + row as f32 * 60.;
+		if e.error.is_none() || pos.is_some() {
+			out.push(Button {
+				label: if pos.is_some() { "Disable" } else { "Enable" },
+				action: Command::StyleToggle(index),
+				rect: Rect {
+					x: r.x + r.w - 180.,
+					y,
+					w: 76.,
+					h: 26.,
+				},
+			});
+		}
+		if let Some(pos) = pos {
+			if pos > 0 {
+				out.push(Button {
+					label: "↑",
+					action: Command::StyleUp(index),
+					rect: Rect {
+						x: r.x + r.w - 96.,
+						y,
+						w: 32.,
+						h: 26.,
+					},
+				});
+			}
+			if settings
+				.style
+				.as_ref()
+				.is_some_and(|ids| pos + 1 < ids.len())
+			{
+				out.push(Button {
+					label: "↓",
+					action: Command::StyleDown(index),
+					rect: Rect {
+						x: r.x + r.w - 58.,
+						y,
+						w: 32.,
+						h: 26.,
+					},
+				});
+			}
+		}
+	}
+	out
+}
+fn draw_styles(
+	shaper: &mut TextShaper,
+	settings: &ReaderSettings,
+	interaction: &InteractionState,
+	entries: &[crate::stylesheet::Entry],
+	page: usize,
+	width: f32,
+	height: f32,
+) -> Vec<Draw> {
+	shaper.appearance = shaper.stylesheet.text(
+		&shaper.stylesheet.text(&TextAppearance::default(), Role::Ui),
+		Role::Panel,
+	);
+	let r = panel_rect(width, height);
+	let rows = style_rows(r);
+	let order = style_order(settings, entries);
+	let page = page.min(order.len().saturating_sub(1) / rows);
+	let mut out = vec![
+		Draw::Rect(
+			Rect {
+				x: 0.,
+				y: 0.,
+				w: width,
+				h: height,
+			},
+			Paint::Scrim,
+		),
+		Draw::Box {
+			rect: r,
+			role: Role::Panel,
+			radius: 0.,
+			border: 1.,
+			left_only: false,
+		},
+	];
+	let summary = if settings.style.is_none() {
+		"Stylesheets · following system"
+	} else {
+		"Stylesheets · highest priority first"
+	};
+	out.extend(shaper.label(
+		summary,
+		13.,
+		r.x + 20.,
+		r.y + 66.,
+		Paint::Styled(Role::Panel, C::Color),
+	));
+	for (row, index) in
+		order.into_iter().skip(page * rows).take(rows).enumerate()
+	{
+		let e = &entries[index];
+		let pos = settings
+			.style
+			.as_ref()
+			.and_then(|ids| ids.iter().position(|id| id == &e.id));
+		let y = r.y + 84. + row as f32 * 60.;
+		let title = format!(
+			"{}{} ({})",
+			pos.map(|p| format!("{}. ", p + 1)).unwrap_or_default(),
+			e.name,
+			e.id
+		);
+		let title = shaper.fit(&title, 13., r.w - 212.);
+		out.extend(shaper.label(
+			&title,
+			13.,
+			r.x + 20.,
+			y + 18.,
+			Paint::Styled(Role::Panel, C::Color),
+		));
+		if e.error.is_some() && pos.is_none() {
+			let rect = Rect {
+				x: r.x + r.w - 180.,
+				y,
+				w: 76.,
+				h: 26.,
+			};
+			out.push(Draw::Rect(
+				rect,
+				Paint::Styled(Role::Button, C::Background),
+			));
+			out.extend(shaper.label(
+				"Invalid",
+				12.,
+				rect.x + 7.,
+				rect.y + 18.,
+				Paint::Styled(Role::Button, C::DisabledColor),
+			));
+		}
+		let detail = e.error.as_deref().unwrap_or(&e.source);
+		let detail = shaper.fit(detail, 10., r.w - 40.);
+		out.extend(shaper.label(
+			&detail,
+			10.,
+			r.x + 20.,
+			y + 40.,
+			Paint::Styled(
+				Role::Panel,
+				if e.error.is_some() {
+					C::Error
+				} else {
+					C::Muted
+				},
+			),
+		));
+	}
+	for b in style_controls(settings, entries, page, width, height) {
+		out.push(Draw::Box {
+			rect: b.rect,
+			role: Role::Button,
+			radius: 0.,
+			border: 1.,
+			left_only: false,
+		});
+		let hovered =
+			b.rect.contains(interaction.cursor.0, interaction.cursor.1);
+		out.push(Draw::Rect(
+			b.rect,
+			Paint::Styled(
+				Role::Button,
+				if interaction.pressed == Some(b.action) {
+					C::ActiveBackground
+				} else if hovered {
+					C::HoverBackground
+				} else {
+					C::Background
+				},
+			),
+		));
+		if interaction.focus == Some(b.action) {
+			for rect in [
+				Rect { h: 1., ..b.rect },
+				Rect {
+					y: b.rect.y + b.rect.h - 1.,
+					h: 1.,
+					..b.rect
+				},
+				Rect { w: 1., ..b.rect },
+				Rect {
+					x: b.rect.x + b.rect.w - 1.,
+					w: 1.,
+					..b.rect
+				},
+			] {
+				out.push(Draw::Rect(
+					rect,
+					Paint::Styled(Role::Button, C::FocusColor),
+				));
+			}
+		}
+		out.extend(shaper.label(
+			b.label,
+			12.,
+			b.rect.x + 7.,
+			b.rect.y + 18.,
+			Paint::Styled(Role::Button, C::Color),
+		));
+	}
+	out
+}
+
+#[cfg(test)]
+mod stylesheet_tests {
+	use super::*;
+	#[test]
+	fn stylesheet_controls_fit_and_cannot_enable_invalid_entries() {
+		let entries = vec![
+			crate::stylesheet::Entry {
+				id: "a".into(),
+				name: "A".into(),
+				source: "test".into(),
+				error: None,
+			},
+			crate::stylesheet::Entry {
+				id: "broken".into(),
+				name: "Broken".into(),
+				source: "test".into(),
+				error: Some("Invalid".into()),
+			},
+		];
+		let settings = ReaderSettings {
+			style: Some(vec!["a".into()]),
+			..Default::default()
+		};
+		for (w, h) in [(500., 300.), (820., 600.)] {
+			let panel = panel_rect(w, h);
+			let buttons = style_controls(&settings, &entries, 0, w, h);
+			assert!(buttons.iter().all(|b| panel.contains(b.rect.x, b.rect.y)
+				&& panel.contains(b.rect.x + b.rect.w, b.rect.y + b.rect.h)));
+			assert!(
+				!buttons.iter().any(|b| b.action == Command::StyleToggle(1))
+			);
+		}
 	}
 }

@@ -1,9 +1,9 @@
 //! Explicitly scoped timing: full document layout and completed offscreen GPU work.
 use crate::{
 	document,
-	layout::{LayoutEngine, LayoutOptions, LayoutSnapshot, Theme},
-	render::{Renderer, View},
-	watch::read_document,
+	file::read_document,
+	layout::{LayoutEngine, LayoutOptions, LayoutSnapshot},
+	render::{Renderer, Theme, View},
 };
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -75,6 +75,7 @@ struct Report {
 	cached_samples: Vec<Timing>,
 	memory_after_scroll: Memory,
 	tracked_gpu_bytes_excluding_driver: u64,
+	reading_text_index_bytes: usize,
 	degraded_paragraphs: usize,
 	formula_errors: usize,
 }
@@ -100,6 +101,8 @@ pub fn run(
 	let initialization_ms = init.elapsed().as_secs_f64() * 1000.0;
 	let horizontal = HashMap::new();
 	let mut view = View {
+		selection: None,
+		revision: 0,
 		width,
 		height,
 		scale,
@@ -167,6 +170,7 @@ pub fn run(
 		full_layout_samples,
 		cached_samples,
 		memory_after_scroll: memory(),
+		reading_text_index_bytes: latest.text_index_bytes(),
 		tracked_gpu_bytes_excluding_driver: renderer.gpu_bytes()
 			+ (width as u64 * height as u64 * 4),
 		degraded_paragraphs: latest.degraded,

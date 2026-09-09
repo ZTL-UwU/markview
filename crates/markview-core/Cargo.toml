@@ -1,0 +1,20 @@
+[package]
+name = "markview-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+unicode-segmentation.workspace = true
+comrak.workspace = true
+hypher.workspace = true
+icu_segmenter.workspace = true
+parley.workspace = true
+ratex-layout.workspace = true
+ratex-parser.workspace = true
+ratex-types.workspace = true
+
+[lints]
+workspace = true

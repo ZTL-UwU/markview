@@ -1,4 +1,5 @@
 //! Document layout and immutable snapshots, independent of a window or GPU.
+use crate::text::{TextCluster, TextNode};
 use crate::{
 	document::{
 		Block, BlockKind, CellAlign, Document, Inline, InlineKind, RichText,
@@ -7,60 +8,15 @@ use crate::{
 	linebreak::{self, Break, Unit},
 	math::{MathBox, MathEngine},
 };
-use parley::{
-	FontContext, FontData, FontStyle, FontWeight, LayoutContext, StyleProperty,
-};
 use std::{
 	collections::{BTreeMap, HashMap, HashSet},
 	ops::Range,
 	sync::Arc,
 };
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum Paint {
-	#[default]
-	Text,
-	Muted,
-	Accent,
-	Panel,
-	Border,
-	Background,
-	Error,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Theme {
-	#[default]
-	Light,
-	Dark,
-}
-impl Theme {
-	pub fn color(self, p: Paint) -> [f32; 4] {
-		let rgb = match (self, p) {
-			(Self::Light, Paint::Text) => 0x262b30,
-			(Self::Light, Paint::Muted) => 0x69747e,
-			(Self::Light, Paint::Accent) => 0x315d86,
-			(Self::Light, Paint::Panel) => 0xeff1f3,
-			(Self::Light, Paint::Border) => 0xd8dee3,
-			(Self::Light, Paint::Background) => 0xfafaf8,
-			(Self::Light, Paint::Error) => 0xa13f3f,
-			(Self::Dark, Paint::Text) => 0xdde2e7,
-			(Self::Dark, Paint::Muted) => 0x98a5b1,
-			(Self::Dark, Paint::Accent) => 0x8fb9dd,
-			(Self::Dark, Paint::Panel) => 0x2a3139,
-			(Self::Dark, Paint::Border) => 0x414c58,
-			(Self::Dark, Paint::Background) => 0x20252b,
-			(Self::Dark, Paint::Error) => 0xf39a9a,
-		};
-		[
-			((rgb >> 16) & 255) as f32 / 255.0,
-			((rgb >> 8) & 255) as f32 / 255.0,
-			(rgb & 255) as f32 / 255.0,
-			1.0,
-		]
-	}
-}
-
+pub use crate::scene::*;
+pub use crate::shaping::TextShaper;
+use crate::shaping::{Cluster, Span};
 #[derive(Clone, Debug, PartialEq)]
 pub struct LayoutOptions {
 	pub width: f32,
@@ -81,165 +37,16 @@ impl Default for LayoutOptions {
 	}
 }
 
-#[derive(Clone, Debug)]
-pub struct Glyph {
-	pub font: FontData,
-	pub coords: Arc<[i16]>,
-	pub id: u16,
-	pub size: f32,
-	pub x: f32,
-	pub y: f32,
-	pub paint: Paint,
-	/// Byte range in the paragraph's visible text, for future hit testing.
-	pub text_range: Range<usize>,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Rect {
-	pub x: f32,
-	pub y: f32,
-	pub w: f32,
-	pub h: f32,
-}
-impl Rect {
-	pub fn contains(self, x: f32, y: f32) -> bool {
-		x >= self.x
-			&& x <= self.x + self.w
-			&& y >= self.y
-			&& y <= self.y + self.h
-	}
-}
-
-#[derive(Clone, Debug)]
-pub enum Draw {
-	Glyph(Glyph),
-	Rect(Rect, Paint),
-	Math { math: Arc<MathBox>, x: f32, y: f32 },
-}
-impl Draw {
-	pub fn translate(&mut self, x: f32, y: f32) {
-		match self {
-			Self::Glyph(g) => {
-				g.x += x;
-				g.y += y;
-			}
-			Self::Rect(r, _) => {
-				r.x += x;
-				r.y += y;
-			}
-			Self::Math { x: gx, y: gy, .. } => {
-				*gx += x;
-				*gy += y;
-			}
-		}
-	}
-}
-
-#[derive(Clone, Debug)]
-pub struct Overflow {
-	pub rect: Rect,
-	pub content_width: f32,
-	pub commands: Range<usize>,
-}
-
-/// One clickable link fragment, in block-local coordinates.
-#[derive(Clone, Debug)]
-pub struct LinkRect {
-	pub rect: Rect,
-	pub url: String,
-}
-
-#[derive(Debug, Default)]
-pub struct BlockLayout {
-	pub draws: Vec<Draw>,
-	pub height: f32,
-	pub width: f32,
-	pub overflow: Vec<Overflow>,
-	pub links: Vec<LinkRect>,
-	pub degraded: usize,
-	pub math_errors: usize,
-}
-
-#[derive(Clone, Debug)]
-pub struct PlacedBlock {
-	pub id: u64,
-	pub source: Range<usize>,
-	pub y: f32,
-	pub layout: Arc<BlockLayout>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct LayoutSnapshot {
-	pub blocks: Vec<PlacedBlock>,
-	pub height: f32,
-	pub width: f32,
-	pub reused: usize,
-	pub degraded: usize,
-	pub math_errors: usize,
-}
-
-impl LayoutSnapshot {
-	/// The link under a point in document coordinates: `x` from the column's
-	/// left edge, `y` from the top of the document including the scroll offset.
-	pub fn link_at(
-		&self,
-		x: f32,
-		y: f32,
-		horizontal: &HashMap<(usize, usize), f32>,
-	) -> Option<&str> {
-		for (bi, block) in self.blocks.iter().enumerate() {
-			let y = y - block.y;
-			if y < 0.0 || y > block.layout.height {
-				continue;
-			}
-			for link in &block.layout.links {
-				// Wide blocks scroll horizontally, so a link inside one moves.
-				let offset = block
-					.layout
-					.overflow
-					.iter()
-					.enumerate()
-					.find(|(_, o)| o.rect.contains(link.rect.x, link.rect.y))
-					.map(|(oi, _)| {
-						horizontal.get(&(bi, oi)).copied().unwrap_or(0.0)
-					})
-					.unwrap_or(0.0);
-				let rect = Rect {
-					x: link.rect.x - offset,
-					..link.rect
-				};
-				if rect.contains(x, y) {
-					return Some(&link.url);
-				}
-			}
-		}
-		None
-	}
-}
-
-#[derive(Clone)]
-struct Span {
-	range: Range<usize>,
-	style: TextStyle,
-}
-#[derive(Clone)]
-struct Cluster {
-	range: Range<usize>,
-	width: f32,
-	ascent: f32,
-	descent: f32,
-	glyphs: Vec<Glyph>,
-	continuation: bool,
-}
 struct Prepared {
+	reading: String,
+	mapping: Vec<(Range<usize>, Range<usize>, bool)>,
 	text: String,
 	spans: Vec<Span>,
 	math: BTreeMap<usize, Arc<MathBox>>,
 }
 
 pub struct LayoutEngine {
-	fonts: FontContext,
-	context: LayoutContext<usize>,
+	shaper: TextShaper,
 	math: MathEngine,
 	cache: HashMap<CacheKey, Arc<BlockLayout>>,
 }
@@ -261,8 +68,7 @@ impl Default for LayoutEngine {
 impl LayoutEngine {
 	pub fn new() -> Self {
 		Self {
-			fonts: FontContext::new(),
-			context: LayoutContext::new(),
+			shaper: TextShaper::new(),
 			math: MathEngine::default(),
 			cache: HashMap::new(),
 		}
@@ -316,173 +122,22 @@ impl LayoutEngine {
 		result
 	}
 
-	fn shape(
-		&mut self,
-		text: &str,
-		spans: &[Span],
-		size: f32,
-		sans: bool,
-	) -> Vec<Cluster> {
-		if text.is_empty() {
-			return Vec::new();
-		}
-		let mut builder =
-			self.context
-				.ranged_builder(&mut self.fonts, text, 1.0, false);
-		builder.push_default(StyleProperty::FontSize(size));
-		builder.push_default(StyleProperty::FontFamily(
-			if sans {
-				"sans-serif"
-			} else {
-				"Noto Serif, Noto Serif CJK SC, serif"
-			}
-			.into(),
-		));
-		builder.push_default(StyleProperty::Brush(0));
-		for (i, span) in spans.iter().enumerate() {
-			let r = span.range.clone();
-			builder.push(StyleProperty::Brush(i), r.clone());
-			if span.style.bold {
-				builder.push(
-					StyleProperty::FontWeight(FontWeight::BOLD),
-					r.clone(),
-				);
-			}
-			if span.style.italic {
-				builder.push(
-					StyleProperty::FontStyle(FontStyle::Italic),
-					r.clone(),
-				);
-			}
-			if span.style.code {
-				builder.push(
-					StyleProperty::FontFamily("monospace".into()),
-					r.clone(),
-				);
-				builder.push(StyleProperty::FontSize(size * 0.9), r.clone());
-			}
-			if span.style.superscript {
-				builder.push(StyleProperty::FontSize(size * 0.7), r);
-			}
-		}
-		let mut layout = builder.build(text);
-		layout.break_all_lines(None);
-		let mut clusters = Vec::new();
-		for line in layout.lines() {
-			for run in line.runs() {
-				let coords: Arc<[i16]> = run.normalized_coords().into();
-				for c in run.visual_clusters() {
-					let mut x = 0.0;
-					let mut glyphs = Vec::new();
-					for g in c.glyphs() {
-						let index = layout.styles()[g.style_index()].brush;
-						let style = spans.get(index).map(|s| &s.style);
-						let rise = if style.is_some_and(|s| s.superscript) {
-							size * 0.35
-						} else {
-							0.0
-						};
-						glyphs.push(Glyph {
-							font: run.font().clone(),
-							coords: coords.clone(),
-							id: g.id as u16,
-							size: run.font_size(),
-							x: x + g.x,
-							y: g.y - rise,
-							paint: if style.is_some_and(|s| s.link.is_some()) {
-								Paint::Accent
-							} else {
-								Paint::Text
-							},
-							text_range: c.text_range(),
-						});
-						x += g.advance;
-					}
-					clusters.push(Cluster {
-						range: c.text_range(),
-						width: c.advance(),
-						ascent: run.metrics().ascent,
-						descent: run.metrics().descent,
-						glyphs,
-						continuation: c.is_ligature_continuation(),
-					});
-				}
-			}
-		}
-		clusters
-	}
-
 	pub fn label(
 		&mut self,
 		text: &str,
 		size: f32,
 		x: f32,
-		baseline: f32,
+		y: f32,
 		paint: Paint,
 	) -> Vec<Draw> {
-		let clusters = self.shape(text, &[], size, true);
-		let mut draws = Vec::new();
-		let mut cursor = x;
-		for c in clusters {
-			for mut g in c.glyphs {
-				g.x += cursor;
-				g.y += baseline;
-				g.paint = paint;
-				draws.push(Draw::Glyph(g));
-			}
-			cursor += c.width;
-		}
-		draws
+		self.shaper.label(text, size, x, y, paint)
 	}
-
-	/// Advance width of a UI label at `size`.
-	pub fn text_width(&mut self, text: &str, size: f32) -> f32 {
-		self.shape(text, &[], size, true)
-			.iter()
-			.map(|c| c.width)
-			.sum()
-	}
-
-	/// Shorten `text` to `max` width, keeping its start and end like a browser.
 	pub fn fit(&mut self, text: &str, size: f32, max: f32) -> String {
-		if self.text_width(text, size) <= max {
-			return text.to_string();
-		}
-		let chars: Vec<char> = text.chars().collect();
-		let tail = 16.min(chars.len() / 3);
-		let build = |head: usize| {
-			let mut out: String = chars[..head].iter().collect();
-			out.push('…');
-			out.extend(chars[chars.len() - tail..].iter());
-			out
-		};
-		let (mut lo, mut hi) = (0, chars.len() - tail);
-		while lo < hi {
-			let mid = (lo + hi).div_ceil(2);
-			if self.text_width(&build(mid), size) <= max {
-				lo = mid;
-			} else {
-				hi = mid - 1;
-			}
-		}
-		build(lo)
+		self.shaper.fit(text, size, max)
 	}
-
-	/// A right-aligned label, trimmed to `max` width.
-	pub fn right_label(
-		&mut self,
-		text: &str,
-		size: f32,
-		max: f32,
-		right: f32,
-		baseline: f32,
-		paint: Paint,
-	) -> Vec<Draw> {
-		let text = self.fit(text, size, max);
-		let width = self.text_width(&text, size);
-		self.label(&text, size, (right - width).max(0.0), baseline, paint)
+	pub fn text_width(&mut self, text: &str, size: f32) -> f32 {
+		self.shaper.text_width(text, size)
 	}
-
 	fn prepare(
 		&mut self,
 		rich: &[Inline],
@@ -490,12 +145,19 @@ impl LayoutEngine {
 		out: &mut BlockLayout,
 	) -> Prepared {
 		let mut p = Prepared {
+			reading: String::new(),
+			mapping: Vec::new(),
 			text: String::new(),
 			spans: Vec::new(),
 			math: BTreeMap::new(),
 		};
 		for inline in rich {
 			let start = p.text.len();
+			let reading_start = p.reading.len();
+			match &inline.kind {
+				InlineKind::Text(t) => p.reading.push_str(t),
+				InlineKind::Math { latex, .. } => p.reading.push_str(latex),
+			}
 			let mut style = inline.style.clone();
 			match &inline.kind {
 				InlineKind::Text(t) => p.text.push_str(t),
@@ -513,6 +175,11 @@ impl LayoutEngine {
 					}
 				}
 			}
+			p.mapping.push((
+				start..p.text.len(),
+				reading_start..p.reading.len(),
+				matches!(inline.kind, InlineKind::Math { .. }),
+			));
 			p.spans.push(Span {
 				range: start..p.text.len(),
 				style,
@@ -528,7 +195,7 @@ impl LayoutEngine {
 		sans: bool,
 		hyphenate: bool,
 	) -> Vec<Unit> {
-		let mut clusters = self.shape(&p.text, &p.spans, size, sans);
+		let mut clusters = self.shaper.shape(&p.text, &p.spans, size, sans);
 		clusters.sort_by_key(|c| c.range.start);
 		let segmenter =
 			icu_segmenter::LineSegmenter::new_auto(Default::default());
@@ -564,6 +231,7 @@ impl LayoutEngine {
 			}
 		}
 		let hyphen_width: f32 = self
+			.shaper
 			.shape("-", &[], size, sans)
 			.iter()
 			.map(|c| c.width)
@@ -648,12 +316,10 @@ impl LayoutEngine {
 		if hyphen && let Some(s) = spans.last_mut() {
 			s.range.end = text.len();
 		}
-		let mut clusters = self.shape(&text, &spans, size, sans);
+		let mut clusters = self.shaper.shape(&text, &spans, size, sans);
 		for c in &mut clusters {
-			c.range = c.range.start + range.start..c.range.end + range.start;
-			for g in &mut c.glyphs {
-				g.text_range = c.range.clone();
-			}
+			c.range = (c.range.start + range.start).min(range.end)
+				..(c.range.end + range.start).min(range.end);
 			if let Some(m) = p.math.get(&c.range.start) {
 				c.width = m.width;
 				c.ascent = m.ascent;
@@ -686,6 +352,8 @@ impl LayoutEngine {
 		out: &mut BlockLayout,
 	) -> f32 {
 		let p = self.prepare(rich, size, out);
+		let node = out.text.len();
+		out.text.push(TextNode::new(p.reading.clone(), ""));
 		if p.text.is_empty() {
 			return size * 1.65;
 		}
@@ -807,6 +475,21 @@ impl LayoutEngine {
 			let mut cursor = x + offset;
 			let mut link: Option<(String, f32)> = None;
 			for (c, flex) in clusters.into_iter().zip(flexibility) {
+				let range = p.reading_range(c.range.clone());
+				if !range.is_empty() {
+					out.text[node].push(TextCluster {
+						range,
+						rect: Rect {
+							x: cursor,
+							y: y_cursor,
+							w: (c.width + flex * ratio).max(1.0),
+							h: height,
+						},
+						rtl: c.rtl,
+						command: out.draws.len(),
+					});
+				}
+
 				let style = p
 					.spans
 					.iter()
@@ -817,6 +500,7 @@ impl LayoutEngine {
 				if link.as_ref().map(|(u, _)| u.as_str()) != url {
 					if let Some((url, x0)) = link.take() {
 						out.links.push(LinkRect {
+							command: start_draw,
 							rect: Rect {
 								x: x0,
 								y: baseline - ascent,
@@ -869,6 +553,7 @@ impl LayoutEngine {
 			}
 			if let Some((url, x0)) = link {
 				out.links.push(LinkRect {
+					command: start_draw,
 					rect: Rect {
 						x: x0,
 						y: baseline - ascent,
@@ -913,6 +598,7 @@ impl LayoutEngine {
 		opts: &LayoutOptions,
 		out: &mut BlockLayout,
 	) -> f32 {
+		let first_node = out.text.len();
 		let mut start = 0;
 		let mut cursor = y;
 		for (i, inline) in rich.iter().enumerate() {
@@ -961,6 +647,9 @@ impl LayoutEngine {
 				opts,
 				out,
 			);
+		}
+		if let Some(node) = out.text.get_mut(first_node) {
+			node.separator = "\n\n";
 		}
 		cursor - y
 	}
@@ -1047,11 +736,14 @@ impl LayoutEngine {
 				size
 			}
 			BlockKind::Code { language, text } => {
+				let node = out.text.len();
+				out.text.push(TextNode::new(text.clone(), "\n\n"));
+				let mut line_offset = 0;
 				let start = out.draws.len();
 				out.draws.push(Draw::Rect(Rect::default(), Paint::Panel));
 				let mut cursor = y + 12.0;
 				if !language.is_empty() {
-					out.draws.extend(self.label(
+					out.draws.extend(self.shaper.label(
 						language,
 						size * 0.67,
 						x + 14.0,
@@ -1063,7 +755,8 @@ impl LayoutEngine {
 				let content_start = out.draws.len();
 				let mut natural = 0.0_f32;
 				for line in text.trim_end_matches('\n').split('\n') {
-					let line = expand_tabs(line, 4);
+					let original = line;
+					let (line, offsets) = expand_tabs_mapped(line, 4);
 					let spans = [Span {
 						range: 0..line.len(),
 						style: TextStyle {
@@ -1071,9 +764,32 @@ impl LayoutEngine {
 							..Default::default()
 						},
 					}];
-					let clusters = self.shape(&line, &spans, size, false);
+					let clusters =
+						self.shaper.shape(&line, &spans, size, false);
 					let mut left = x + 14.0;
 					for c in clusters {
+						let start = offsets[c.range.start];
+						let end = offsets[c.range.end];
+						let end = if start == end {
+							start
+								+ original[start..]
+									.chars()
+									.next()
+									.map_or(0, char::len_utf8)
+						} else {
+							end
+						};
+						out.text[node].push(TextCluster {
+							range: line_offset + start..line_offset + end,
+							rect: Rect {
+								x: left,
+								y: cursor,
+								w: c.width.max(1.0),
+								h: size * 1.45,
+							},
+							rtl: c.rtl,
+							command: out.draws.len(),
+						});
 						for mut g in c.glyphs {
 							g.x += left;
 							g.y += cursor + size;
@@ -1083,6 +799,7 @@ impl LayoutEngine {
 					}
 					natural = natural.max(left - x + 14.0);
 					cursor += size * 1.45;
+					line_offset += original.len() + 1;
 				}
 				let h = cursor - y + 12.0;
 				out.draws[start] =
@@ -1106,7 +823,7 @@ impl LayoutEngine {
 				out.draws.push(Draw::Rect(Rect::default(), Paint::Accent));
 				let mut top = y + 4.0;
 				if let Some(label) = label {
-					out.draws.extend(self.label(
+					out.draws.extend(self.shaper.label(
 						label,
 						size * 0.8,
 						x + 20.0,
@@ -1139,6 +856,28 @@ impl LayoutEngine {
 					if i > 0 {
 						top += if *tight { 2.0 } else { size * 0.6 };
 					}
+					let marker = match item.checked {
+						Some(true) => "[x] ".into(),
+						Some(false) => "[ ] ".into(),
+						None => start.map_or_else(
+							|| "• ".into(),
+							|n| format!("{}. ", n + i),
+						),
+					};
+					let mut node = TextNode::new(marker.clone(), "\n");
+					node.push(TextCluster {
+						range: 0..marker.len(),
+						rect: Rect {
+							x,
+							y: top,
+							w: 25.0,
+							h: size * 1.65,
+						},
+						rtl: false,
+						command: out.draws.len(),
+					});
+					out.text.push(node);
+					let first_child = out.text.len();
 					let indent = if start.is_some_and(|n| n + i >= 100) {
 						48.0
 					} else {
@@ -1168,7 +907,7 @@ impl LayoutEngine {
 							|| "•".to_string(),
 							|n| format!("{}.", n + i),
 						);
-						out.draws.extend(self.label(
+						out.draws.extend(self.shaper.label(
 							&marker,
 							size * 0.9,
 							x + 2.0,
@@ -1187,6 +926,9 @@ impl LayoutEngine {
 							out,
 						)
 						.max(size * 1.65);
+					if let Some(node) = out.text.get_mut(first_child) {
+						node.separator = "";
+					}
 				}
 				top - y
 			}
@@ -1194,7 +936,7 @@ impl LayoutEngine {
 				self.table(align, rows, x, y, width, opts, out)
 			}
 			BlockKind::Footnote { label, blocks } => {
-				out.draws.extend(self.label(
+				out.draws.extend(self.shaper.label(
 					&format!("[{label}]"),
 					size * 0.75,
 					x,
@@ -1289,6 +1031,7 @@ impl LayoutEngine {
 							i.style.bold = true;
 						}
 					}
+					let first_node = out.text.len();
 					let h = self.rich(
 						&cell,
 						left + 12.0,
@@ -1301,6 +1044,15 @@ impl LayoutEngine {
 						opts,
 						out,
 					);
+					if let Some(node) = out.text.get_mut(first_node) {
+						node.separator = if col > 0 {
+							"\t"
+						} else if row_index > 0 {
+							"\n"
+						} else {
+							"\n\n"
+						};
+					}
 					row_height = row_height.max(h + 16.0);
 				}
 				left += widths[col];
@@ -1350,23 +1102,6 @@ fn is_cjk(c: char) -> bool {
 	matches!(c as u32, 0x2e80..=0x9fff | 0xf900..=0xfaff | 0x20000..=0x3134f)
 }
 
-fn expand_tabs(line: &str, size: usize) -> String {
-	let mut out = String::new();
-	let mut col = 0;
-	for c in line.chars() {
-		if c == '\t' {
-			let n = size - col % size;
-			out.extend(std::iter::repeat_n(' ', n));
-			col += n;
-		} else {
-			out.push(c);
-			col += 1;
-		}
-	}
-	out
-}
-
-/// Preserve a block-relative reading location; repeated blocks use occurrence order.
 pub fn anchored_scroll(
 	old: &LayoutSnapshot,
 	new: &LayoutSnapshot,
@@ -1412,6 +1147,57 @@ pub fn anchored_scroll(
 		}
 	}
 	scroll.clamp(0.0, max)
+}
+
+impl Prepared {
+	fn reading_range(&self, range: Range<usize>) -> Range<usize> {
+		let Some((visual, logical, atomic)) = self
+			.mapping
+			.iter()
+			.find(|(v, _, _)| v.contains(&range.start))
+		else {
+			return self.reading.len()..self.reading.len();
+		};
+		if *atomic {
+			return logical.clone();
+		}
+		let start = logical.start + range.start - visual.start;
+		let end = self
+			.mapping
+			.iter()
+			.find(|(v, _, _)| v.start < range.end && v.end >= range.end)
+			.map(|(v, l, atomic)| {
+				if *atomic {
+					l.end
+				} else {
+					l.start + range.end - v.start
+				}
+			})
+			.unwrap_or(self.reading.len());
+		start..end
+	}
+}
+fn expand_tabs_mapped(text: &str, size: usize) -> (String, Vec<usize>) {
+	let mut out = String::new();
+	let mut offsets = vec![0];
+	let mut column = 0;
+	for (i, ch) in text.char_indices() {
+		if ch == '\t' {
+			let count = size - column % size;
+			for n in 0..count {
+				out.push(' ');
+				offsets.push(if n + 1 == count { i + 1 } else { i });
+			}
+			column += count;
+		} else {
+			out.push(ch);
+			for n in 1..=ch.len_utf8() {
+				offsets.push(i + n);
+			}
+			column += 1;
+		}
+	}
+	(out, offsets)
 }
 
 #[cfg(test)]
@@ -1607,8 +1393,8 @@ mod tests {
 	fn benchmark_corpus_needs_no_emergency_greedy_fallback() {
 		let mut e = LayoutEngine::new();
 		for source in [
-			include_str!("../tests/fixtures/ordinary-10k.md"),
-			include_str!("../tests/fixtures/math-10k.md"),
+			include_str!("../../../tests/fixtures/ordinary-10k.md"),
+			include_str!("../../../tests/fixtures/math-10k.md"),
 		] {
 			assert_eq!(source.len(), 10240);
 			let d = document::parse(source);

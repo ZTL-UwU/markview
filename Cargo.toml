@@ -1,12 +1,32 @@
 [package]
 name = "markview"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "A native, read-only Markdown reader with optimized paragraph layout"
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[workspace]
+members = ["crates/markview-core", "crates/markview-render"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
-description = "A native, read-only Markdown reader with optimized paragraph layout"
 license = "MIT"
 
-[dependencies]
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.dependencies]
+arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
+unicode-segmentation = "1.13"
+tempfile = "3"
 anyhow = "1"
 bytemuck = { version = "1", features = ["derive"] }
 comrak = { version = "0.55", default-features = false }
@@ -29,8 +49,22 @@ tiny-skia = "0.11"
 wgpu = { version = "29.0.4", default-features = false, features = ["std", "parking_lot", "vulkan", "gles", "metal", "dx12", "wgsl"] }
 winit = "0.30.13"
 
-[dev-dependencies]
-tempfile = "3"
+[dependencies]
+arboard.workspace = true
+markview-core = { path = "crates/markview-core" }
+markview-render = { path = "crates/markview-render" }
+anyhow.workspace = true
+notify.workspace = true
+open.workspace = true
+pollster.workspace = true
+rfd.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+
+tempfile.workspace = true
+
 
 [profile.release]
 lto = "thin"

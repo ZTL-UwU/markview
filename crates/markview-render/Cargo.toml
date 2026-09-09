@@ -1,0 +1,25 @@
+[package]
+name = "markview-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+anyhow.workspace = true
+bytemuck.workspace = true
+parley.workspace = true
+pollster.workspace = true
+ratex-font.workspace = true
+ratex-katex-fonts.workspace = true
+ratex-types.workspace = true
+swash.workspace = true
+tiny-skia.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+markview-core = { path = "../markview-core" }
+
+[lints]
+workspace = true

@@ -1,10 +1,10 @@
 //! Event-driven wgpu renderer. Only visible glyphs and paths are rasterized.
-use crate::{
-	document::fingerprint,
-	layout::{Draw, Glyph, LayoutEngine, LayoutSnapshot, Paint, Rect, Theme},
-};
 use anyhow::{Context, Result, bail};
 use bytemuck::{Pod, Zeroable};
+use markview_core::{
+	document::fingerprint,
+	layout::{Draw, Glyph, LayoutSnapshot, Paint, Rect, TextShaper},
+};
 use parley::FontData;
 use ratex_types::{DisplayItem, PathCommand};
 use std::{
@@ -21,6 +21,49 @@ use swash::{
 	zeno::{Format, Vector},
 };
 use winit::window::Window;
+
+#[derive(
+	Clone,
+	Copy,
+	Debug,
+	Default,
+	PartialEq,
+	Eq,
+	serde::Serialize,
+	serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+	#[default]
+	Light,
+	Dark,
+}
+impl Theme {
+	pub fn color(self, p: Paint) -> [f32; 4] {
+		let rgb = match (self, p) {
+			(Self::Light, Paint::Text) => 0x262b30,
+			(Self::Light, Paint::Muted) => 0x69747e,
+			(Self::Light, Paint::Accent) => 0x315d86,
+			(Self::Light, Paint::Panel) => 0xeff1f3,
+			(Self::Light, Paint::Border) => 0xd8dee3,
+			(Self::Light, Paint::Background) => 0xfafaf8,
+			(Self::Light, Paint::Error) => 0xa13f3f,
+			(Self::Dark, Paint::Text) => 0xdde2e7,
+			(Self::Dark, Paint::Muted) => 0x98a5b1,
+			(Self::Dark, Paint::Accent) => 0x8fb9dd,
+			(Self::Dark, Paint::Panel) => 0x2a3139,
+			(Self::Dark, Paint::Border) => 0x414c58,
+			(Self::Dark, Paint::Background) => 0x20252b,
+			(Self::Dark, Paint::Error) => 0xf39a9a,
+		};
+		[
+			((rgb >> 16) & 255) as f32 / 255.0,
+			((rgb >> 8) & 255) as f32 / 255.0,
+			(rgb & 255) as f32 / 255.0,
+			1.0,
+		]
+	}
+}
 
 const ATLAS_SIZE: u32 = 2048;
 
@@ -85,6 +128,8 @@ struct Entry {
 }
 
 pub struct View<'a> {
+	pub selection: Option<markview_core::text::TextSelection>,
+	pub revision: u64,
 	pub width: u32,
 	pub height: u32,
 	pub scale: f32,
@@ -96,15 +141,28 @@ pub struct View<'a> {
 	pub horizontal: &'a HashMap<(usize, usize), f32>,
 }
 
+impl View<'_> {
+	pub fn viewport(&self) -> markview_core::scene::Viewport {
+		markview_core::scene::Viewport {
+			width: self.width as f32 / self.scale,
+			height: self.height as f32 / self.scale,
+			left: self.left,
+			top: self.top,
+			bottom: self.bottom,
+			scroll: self.scroll,
+		}
+	}
+}
+
 pub struct Renderer {
-	pub instance: wgpu::Instance,
-	pub surface: Option<wgpu::Surface<'static>>,
-	pub config: Option<wgpu::SurfaceConfiguration>,
-	pub device: wgpu::Device,
-	pub queue: wgpu::Queue,
-	pub format: wgpu::TextureFormat,
+	instance: wgpu::Instance,
+	surface: Option<wgpu::Surface<'static>>,
+	config: Option<wgpu::SurfaceConfiguration>,
+	device: wgpu::Device,
+	queue: wgpu::Queue,
+	format: wgpu::TextureFormat,
 	pub adapter_name: String,
-	pub lost: Arc<AtomicBool>,
+	lost: Arc<AtomicBool>,
 	pipeline: wgpu::RenderPipeline,
 	bind_group: wgpu::BindGroup,
 	atlas: wgpu::Texture,
@@ -112,14 +170,57 @@ pub struct Renderer {
 	shelf: (u32, u32, u32),
 	scaler: ScaleContext,
 	math_fonts: HashMap<String, FontData>,
-	fallback: Option<LayoutEngine>,
+	fallback: Option<TextShaper>,
 	vertices: Vec<Vertex>,
 	vertex_buffer: wgpu::Buffer,
 	vertex_capacity: usize,
 	atlas_full: bool,
 }
 
+pub enum FrameStatus {
+	Ready(wgpu::SurfaceTexture, bool),
+	Retry(Duration),
+	Occluded,
+}
 impl Renderer {
+	pub fn acquire(&mut self, window: Arc<Window>) -> Result<FrameStatus> {
+		let size = window.inner_size();
+		let surface = self.surface.as_ref().context("No window surface")?;
+		Ok(match surface.get_current_texture() {
+			wgpu::CurrentSurfaceTexture::Success(frame) => {
+				FrameStatus::Ready(frame, false)
+			}
+			wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+				FrameStatus::Ready(frame, true)
+			}
+			wgpu::CurrentSurfaceTexture::Lost => {
+				self.surface = Some(self.instance.create_surface(window)?);
+				self.resize(size.width, size.height);
+				FrameStatus::Retry(Duration::from_millis(16))
+			}
+			wgpu::CurrentSurfaceTexture::Outdated => {
+				self.resize(size.width, size.height);
+				FrameStatus::Retry(Duration::from_millis(16))
+			}
+			wgpu::CurrentSurfaceTexture::Timeout => {
+				FrameStatus::Retry(Duration::from_millis(30))
+			}
+			wgpu::CurrentSurfaceTexture::Occluded => FrameStatus::Occluded,
+			wgpu::CurrentSurfaceTexture::Validation => {
+				bail!("GPU surface validation failed")
+			}
+		})
+	}
+	pub fn on_device_lost(&self, callback: impl Fn() + Send + 'static) {
+		let flag = self.lost.clone();
+		self.device.set_device_lost_callback(move |reason, _| {
+			if reason != wgpu::DeviceLostReason::Destroyed {
+				flag.store(true, Ordering::Relaxed);
+				callback();
+			}
+		});
+	}
+
 	pub async fn new(window: Option<Arc<Window>>) -> Result<Self> {
 		let descriptor = match &window {
 			Some(w) => {
@@ -771,7 +872,6 @@ impl Renderer {
 										x: x + *gx as f32 * size,
 										y: y + *gy as f32 * size,
 										paint: Paint::Text,
-										text_range: 0..0,
 									};
 									self.glyph_quad(
 										&g, 0.0, 0.0, color, clip, view,
@@ -783,7 +883,7 @@ impl Renderer {
 									.to_string();
 								let fallback = self
 									.fallback
-									.get_or_insert_with(LayoutEngine::new);
+									.get_or_insert_with(TextShaper::new);
 								let glyphs = fallback.label(
 									&ch,
 									size * *scale as f32,
@@ -886,11 +986,7 @@ impl Renderer {
 			w: view.width as f32 / view.scale,
 			h: view.height as f32 / view.scale,
 		};
-		let clip = Rect {
-			y: view.top,
-			h: (full.h - view.top - view.bottom).max(0.0),
-			..full
-		};
+		let clip = view.viewport().clip();
 		let start = snapshot
 			.blocks
 			.partition_point(|b| b.y + b.layout.height < view.scroll);
@@ -900,31 +996,22 @@ impl Renderer {
 				break;
 			}
 			for (i, draw) in block.layout.draws.iter().enumerate() {
-				let overflow = block
-					.layout
-					.overflow
-					.iter()
-					.enumerate()
-					.find(|(_, o)| o.commands.contains(&i));
-				let (dx, clip) = if let Some((oi, o)) = overflow {
-					let offset = view
-						.horizontal
-						.get(&(index, oi))
-						.copied()
-						.unwrap_or(0.0)
-						.clamp(0.0, (o.content_width - o.rect.w).max(0.0));
+				let (offset, local_clip) =
+					block.layout.command_view(i, index, view.horizontal);
+				let clip = if let Some(rect) = local_clip {
 					let rect = Rect {
-						x: view.left + o.rect.x,
-						y: dy + o.rect.y,
-						..o.rect
+						x: view.left + rect.x,
+						y: dy + rect.y,
+						..rect
 					};
-					let Some(clip) = intersect(clip, rect) else {
+					let Some(clipped) = clip.intersect(rect) else {
 						continue;
 					};
-					(view.left - offset, clip)
+					clipped
 				} else {
-					(view.left, clip)
+					clip
 				};
+				let dx = view.left - offset;
 				self.draw(draw, dx, dy, clip, view);
 			}
 			for (oi, o) in block.layout.overflow.iter().enumerate() {
@@ -944,6 +1031,23 @@ impl Renderer {
 						..track
 					},
 					view.theme.color(Paint::Muted),
+					clip,
+					view,
+				);
+			}
+		}
+		if let Some(selection) = view.selection {
+			let mut color = view.theme.color(Paint::Accent);
+			color[3] = 0.28;
+			for rect in snapshot.selection_rects_in(
+				selection,
+				view.horizontal,
+				view.revision,
+				view.scroll..view.scroll + clip.h,
+			) {
+				self.solid(
+					view.viewport().window_rect(rect),
+					color,
 					clip,
 					view,
 				);

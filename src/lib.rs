@@ -1,10 +1,12 @@
-//! Native Markdown parsing, paragraph layout, and rendering.
+//! Desktop application and platform services.
+pub use markview_core::{document, layout};
+pub use markview_render as render;
 pub mod app;
-pub mod benchmark;
-pub mod document;
-pub mod html;
-pub mod layout;
-pub mod linebreak;
-pub mod math;
-pub mod render;
-pub mod watch;
+mod benchmark;
+mod cli;
+mod file;
+mod platform;
+mod settings;
+mod state;
+mod watch;
+mod worker;

@@ -1,17 +1,13 @@
 //! Parent-directory observation, bounded debouncing, and latest-request wins.
-use crate::{
-	document,
-	layout::{LayoutEngine, LayoutOptions, LayoutSnapshot},
-};
-use anyhow::{Context, Result, bail};
+#[cfg(test)]
+use crate::file::read_document;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
 	fs,
-	io::Read,
 	path::{Path, PathBuf},
 	sync::{
-		Arc, Condvar, Mutex,
-		atomic::{AtomicBool, AtomicU64, Ordering},
+		Arc,
+		atomic::{AtomicBool, Ordering},
 		mpsc,
 	},
 	thread,
@@ -20,7 +16,6 @@ use std::{
 
 pub const QUIET: Duration = Duration::from_millis(30);
 pub const MAX_WAIT: Duration = Duration::from_millis(100);
-pub const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Default)]
 pub struct Debounce {
@@ -147,155 +142,6 @@ fn file_stamp(path: &Path) -> Option<(u64, Option<SystemTime>)> {
 		.map(|m| (m.len(), m.modified().ok()))
 }
 
-pub fn read_document(path: &Path) -> Result<String> {
-	let mut file = fs::File::open(path)
-		.with_context(|| format!("Cannot open {}", path.display()))?;
-	let before = file.metadata()?;
-	if !before.is_file() {
-		bail!("Not a regular file: {}", path.display());
-	}
-	if before.len() > MAX_FILE_BYTES {
-		bail!("MVP file size limit is 32 MiB");
-	}
-	let mut bytes = Vec::with_capacity(before.len() as usize);
-	Read::by_ref(&mut file)
-		.take(MAX_FILE_BYTES + 1)
-		.read_to_end(&mut bytes)?;
-	if bytes.len() as u64 > MAX_FILE_BYTES {
-		bail!("MVP file size limit is 32 MiB");
-	}
-	let after = file.metadata()?;
-	if before.len() != after.len()
-		|| before.modified().ok() != after.modified().ok()
-	{
-		bail!("File is still being written; waiting for the next update");
-	}
-	let text = String::from_utf8(bytes)
-		.context("File is not complete UTF-8; waiting for a valid update")?;
-	Ok(text.trim_start_matches('\u{feff}').to_string())
-}
-
-pub struct Request {
-	pub version: u64,
-	pub path: PathBuf,
-	pub options: LayoutOptions,
-	pub requested: Instant,
-}
-pub struct Update {
-	pub version: u64,
-	pub path: PathBuf,
-	pub result: Result<LayoutSnapshot, String>,
-	pub requested: Instant,
-	pub read_ms: f64,
-	pub parse_ms: f64,
-	pub layout_ms: f64,
-}
-
-struct Inbox {
-	pending: Option<Request>,
-	stopped: bool,
-}
-pub struct Worker {
-	inbox: Arc<(Mutex<Inbox>, Condvar)>,
-	version: Arc<AtomicU64>,
-	handle: Option<thread::JoinHandle<()>>,
-}
-impl Worker {
-	pub fn new(done: impl Fn(Update) + Send + 'static) -> Self {
-		let inbox = Arc::new((
-			Mutex::new(Inbox {
-				pending: None,
-				stopped: false,
-			}),
-			Condvar::new(),
-		));
-		let thread_inbox = inbox.clone();
-		let version = Arc::new(AtomicU64::new(0));
-		let current = version.clone();
-		let handle = thread::Builder::new()
-			.name("markview-layout".into())
-			.stack_size(8 * 1024 * 1024)
-			.spawn(move || {
-				let mut engine = LayoutEngine::new();
-				loop {
-					let request = {
-						let (lock, wake) = &*thread_inbox;
-						let mut inbox = lock.lock().unwrap();
-						while inbox.pending.is_none() && !inbox.stopped {
-							inbox = wake.wait(inbox).unwrap();
-						}
-						if inbox.stopped {
-							break;
-						}
-						inbox.pending.take().unwrap()
-					};
-					let mut update = Update {
-						version: request.version,
-						path: request.path.clone(),
-						requested: request.requested,
-						result: Err(String::new()),
-						read_ms: 0.0,
-						parse_ms: 0.0,
-						layout_ms: 0.0,
-					};
-					let start = Instant::now();
-					update.result = match read_document(&request.path) {
-						Err(e) => Err(format!("{e:#}")),
-						Ok(text) => {
-							update.read_ms =
-								start.elapsed().as_secs_f64() * 1000.0;
-							if current.load(Ordering::Relaxed)
-								!= request.version
-							{
-								continue;
-							}
-							let start = Instant::now();
-							let document = document::parse(text);
-							update.parse_ms =
-								start.elapsed().as_secs_f64() * 1000.0;
-							if current.load(Ordering::Relaxed)
-								!= request.version
-							{
-								continue;
-							}
-							let start = Instant::now();
-							let snapshot =
-								engine.layout(&document, &request.options);
-							update.layout_ms =
-								start.elapsed().as_secs_f64() * 1000.0;
-							Ok(snapshot)
-						}
-					};
-					if current.load(Ordering::Relaxed) == request.version {
-						done(update);
-					}
-				}
-			})
-			.expect("start layout worker");
-		Self {
-			inbox,
-			version,
-			handle: Some(handle),
-		}
-	}
-	pub fn submit(&self, request: Request) {
-		self.version.store(request.version, Ordering::Relaxed);
-		let (lock, wake) = &*self.inbox;
-		lock.lock().unwrap().pending = Some(request);
-		wake.notify_one();
-	}
-}
-impl Drop for Worker {
-	fn drop(&mut self) {
-		let (lock, wake) = &*self.inbox;
-		lock.lock().unwrap().stopped = true;
-		wake.notify_one();
-		if let Some(t) = self.handle.take() {
-			let _ = t.join();
-		}
-	}
-}
-
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -340,34 +186,5 @@ mod tests {
 		assert_eq!(read_document(&path).unwrap(), "");
 		fs::write(&path, "\u{feff}中文").unwrap();
 		assert_eq!(read_document(&path).unwrap(), "中文");
-	}
-	#[test]
-	fn worker_publishes_latest_request() {
-		let dir = tempfile::tempdir().unwrap();
-		let path = dir.path().join("read.md");
-		fs::write(&path, "A paragraph.").unwrap();
-		let (tx, rx) = mpsc::channel();
-		let worker = Worker::new(move |u| {
-			let _ = tx.send(u);
-		});
-		for version in 1..=20 {
-			worker.submit(Request {
-				version,
-				path: path.clone(),
-				options: LayoutOptions {
-					width: 250.0 + version as f32,
-					..Default::default()
-				},
-				requested: Instant::now(),
-			});
-		}
-		loop {
-			let update = rx.recv_timeout(Duration::from_secs(5)).unwrap();
-			if update.version == 20 {
-				assert_eq!(update.result.unwrap().width, 270.0);
-				break;
-			}
-		}
-		assert!(rx.recv_timeout(Duration::from_millis(100)).is_err());
 	}
 }

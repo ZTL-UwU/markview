@@ -16,6 +16,9 @@ source and original license texts are available in Cargo's registry packages.
 | notify | Filesystem observation | CC0-1.0 |
 | open | Opening links with the system browser | MIT |
 | rfd | Native file dialogs | MIT |
+| arboard / wl-clipboard-rs | Platform clipboard integration | MIT OR Apache-2.0 |
+| unicode-segmentation | Grapheme boundaries for reading selections | MIT OR Apache-2.0 |
+| tempfile | Atomic settings replacement and tests | MIT OR Apache-2.0 |
 
 KaTeX mathematical fonts are embedded by `ratex-katex-fonts`. Their SIL Open
 Font License is reproduced in `licenses/KaTeX-OFL.txt`; keep that file with

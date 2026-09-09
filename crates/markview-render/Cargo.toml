@@ -17,9 +17,17 @@ ratex-katex-fonts.workspace = true
 ratex-types.workspace = true
 swash.workspace = true
 tiny-skia.workspace = true
-wgpu.workspace = true
 winit.workspace = true
 markview-core = { path = "../markview-core" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { workspace = true, features = ["dx12"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wgpu = { workspace = true, features = ["vulkan"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { workspace = true, features = ["metal"] }
 
 [lints]
 workspace = true

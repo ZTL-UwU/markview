@@ -2,7 +2,7 @@
 use super::*;
 use markview_core::style::{ColorField as C, Role, TextAppearance};
 impl App {
-	pub(super) fn buttons(&self) -> Vec<Button> {
+	pub(super) fn buttons(&mut self) -> Vec<Button> {
 		let (width, height, _) = self.dimensions();
 		if self.interaction.styles_open {
 			style_controls(
@@ -12,8 +12,16 @@ impl App {
 				width,
 				height,
 			)
+		} else if self.interaction.panel_open {
+			controls(
+				&mut self.ui,
+				&self.settings,
+				self.interaction.panel_open,
+				width,
+				height,
+			)
 		} else {
-			controls(&self.settings, self.interaction.panel_open, width, height)
+			toolbar_controls(&mut self.ui, width)
 		}
 	}
 	pub(super) fn overlay(&mut self) -> Vec<Draw> {
@@ -262,6 +270,7 @@ fn row_geometry(rect: Rect) -> (f32, f32) {
 	(top, (rect.h - top - 48.0) / 5.0)
 }
 fn controls(
+	shaper: &mut TextShaper,
 	settings: &ReaderSettings,
 	panel_open: bool,
 	width: f32,
@@ -270,13 +279,14 @@ fn controls(
 	if panel_open {
 		let rect = panel_rect(width, height);
 		let (top, row) = row_geometry(rect);
+		let close_width = button_width(shaper, "Close", 13.0);
 		let mut buttons = vec![Button {
 			label: "Close",
 			action: Command::Settings,
 			rect: Rect {
-				x: rect.x + rect.w - 78.0,
+				x: rect.x + rect.w - 20.0 - close_width,
 				y: rect.y + 16.0,
-				w: 58.0,
+				w: close_width,
 				h: 28.0,
 			},
 		}];
@@ -317,9 +327,22 @@ fn controls(
 				});
 			}
 		}
+		let open_config_width =
+			button_width(shaper, "Open settings.toml", 13.0);
+		let reset_width = button_width(shaper, "Reset defaults", 13.0);
 		for (label, action, x, w) in [
-			("Open settings.toml", Command::OpenConfig, 20.0, 154.0),
-			("Reset defaults", Command::Reset, rect.w - 142.0, 122.0),
+			(
+				"Open settings.toml",
+				Command::OpenConfig,
+				20.0,
+				open_config_width,
+			),
+			(
+				"Reset defaults",
+				Command::Reset,
+				rect.w - 20.0 - reset_width,
+				reset_width,
+			),
 		] {
 			buttons.push(Button {
 				label,
@@ -334,21 +357,50 @@ fn controls(
 		}
 		return buttons;
 	}
-	let entries = [
-		("Open", 56.0, Command::Open),
-		("Settings", 76.0, Command::Settings),
-	];
-	let mut x = width - 152.0;
+	toolbar_controls(shaper, width)
+}
+
+fn button_width(shaper: &mut TextShaper, label: &str, size: f32) -> f32 {
+	const HORIZONTAL_PADDING: f32 = 18.0;
+	let old_appearance = shaper.appearance.clone();
+	shaper.appearance =
+		shaper.stylesheet.text(&TextAppearance::default(), Role::Ui);
+	let width = shaper.text_width(label, size) + HORIZONTAL_PADDING;
+	shaper.appearance = old_appearance;
+	width
+}
+
+fn toolbar_controls(shaper: &mut TextShaper, width: f32) -> Vec<Button> {
+	const TEXT_SIZE: f32 = 13.0;
+	const HORIZONTAL_PADDING: f32 = 18.0;
+	const GAP: f32 = 4.0;
+	const RIGHT_INSET: f32 = 16.0;
+	let entries = [("Open", Command::Open), ("Settings", Command::Settings)];
+	let old_appearance = shaper.appearance.clone();
+	shaper.appearance =
+		shaper.stylesheet.text(&TextAppearance::default(), Role::Ui);
+	let widths: Vec<f32> = entries
+		.iter()
+		.map(|(label, _)| {
+			shaper.text_width(label, TEXT_SIZE) + HORIZONTAL_PADDING
+		})
+		.collect();
+	shaper.appearance = old_appearance;
+	let total_width = widths.iter().sum::<f32>()
+		+ GAP * (entries.len() - 1) as f32
+		+ RIGHT_INSET;
+	let mut x = width - total_width;
 	entries
 		.into_iter()
-		.map(|(label, w, action)| {
+		.zip(widths)
+		.map(|((label, action), w)| {
 			let rect = Rect {
 				x,
 				y: 6.0,
 				w,
 				h: 28.0,
 			};
-			x += w + 4.0;
+			x += w + GAP;
 			Button {
 				rect,
 				label,
@@ -455,7 +507,12 @@ fn draw_controls(
 			));
 		}
 	}
-	for b in controls(settings, interaction.panel_open, width, height) {
+	let buttons = if interaction.panel_open {
+		controls(shaper, settings, true, width, height)
+	} else {
+		toolbar_controls(shaper, width)
+	};
+	for b in buttons {
 		out.push(Draw::Box {
 			rect: b.rect,
 			role: Role::Button,
@@ -495,10 +552,12 @@ fn draw_controls(
 				Paint::Styled(Role::Button, C::Background),
 			));
 		}
+		let label_x =
+			b.rect.x + (b.rect.w - shaper.text_width(b.label, 13.0)) / 2.0;
 		out.extend(shaper.label(
 			b.label,
 			13.0,
-			b.rect.x + 9.0,
+			label_x,
 			b.rect.y + b.rect.h / 2.0 + 5.0,
 			Paint::Styled(Role::Button, C::Color),
 		));
@@ -512,10 +571,15 @@ mod tests {
 	fn controls_fit_minimum_window_and_panel_focus_has_no_document_actions() {
 		for (width, height) in [(500.0, 300.0), (820.0, 600.0), (1200.0, 800.0)]
 		{
+			let mut shaper = TextShaper::new();
 			let panel = panel_rect(width, height);
-			for button in
-				controls(&ReaderSettings::default(), true, width, height)
-			{
+			for button in controls(
+				&mut shaper,
+				&ReaderSettings::default(),
+				true,
+				width,
+				height,
+			) {
 				assert!(panel.contains(button.rect.x, button.rect.y));
 				assert!(panel.contains(
 					button.rect.x + button.rect.w,
@@ -523,13 +587,22 @@ mod tests {
 				));
 				assert_ne!(button.action, Command::Open);
 			}
-			for button in
-				controls(&ReaderSettings::default(), false, width, height)
-			{
+			for button in controls(
+				&mut shaper,
+				&ReaderSettings::default(),
+				false,
+				width,
+				height,
+			) {
 				assert!(button.rect.x + button.rect.w <= width);
 			}
-			let toolbar =
-				controls(&ReaderSettings::default(), false, width, height);
+			let toolbar = controls(
+				&mut shaper,
+				&ReaderSettings::default(),
+				false,
+				width,
+				height,
+			);
 			assert_eq!(
 				toolbar.iter().map(|b| b.action).collect::<Vec<_>>(),
 				vec![Command::Open, Command::Settings]
@@ -965,10 +1038,12 @@ fn draw_styles(
 				));
 			}
 		}
+		let label_x =
+			b.rect.x + (b.rect.w - shaper.text_width(b.label, 12.)) / 2.0;
 		out.extend(shaper.label(
 			b.label,
 			12.,
-			b.rect.x + 7.,
+			label_x,
 			b.rect.y + 18.,
 			Paint::Styled(Role::Button, C::Color),
 		));

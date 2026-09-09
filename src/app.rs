@@ -350,7 +350,7 @@ impl App {
 			.link_at(x, y, &self.session.horizontal)
 			.map(str::to_string)
 	}
-	fn button_at_cursor(&self) -> bool {
+	fn button_at_cursor(&mut self) -> bool {
 		self.buttons().into_iter().any(|button| {
 			button
 				.rect

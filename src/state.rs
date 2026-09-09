@@ -4,7 +4,12 @@ use crate::{
 	layout::{LayoutOptions, LayoutSnapshot},
 };
 use markview_core::text::{TextCounts, TextSelection};
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
+use std::{
+	collections::HashMap,
+	path::PathBuf,
+	sync::Arc,
+	time::{Duration, Instant},
+};
 use winit::keyboard::ModifiersState;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
@@ -59,6 +64,7 @@ pub(crate) struct InteractionState {
 	pub(crate) hover: Option<String>,
 	pub(crate) focus: Option<Command>,
 	pub(crate) pressed: Option<Command>,
+	pub(crate) last_click: Option<(Instant, (f32, f32), u8)>,
 }
 
 /// An in-flight press: where it started and the link it would activate.
@@ -69,6 +75,28 @@ pub(crate) struct Drag {
 }
 
 impl InteractionState {
+	pub(crate) fn reset_clicks(&mut self) {
+		self.last_click = None;
+	}
+
+	pub(crate) fn click_count(&mut self, now: Instant) -> u8 {
+		const CLICK_INTERVAL: Duration = Duration::from_millis(500);
+		const CLICK_DISTANCE: f32 = 6.0;
+		let count = match self.last_click {
+			Some((at, point, count))
+				if now.duration_since(at) <= CLICK_INTERVAL
+					&& (self.cursor.0 - point.0)
+						.hypot(self.cursor.1 - point.1)
+						<= CLICK_DISTANCE =>
+			{
+				count % 3 + 1
+			}
+			_ => 1,
+		};
+		self.last_click = Some((now, self.cursor, count));
+		count
+	}
+
 	pub(crate) fn begin_selection(
 		&mut self,
 		position: markview_core::text::TextPosition,
@@ -220,6 +248,43 @@ mod tests {
 		interaction.clear_selection();
 		assert!(interaction.selection.is_none());
 		assert!(interaction.drag_at.is_none());
+	}
+	#[test]
+	fn repeated_presses_within_the_interval_cycle_word_and_block_click() {
+		let mut interaction = InteractionState {
+			cursor: (40.0, 40.0),
+			..Default::default()
+		};
+		let start = Instant::now();
+		assert_eq!(interaction.click_count(start), 1);
+		assert_eq!(
+			interaction.click_count(start + Duration::from_millis(120)),
+			2
+		);
+		assert_eq!(
+			interaction.click_count(start + Duration::from_millis(240)),
+			3
+		);
+		assert_eq!(
+			interaction.click_count(start + Duration::from_millis(360)),
+			1
+		);
+		// A pause, a pointer move or a toolbar press starts a new single click.
+		assert_eq!(interaction.click_count(start + Duration::from_secs(2)), 1);
+		interaction.cursor = (60.0, 40.0);
+		assert_eq!(
+			interaction.click_count(
+				start + Duration::from_secs(2) + Duration::from_millis(100)
+			),
+			1
+		);
+		interaction.reset_clicks();
+		assert_eq!(
+			interaction.click_count(
+				start + Duration::from_secs(2) + Duration::from_millis(200)
+			),
+			1
+		);
 	}
 	#[test]
 	fn identical_content_with_a_new_version_keeps_the_selection() {

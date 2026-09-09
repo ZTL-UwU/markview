@@ -745,10 +745,12 @@ impl ApplicationHandler<Event> for App {
 						self.interaction.cursor.1,
 					)
 				}) {
+					self.interaction.reset_clicks();
 					self.interaction.focus = Some(button.action);
 					self.interaction.pressed = Some(button.action);
 					self.action(button.action);
 				} else if self.interaction.panel_open {
+					self.interaction.reset_clicks();
 					if !self.pointer_in_panel() {
 						self.action(Command::Settings);
 					}
@@ -759,6 +761,7 @@ impl ApplicationHandler<Event> for App {
 				{
 					self.interaction.focus = None;
 					if self.interaction.cursor.0 > self.dimensions().0 - 16.0 {
+						self.interaction.reset_clicks();
 						let fraction = ((self.interaction.cursor.1 - TOP)
 							/ (self.dimensions().1 - TOP - BOTTOM))
 							.clamp(0.0, 1.0);
@@ -766,11 +769,36 @@ impl ApplicationHandler<Event> for App {
 							* (self.session.snapshot.height - self.viewport())
 								.max(0.0);
 					} else if let Some(position) = self.text_at_cursor() {
+						let click_count =
+							if self.interaction.modifiers.shift_key() {
+								self.interaction.reset_clicks();
+								1
+							} else {
+								self.interaction.click_count(Instant::now())
+							};
 						let link = self.link_at(
 							self.interaction.cursor.0,
 							self.interaction.cursor.1,
 						);
-						self.interaction.begin_selection(position, link);
+						match click_count {
+							2 => {
+								self.interaction.selection = self
+									.session
+									.snapshot
+									.select_word_at(position);
+								self.interaction.pointer_down = None;
+							}
+							3 => {
+								self.interaction.selection = self
+									.session
+									.snapshot
+									.select_block_at(position);
+								self.interaction.pointer_down = None;
+							}
+							_ => {
+								self.interaction.begin_selection(position, link)
+							}
+						}
 					}
 					self.redraw();
 				}

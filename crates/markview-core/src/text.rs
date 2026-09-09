@@ -1,7 +1,68 @@
 //! Logical reading text and its final layout geometry. No clipboard or input APIs.
 use crate::layout::{LayoutSnapshot, Rect};
-use std::{collections::HashMap, ops::Range};
+use icu_segmenter::{WordSegmenter, WordSegmenterBorrowed};
+use std::{collections::HashMap, ops::Range, sync::OnceLock};
 use unicode_segmentation::UnicodeSegmentation;
+
+/// Word boundaries for pointer gestures. ICU supplies the UAX #29 rules plus
+/// the Chinese and Japanese dictionaries, so 中文文字 breaks into 中文 / 文字
+/// instead of one segment per character. The segmenter is immutable and cheap
+/// to copy, so one process-wide instance serves every thread.
+fn word_segmenter() -> WordSegmenterBorrowed<'static> {
+	static SEGMENTER: OnceLock<WordSegmenterBorrowed<'static>> =
+		OnceLock::new();
+	*SEGMENTER.get_or_init(|| WordSegmenter::new_auto(Default::default()))
+}
+
+/// The word-like range a click lands on. A click on punctuation or an emoji
+/// selects that cluster; a click on whitespace selects the nearest word, with
+/// the word before the gap winning a tie.
+fn word_range(text: &str, clicked: Range<usize>) -> Option<Range<usize>> {
+	let mut segments = word_segmenter().segment_str(text);
+	let mut start = 0;
+	let mut containing = None;
+	let mut containing_word = None;
+	let mut preceding = None;
+	let mut following = None;
+	while let Some(end) = segments.next() {
+		let range = start..end;
+		if range.start <= clicked.start && clicked.end <= range.end {
+			if segments.is_word_like() {
+				containing_word = Some(range);
+				break;
+			}
+			containing = Some(range);
+		} else if segments.is_word_like() {
+			if range.end <= clicked.start {
+				preceding = Some(range);
+			} else if range.start >= clicked.end {
+				following = Some(range);
+				break;
+			}
+		}
+		start = end;
+	}
+	if let Some(range) = containing_word {
+		return Some(range);
+	}
+	if let Some(range) = &containing
+		&& !text[range.clone()].contains(char::is_whitespace)
+	{
+		return containing;
+	}
+	match (preceding, following) {
+		(Some(before), Some(after)) => {
+			Some(if clicked.start - before.end <= after.start - clicked.end {
+				before
+			} else {
+				after
+			})
+		}
+		(Some(before), None) => Some(before),
+		(None, Some(after)) => Some(after),
+		(None, None) => containing,
+	}
+}
 
 /// Counts the same reading text that is copied, including whitespace.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -74,15 +135,23 @@ impl TextNode {
 	}
 	pub fn push(&mut self, mut cluster: TextCluster) {
 		// A shaping cluster may begin inside a grapheme; never expose that boundary.
-		cluster.range.start = self.boundaries[self
-			.boundaries
-			.partition_point(|&i| i <= cluster.range.start)
-			.saturating_sub(1)];
-		cluster.range.end = self.boundaries[self
-			.boundaries
-			.partition_point(|&i| i < cluster.range.end)
-			.min(self.boundaries.len() - 1)];
+		cluster.range.start = self.grapheme_floor(cluster.range.start);
+		cluster.range.end = self.grapheme_ceil(cluster.range.end);
 		self.clusters.push(cluster);
+	}
+	/// Greatest grapheme boundary at or before `offset`.
+	fn grapheme_floor(&self, offset: usize) -> usize {
+		self.boundaries[self
+			.boundaries
+			.partition_point(|&i| i <= offset)
+			.saturating_sub(1)]
+	}
+	/// Least grapheme boundary at or after `offset`.
+	fn grapheme_ceil(&self, offset: usize) -> usize {
+		self.boundaries[self
+			.boundaries
+			.partition_point(|&i| i < offset)
+			.min(self.boundaries.len() - 1)]
 	}
 }
 #[derive(Clone, Debug)]
@@ -95,6 +164,98 @@ pub struct TextCluster {
 }
 
 impl LayoutSnapshot {
+	/// Select the word nearest a text hit-test position. Uses dictionary
+	/// segmentation, so double-click selects a Chinese or Japanese word rather
+	/// than a single character.
+	pub fn select_word_at(
+		&self,
+		position: TextPosition,
+	) -> Option<TextSelection> {
+		let node = self
+			.blocks
+			.get(position.block)?
+			.layout
+			.text
+			.get(position.node)?;
+		let text = node.text.as_str();
+		let offset = position.offset.min(text.len());
+		// A hit reports the boundary before or after the grapheme under the
+		// pointer; recover that grapheme so both halves of a character agree.
+		let clicked = match position.affinity {
+			Affinity::Before => {
+				let tail = text.get(offset..)?;
+				let end = tail
+					.graphemes(true)
+					.next()
+					.map_or(offset, |g| offset + g.len());
+				offset..end
+			}
+			Affinity::After => {
+				let head = text.get(..offset)?;
+				let start = head
+					.graphemes(true)
+					.next_back()
+					.map_or(offset, |g| offset - g.len());
+				start..offset
+			}
+		};
+		let range = word_range(text, clicked)?;
+		let start = node.grapheme_floor(range.start);
+		let end = node.grapheme_ceil(range.end);
+		if start >= end {
+			return None;
+		}
+		Some(TextSelection {
+			anchor: TextPosition {
+				offset: start,
+				affinity: Affinity::Before,
+				..position
+			},
+			focus: TextPosition {
+				offset: end,
+				affinity: Affinity::After,
+				..position
+			},
+		})
+	}
+
+	/// Select all text belonging to the laid-out block under a text hit.
+	pub fn select_block_at(
+		&self,
+		position: TextPosition,
+	) -> Option<TextSelection> {
+		let block = self.blocks.get(position.block)?;
+		let first = block
+			.layout
+			.text
+			.iter()
+			.enumerate()
+			.find(|(_, node)| !node.text.is_empty())?;
+		let last = block
+			.layout
+			.text
+			.iter()
+			.enumerate()
+			.rev()
+			.find(|(_, node)| !node.text.is_empty())?;
+		Some(TextSelection {
+			anchor: TextPosition {
+				block: position.block,
+				node: first.0,
+				offset: 0,
+				affinity: Affinity::Before,
+				..position
+			},
+			focus: TextPosition {
+				block: position.block,
+				node: last.0,
+				offset: last.1.text.len(),
+				affinity: Affinity::After,
+				..position
+			},
+		})
+	}
+
 	pub fn select_all(&self, revision: u64) -> Option<TextSelection> {
 		let positions: Vec<_> = self
 			.blocks
@@ -396,6 +557,115 @@ mod tests {
 				.extract_text(snapshot.select_all(9).unwrap(), 10)
 				.is_empty()
 		);
+	}
+	#[test]
+	fn double_and_triple_click_ranges_follow_reading_text() {
+		let snapshot = layout("First word here.\n\nSecond paragraph.", 300.0);
+		let word = snapshot
+			.select_word_at(TextPosition {
+				revision: 1,
+				block: 0,
+				node: 0,
+				offset: 8,
+				affinity: Affinity::Before,
+			})
+			.unwrap();
+		assert_eq!(snapshot.extract_text(word, 1), "word");
+		let block = snapshot
+			.select_block_at(TextPosition {
+				revision: 1,
+				block: 1,
+				node: 0,
+				offset: 3,
+				affinity: Affinity::Before,
+			})
+			.unwrap();
+		assert_eq!(snapshot.extract_text(block, 1), "Second paragraph.");
+	}
+	/// Extracts the double-click selection at `offset` in the first block.
+	fn word_at(source: &str, offset: usize, affinity: Affinity) -> String {
+		let snapshot = layout(source, 400.0);
+		let selection = snapshot
+			.select_word_at(TextPosition {
+				revision: 1,
+				block: 0,
+				node: 0,
+				offset,
+				affinity,
+			})
+			.expect("a word selection");
+		snapshot.extract_text(selection, 1)
+	}
+	#[test]
+	fn double_click_uses_dictionary_segmentation_for_cjk() {
+		// 中文文字: dictionary words are 中文 and 文字, not four characters.
+		assert_eq!(word_at("中文文字", 3, Affinity::Before), "中文");
+		assert_eq!(word_at("中文文字", 6, Affinity::Before), "文字");
+		assert_eq!(word_at("中文文字", 9, Affinity::After), "文字");
+		// The half of the character under the pointer picks the boundary side.
+		assert_eq!(word_at("中文文字", 6, Affinity::After), "中文");
+		// Japanese mixes dictionary words with single-character particles.
+		assert_eq!(word_at("国際化と日本語", 6, Affinity::Before), "化");
+		assert_eq!(word_at("国際化と日本語", 12, Affinity::Before), "日本語");
+	}
+	#[test]
+	fn double_click_prefers_adjacent_word_over_whitespace() {
+		// 中文 测试: a hit inside the gap takes the word before it.
+		assert_eq!(word_at("中文 测试", 6, Affinity::Before), "中文");
+		assert_eq!(word_at("中文 测试", 7, Affinity::Before), "测试");
+		assert_eq!(word_at("中文 测试", 7, Affinity::After), "中文");
+		// Punctuation and emoji are their own selectable cluster.
+		assert_eq!(word_at("Hello, world!", 5, Affinity::After), "Hello");
+		assert_eq!(word_at("Hello, world!", 5, Affinity::Before), ",");
+		assert_eq!(word_at("Hello 👩‍💻 world", 6, Affinity::Before), "👩‍💻");
+	}
+	#[test]
+	fn double_click_never_splits_a_grapheme() {
+		let snapshot = layout("Cafe\u{301} shop", 400.0);
+		let selection = snapshot
+			.select_word_at(TextPosition {
+				revision: 1,
+				block: 0,
+				node: 0,
+				offset: 4,
+				affinity: Affinity::Before,
+			})
+			.unwrap();
+		assert_eq!(snapshot.extract_text(selection, 1), "Cafe\u{301}");
+	}
+	#[test]
+	fn pointer_hit_inside_a_cjk_word_selects_that_word() {
+		let snapshot = layout("中文文字", 400.0);
+		let block = &snapshot.blocks[0];
+		let horizontal = HashMap::new();
+		// Click the right half of the first glyph of 文字.
+		let cluster = block.layout.text[0]
+			.clusters
+			.iter()
+			.find(|c| c.range.start >= 6)
+			.unwrap();
+		let position = snapshot
+			.hit_test_text(
+				cluster.rect.x + cluster.rect.w * 0.75,
+				block.y + cluster.rect.y + cluster.rect.h * 0.5,
+				&horizontal,
+				1,
+			)
+			.unwrap();
+		let selection = snapshot.select_word_at(position).unwrap();
+		assert_eq!(snapshot.extract_text(selection, 1), "文字");
+		// The highlight covers exactly the two glyphs of the word.
+		let word_clusters: Vec<_> = block.layout.text[0]
+			.clusters
+			.iter()
+			.filter(|c| c.range.start >= 6 && c.range.end <= 12)
+			.collect();
+		let rects = snapshot.selection_rects(selection, &horizontal, 1);
+		assert_eq!(rects.len(), word_clusters.len());
+		for (rect, cluster) in rects.iter().zip(word_clusters) {
+			assert!((rect.x - cluster.rect.x).abs() < 0.01);
+			assert!((rect.w - cluster.rect.w).abs() < 0.01);
+		}
 	}
 	#[test]
 	fn selection_survives_reflow_and_repeated_blocks_are_distinct() {

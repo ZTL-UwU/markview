@@ -15,6 +15,13 @@ impl App {
 			}
 			Command::Reset => {
 				self.settings = ReaderSettings::default();
+				// Reset also drops the saved theme preference, so the system
+				// theme applies again immediately and on the next launch.
+				if let Some(theme) =
+					self.window.as_ref().and_then(|w| system_theme(w))
+				{
+					self.settings.theme = theme;
+				}
 			}
 			Command::Open => {
 				if self.dialog_open {

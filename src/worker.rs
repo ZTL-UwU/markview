@@ -30,7 +30,7 @@ pub struct Request {
 pub struct Update {
 	pub version: u64,
 	pub path: PathBuf,
-	pub result: Result<ReaderSnapshot, String>,
+	pub result: Option<Result<ReaderSnapshot, String>>,
 	pub requested: Instant,
 	pub read_ms: f64,
 	pub parse_ms: f64,
@@ -84,52 +84,56 @@ impl Worker {
 						version: request.version,
 						path: request.path.clone(),
 						requested: request.requested,
-						result: Err(String::new()),
+						result: None,
 						read_ms: 0.0,
 						parse_ms: 0.0,
 						layout_ms: 0.0,
 					};
-					update.result = (|| -> Result<ReaderSnapshot, String> {
-						let document = if let Some((path, revision, doc)) =
-							&cached && path == &request.path
-							&& *revision == request.content_version
-						{
-							doc.clone()
-						} else {
-							let start = Instant::now();
-							let text = read_document(&request.path)
-								.map_err(|e| format!("{e:#}"))?;
-							update.read_ms =
-								start.elapsed().as_secs_f64() * 1000.0;
-							let start = Instant::now();
-							let doc = Arc::new(document::parse(text));
-							update.parse_ms =
-								start.elapsed().as_secs_f64() * 1000.0;
-							if cached.as_ref().is_some_and(|(path, _, _)| {
-								path != &request.path
-							}) {
-								engine.clear_document_cache();
+					update.result =
+						Some((|| -> Result<ReaderSnapshot, String> {
+							let document = if let Some((path, revision, doc)) =
+								&cached && path == &request.path
+								&& *revision == request.content_version
+							{
+								doc.clone()
+							} else {
+								let start = Instant::now();
+								let text = read_document(&request.path)
+									.map_err(|e| format!("{e:#}"))?;
+								update.read_ms =
+									start.elapsed().as_secs_f64() * 1000.0;
+								let start = Instant::now();
+								let doc = Arc::new(document::parse(text));
+								update.parse_ms =
+									start.elapsed().as_secs_f64() * 1000.0;
+								if cached.as_ref().is_some_and(
+									|(path, _, _)| path != &request.path,
+								) {
+									engine.clear_document_cache();
+								}
+								cached = Some((
+									request.path.clone(),
+									request.content_version,
+									doc.clone(),
+								));
+								doc
+							};
+							if current.load(Ordering::Relaxed)
+								!= request.version
+							{
+								return Err("Superseded".into());
 							}
-							cached = Some((
-								request.path.clone(),
-								request.content_version,
-								doc.clone(),
-							));
-							doc
-						};
-						if current.load(Ordering::Relaxed) != request.version {
-							return Err("Superseded".into());
-						}
-						let start = Instant::now();
-						let layout = engine.layout(&document, &request.options);
-						update.layout_ms =
-							start.elapsed().as_secs_f64() * 1000.0;
-						Ok(ReaderSnapshot {
-							document,
-							layout,
-							content_version: request.content_version,
-						})
-					})();
+							let start = Instant::now();
+							let layout =
+								engine.layout(&document, &request.options);
+							update.layout_ms =
+								start.elapsed().as_secs_f64() * 1000.0;
+							Ok(ReaderSnapshot {
+								document,
+								layout,
+								content_version: request.content_version,
+							})
+						})());
 					if current.load(Ordering::Relaxed) == request.version {
 						done(update);
 					}
@@ -188,7 +192,7 @@ mod tests {
 		loop {
 			let update = rx.recv_timeout(Duration::from_secs(5)).unwrap();
 			if update.version == 20 {
-				assert_eq!(update.result.unwrap().layout.width, 270.0);
+				assert_eq!(update.result.unwrap().unwrap().layout.width, 270.0);
 				break;
 			}
 		}
@@ -223,6 +227,7 @@ mod reflow_tests {
 			.recv_timeout(Duration::from_secs(5))
 			.unwrap()
 			.result
+			.unwrap()
 			.unwrap();
 		fs::remove_file(&path).unwrap();
 		submit(2, 1);
@@ -231,13 +236,14 @@ mod reflow_tests {
 		assert_eq!(reflow.parse_ms, 0.0);
 		assert!(Arc::ptr_eq(
 			&first.document,
-			&reflow.result.unwrap().document
+			&reflow.result.unwrap().unwrap().document
 		));
 		submit(3, 2);
 		assert!(
 			rx.recv_timeout(Duration::from_secs(5))
 				.unwrap()
 				.result
+				.unwrap()
 				.is_err()
 		);
 		fs::write(&path, "Second").unwrap();
@@ -246,7 +252,10 @@ mod reflow_tests {
 		loop {
 			let update = rx.recv_timeout(Duration::from_secs(5)).unwrap();
 			if update.version == 5 {
-				assert_eq!(&*update.result.unwrap().document.source, "Second");
+				assert_eq!(
+					&*update.result.unwrap().unwrap().document.source,
+					"Second"
+				);
 				break;
 			}
 		}

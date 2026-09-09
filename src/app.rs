@@ -48,6 +48,14 @@ struct Button {
 	action: Command,
 }
 
+/// The desktop preference; `None` when the platform does not report one.
+fn system_theme(window: &Window) -> Option<Theme> {
+	window.theme().map(|theme| match theme {
+		winit::window::Theme::Dark => Theme::Dark,
+		_ => Theme::Light,
+	})
+}
+
 struct App {
 	interaction: InteractionState,
 	session: ReaderSession,
@@ -388,13 +396,11 @@ impl ApplicationHandler<Event> for App {
 						.with_min_inner_size(LogicalSize::new(500, 300)),
 				)?,
 			);
-			if self.args.theme.is_none() {
-				self.settings.theme =
-					if window.theme() == Some(winit::window::Theme::Dark) {
-						Theme::Dark
-					} else {
-						Theme::Light
-					};
+			if self.args.theme.is_none()
+				&& self.settings_store.theme_preference().is_none()
+				&& let Some(theme) = system_theme(&window)
+			{
+				self.settings.theme = theme;
 			}
 			let size = window.inner_size();
 			let scale = window.scale_factor();
@@ -435,9 +441,8 @@ impl ApplicationHandler<Event> for App {
 			Event::Ready(mut update)
 				if update.version == self.session.version =>
 			{
-				match std::mem::replace(&mut update.result, Err(String::new()))
-				{
-					Ok(reader) => {
+				match update.result.take() {
+					Some(Ok(reader)) => {
 						if self.session.accept(reader, self.viewport()) {
 							self.interaction.clear_selection();
 						}
@@ -466,7 +471,7 @@ impl ApplicationHandler<Event> for App {
 						}
 						self.first_frame = Some(*update);
 					}
-					Err(error) => {
+					Some(Err(error)) => {
 						self.error = true;
 						self.status = error;
 						if self.args.mode == Mode::Smoke {
@@ -474,6 +479,7 @@ impl ApplicationHandler<Event> for App {
 							event_loop.exit();
 						}
 					}
+					None => {}
 				}
 				self.redraw();
 			}
@@ -532,13 +538,16 @@ impl ApplicationHandler<Event> for App {
 					self.redraw();
 				}
 			}
-			WindowEvent::CursorLeft { .. }
-				if self.interaction.hover.take().is_some() =>
-			{
-				if let Some(w) = &self.window {
-					w.set_cursor(CursorIcon::Default);
+			WindowEvent::CursorLeft { .. } => {
+				// Leaving the window can drop the release event; end the drag.
+				self.interaction.pointer_down = None;
+				self.interaction.drag_at = None;
+				if self.interaction.hover.take().is_some() {
+					if let Some(w) = &self.window {
+						w.set_cursor(CursorIcon::Default);
+					}
+					self.redraw();
 				}
-				self.redraw();
 			}
 			WindowEvent::MouseInput {
 				button: MouseButton::Left,

@@ -25,6 +25,7 @@ pub(crate) struct ReaderSession {
 	pub(crate) path: Option<PathBuf>,
 	pub(crate) snapshot: LayoutSnapshot,
 	pub(crate) accepted_revision: u64,
+	pub(crate) accepted_content_id: u64,
 	pub(crate) version: u64,
 	pub(crate) content_version: u64,
 	pub(crate) document: Option<Arc<document::Document>>,
@@ -38,13 +39,20 @@ pub(crate) struct ReaderSession {
 pub(crate) struct InteractionState {
 	pub(crate) panel_open: bool,
 	pub(crate) selection: Option<TextSelection>,
-	pub(crate) pointer_down: Option<(f32, f32, Option<String>)>,
+	pub(crate) pointer_down: Option<Drag>,
 	pub(crate) dragged: bool,
 	pub(crate) drag_at: Option<Instant>,
 	pub(crate) modifiers: ModifiersState,
 	pub(crate) cursor: (f32, f32),
 	pub(crate) hover: Option<String>,
 	pub(crate) focus: Option<Command>,
+}
+
+/// An in-flight press: where it started and the link it would activate.
+#[derive(Clone, Debug)]
+pub(crate) struct Drag {
+	pub(crate) start: (f32, f32),
+	pub(crate) link: Option<String>,
 }
 
 impl InteractionState {
@@ -62,7 +70,10 @@ impl InteractionState {
 			anchor,
 			focus: position,
 		});
-		self.pointer_down = Some((self.cursor.0, self.cursor.1, link));
+		self.pointer_down = Some(Drag {
+			start: self.cursor,
+			link,
+		});
 		self.dragged = self.modifiers.shift_key();
 		self.focus = None;
 	}
@@ -70,8 +81,10 @@ impl InteractionState {
 		&mut self,
 		position: Option<markview_core::text::TextPosition>,
 	) {
-		if let Some((x, y, _)) = &self.pointer_down {
-			self.dragged |= (self.cursor.0 - x).hypot(self.cursor.1 - y) >= 4.0;
+		if let Some(drag) = &self.pointer_down {
+			self.dragged |= (self.cursor.0 - drag.start.0)
+				.hypot(self.cursor.1 - drag.start.1)
+				>= 4.0;
 			if self.dragged
 				&& let Some(position) = position
 				&& let Some(selection) = &mut self.selection
@@ -85,8 +98,9 @@ impl InteractionState {
 		release_link: Option<&str>,
 	) -> Option<String> {
 		self.drag_at = None;
-		let (_, _, link) = self.pointer_down.take()?;
-		link.filter(|link| !self.dragged && release_link == Some(link.as_str()))
+		let drag = self.pointer_down.take()?;
+		drag.link
+			.filter(|link| !self.dragged && release_link == Some(link.as_str()))
 	}
 	pub(crate) fn clear_selection(&mut self) {
 		self.selection = None;
@@ -100,7 +114,9 @@ impl ReaderSession {
 		reader: crate::worker::ReaderSnapshot,
 		viewport: f32,
 	) -> bool {
-		let changed = reader.content_version != self.accepted_revision;
+		// A metadata-only change re-reads identical bytes; only a real content
+		// change may invalidate reading positions.
+		let changed = reader.document.content_id != self.accepted_content_id;
 		self.scroll = if self.snapshot.blocks.is_empty() {
 			0.0
 		} else {
@@ -112,6 +128,7 @@ impl ReaderSession {
 				self.follow_update,
 			)
 		};
+		self.accepted_content_id = reader.document.content_id;
 		self.document = Some(reader.document);
 		self.snapshot = reader.layout;
 		self.accepted_revision = reader.content_version;
@@ -177,6 +194,31 @@ mod tests {
 		interaction.clear_selection();
 		assert!(interaction.selection.is_none());
 		assert!(interaction.drag_at.is_none());
+	}
+	#[test]
+	fn identical_content_with_a_new_version_keeps_the_selection() {
+		let document = Arc::new(document::parse("Hello"));
+		let mut engine = crate::layout::LayoutEngine::new();
+		let mut session = ReaderSession::default();
+		let layout = engine.layout(&document, &LayoutOptions::default());
+		assert!(session.accept(
+			crate::worker::ReaderSnapshot {
+				document: document.clone(),
+				layout: layout.clone(),
+				content_version: 1,
+			},
+			300.0,
+		));
+		// A file event re-reads the same bytes: a new revision, same content.
+		assert!(!session.accept(
+			crate::worker::ReaderSnapshot {
+				document,
+				layout,
+				content_version: 2,
+			},
+			300.0,
+		));
+		assert_eq!(session.accepted_revision, 2);
 	}
 	#[test]
 	fn text_and_layout_are_accepted_together_and_reflow_is_not_new_content() {

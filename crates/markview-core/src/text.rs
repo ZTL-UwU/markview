@@ -122,12 +122,19 @@ impl LayoutSnapshot {
 	) -> Option<TextPosition> {
 		let mut best = None;
 		let mut distance = f32::INFINITY;
-		for (bi, block) in self.blocks.iter().enumerate() {
+		// Blocks are ordered by y: only the one above the cursor's block can
+		// still be nearer, and once a block is farther than the best score the
+		// blocks below it can only be farther.
+		let start = self
+			.blocks
+			.partition_point(|b| b.y + b.layout.height < y)
+			.saturating_sub(1);
+		for (bi, block) in self.blocks.iter().enumerate().skip(start) {
 			let dy = (block.y - y)
 				.max(0.0)
 				.max(y - block.y - block.layout.height);
 			if dy * dy * 10000.0 > distance {
-				continue;
+				break;
 			}
 			for (ni, node) in block.layout.text.iter().enumerate() {
 				for cluster in &node.clusters {
@@ -418,6 +425,39 @@ mod tests {
 				1,
 			)
 			.unwrap();
+		assert_eq!(hit.offset, 0);
+	}
+	#[test]
+	fn hit_testing_prunes_far_blocks_but_keeps_the_nearest_cluster() {
+		let source: String = (0..400)
+			.map(|i| format!("Paragraph {i} with some words.\n\n"))
+			.collect();
+		let snapshot = layout(&source, 400.0);
+		assert!(snapshot.blocks.len() > 300);
+		let none = HashMap::new();
+		let first = &snapshot.blocks[0];
+		let cluster = &first.layout.text[0].clusters[0];
+		let hit = snapshot
+			.hit_test_text(
+				cluster.rect.x + 0.5,
+				first.y + cluster.rect.y + cluster.rect.h * 0.5,
+				&none,
+				1,
+			)
+			.unwrap();
+		assert_eq!(hit.block, 0);
+		let index = snapshot.blocks.len() - 1;
+		let last = &snapshot.blocks[index];
+		let cluster = &last.layout.text[0].clusters[0];
+		let hit = snapshot
+			.hit_test_text(
+				cluster.rect.x + 0.5,
+				last.y + cluster.rect.y + cluster.rect.h * 0.5,
+				&none,
+				1,
+			)
+			.unwrap();
+		assert_eq!(hit.block, index);
 		assert_eq!(hit.offset, 0);
 	}
 	#[test]

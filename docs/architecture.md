@@ -63,17 +63,22 @@ Code language badges are decorations. Tables copy in row order with tabs between
 cells; ordinary paragraphs use blank lines; list markers remain readable.
 
 `hit_test_text`, `selection_rects[_in]` and `extract_text` are GPU-independent.
+`hit_test_text` binary-searches blocks by `y` and stops once a block cannot be
+nearer, so pointer cost does not grow with the document above the cursor.
 `Viewport` defines logical window/document conversion, and `command_view` defines
 local overflow translation and clipping for painting, selection and links.
-Selection painting visits only vertically visible blocks. The benchmark reports
-retained text-index allocation capacity separately from process RSS and GPU bytes.
+Selection painting visits only vertically visible blocks and is ordered above
+block backgrounds but below glyphs, so a highlight never tints text. The benchmark
+reports retained text-index allocation capacity separately from process RSS and
+GPU bytes.
 
 The application owns drag selection, Shift-click extension, select-all, copying,
 edge autoscroll and gesture cancellation. Links activate on matching release only
 when the gesture has not become a drag. Reflow preserves logical selection;
-accepting new contents clears it, while failed reloads preserve it. The settings
-panel consumes pointer events in its own region and keyboard events when a panel
-control has focus; clicking the document returns keyboard focus to the reader.
+accepting semantically different contents clears it, while a metadata-only reload
+or a failed reload preserves it. The settings panel consumes pointer events in its
+own region and keyboard events when a panel control has focus; clicking the
+document returns keyboard focus to the reader.
 
 ## Preferences and platform effects
 
@@ -84,8 +89,11 @@ Malformed or unsupported configurations remain untouched on load; before a user
 change is saved, their bytes are preserved in `settings-invalid-*.json`.
 
 Window startup applies defaults, then user settings, then explicit CLI overrides.
-Only fields actually changed through controls are written back; launch overrides
-alone never become preferences. Reset explicitly replaces all reading settings.
+The desktop theme is only the default: once a user picks one it is stored as an
+optional field, so a later launch no longer follows the system, and Reset returns
+to following it. Only fields actually changed through controls are written back;
+launch overrides alone never become preferences. Reset explicitly replaces all
+reading settings.
 Render, benchmark and smoke modes use defaults plus CLI flags and do not load or
 save personal configuration. Persistence errors do not revert session settings.
 
@@ -101,7 +109,8 @@ buffer, insertion cursor, IME editing path, undo history or save command.
 ## Validation
 
 Run `cargo test --workspace --all-targets --locked`, workspace clippy, formatting
-and release build. `cargo test --locked settings_and_selection_frame -- --ignored`
-uses the actual GPU pipeline and writes `artifacts/refactor-ui.png`. Existing CLI
-rendering, benchmark and native reload smoke tools remain available. Windows/macOS
-cross checks verify compilation, not native runtime behavior.
+and release build. `cargo test --workspace --locked settings_and_selection_frame
+-- --ignored` uses the actual GPU pipeline and writes `artifacts/refactor-ui.png`;
+it is a local regression check, not part of CI. Existing CLI rendering, benchmark
+and native reload smoke tools remain available. Windows/macOS cross checks verify
+compilation, not native runtime behavior.

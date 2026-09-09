@@ -68,6 +68,13 @@ target/release/markview --smoke-test tests/fixtures/math-10k.md --output artifac
 本次桌面热更新的 12 次原子保存、原地写入、删除重建混合测试 P50 为
 34.59 ms，P95 为 43.56 ms，连续写入期间共观察到 4 个更新帧。
 
+后续修正：选择命中测试原先会遍历光标上方的所有块，代价随文档增长；改为
+按块 `y` 二分定位并在不可能更近时提前结束。release 构建下，2000 个短段落
+（约 88k 逻辑像素高）的单次命中由 0.75 ms 降到 0.001 ms 量级，50 块与
+2000 块的结果差异回到测量噪声内。选择高亮现在画在块背景之上、字形之下，
+全选帧中字形核心像素不再被强调色染色（回归测试比较有/无选择两帧，3097 个
+深色字形像素的最大通道偏差为 4）。
+
 原始记录位于忽略版本控制的 `artifacts/refactor-{before,after}-{ordinary,math}-bench.json`、
 `artifacts/refactor-watch.json` 和 `artifacts/refactor-ui.png`。
 本轮最早一次原生窗口首帧为 222.86 ms；在完成其余构建检查后，相邻运行

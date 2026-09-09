@@ -94,6 +94,8 @@ pub struct Block {
 pub struct Document {
 	pub source: Arc<str>,
 	pub blocks: Vec<Block>,
+	/// Semantic identity of the reading text; equal ids mean equal positions.
+	pub content_id: u64,
 }
 
 pub fn fingerprint(value: &impl Hash) -> u64 {
@@ -393,7 +395,15 @@ pub fn parse(source: impl Into<Arc<str>>) -> Document {
 			.collect(),
 	};
 	let blocks = reader.blocks(root, 0);
-	Document { source, blocks }
+	let mut hasher = DefaultHasher::new();
+	for block in &blocks {
+		block.content_key.hash(&mut hasher);
+	}
+	Document {
+		source,
+		blocks,
+		content_id: hasher.finish(),
+	}
 }
 
 pub fn plain_text(text: &RichText) -> String {
@@ -621,6 +631,18 @@ mod tests {
 		assert!(!openable_link("other.md"));
 		assert!(!openable_link("//example.com"));
 		assert!(!openable_link("#section"));
+	}
+	#[test]
+	fn content_id_tracks_semantics_not_source_spelling() {
+		assert_eq!(
+			parse("Hello **world**\n").content_id,
+			parse("Hello __world__\n").content_id
+		);
+		assert_ne!(
+			parse("Hello\n").content_id,
+			parse("Hello there\n").content_id
+		);
+		assert_ne!(parse("A\n\nB\n").content_id, parse("B\n\nA\n").content_id);
 	}
 	#[test]
 	fn identity_survives_insertion_and_ranges_are_utf8() {

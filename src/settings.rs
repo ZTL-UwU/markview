@@ -4,8 +4,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{fs, io::Write, path::PathBuf};
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ReaderSettings {
 	pub theme: Theme,
 	pub font_size: f32,
@@ -67,15 +66,35 @@ impl ReaderSettings {
 	}
 }
 #[derive(Serialize, Deserialize)]
+#[serde(default)]
 struct Config {
 	version: u32,
-	#[serde(flatten)]
-	settings: ReaderSettings,
+	/// Absent means "follow the system theme"; only a user choice is stored.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	theme: Option<Theme>,
+	font_size: f32,
+	width: f32,
+	justify: bool,
+	hyphenate: bool,
+}
+impl Default for Config {
+	fn default() -> Self {
+		let settings = ReaderSettings::default();
+		Self {
+			version: 1,
+			theme: None,
+			font_size: settings.font_size,
+			width: settings.width,
+			justify: settings.justify,
+			hyphenate: settings.hyphenate,
+		}
+	}
 }
 
 pub struct SettingsStore {
 	path: Option<PathBuf>,
 	saved: ReaderSettings,
+	theme: Option<Theme>,
 	invalid: Option<Vec<u8>>,
 	dirty: bool,
 }
@@ -84,6 +103,7 @@ impl SettingsStore {
 		let mut store = Self {
 			path,
 			saved: ReaderSettings::default(),
+			theme: None,
 			invalid: None,
 			dirty: false,
 		};
@@ -91,7 +111,7 @@ impl SettingsStore {
 		if let Some(path) = &store.path {
 			match fs::read(path) {
 				Ok(bytes) => {
-					let result = (|| -> Result<ReaderSettings> {
+					let result = (|| -> Result<Config> {
 						let config: Config = serde_json::from_slice(&bytes)?;
 						if config.version != 1 {
 							bail!(
@@ -99,11 +119,27 @@ impl SettingsStore {
 								config.version
 							);
 						}
-						config.settings.validate()?;
-						Ok(config.settings)
+						Ok(config)
 					})();
 					match result {
-						Ok(settings) => store.saved = settings,
+						Ok(config) => {
+							store.theme = config.theme;
+							store.saved = ReaderSettings {
+								theme: config.theme.unwrap_or_default(),
+								font_size: config.font_size,
+								width: config.width,
+								justify: config.justify,
+								hyphenate: config.hyphenate,
+							};
+							if let Err(error) = store.saved.validate() {
+								warning = Some(format!(
+									"Settings: {error}; using defaults"
+								));
+								store.saved = ReaderSettings::default();
+								store.theme = None;
+								store.invalid = Some(bytes);
+							}
+						}
 						Err(error) => {
 							warning = Some(format!(
 								"Settings: {error}; using defaults"
@@ -123,15 +159,26 @@ impl SettingsStore {
 	pub fn settings(&self) -> ReaderSettings {
 		self.saved.clone()
 	}
+	/// The saved theme, or `None` while the reader still follows the system.
+	pub fn theme_preference(&self) -> Option<Theme> {
+		self.theme
+	}
 	pub fn changed(
 		&mut self,
 		effective: &ReaderSettings,
 		field: Option<Setting>,
 	) {
-		if let Some(field) = field {
-			self.saved.copy_field(effective, field);
-		} else {
-			self.saved = effective.clone();
+		match field {
+			Some(field) => {
+				self.saved.copy_field(effective, field);
+				if field == Setting::Theme {
+					self.theme = Some(effective.theme);
+				}
+			}
+			None => {
+				self.saved = effective.clone();
+				self.theme = None;
+			}
 		}
 		self.dirty = true;
 	}
@@ -158,12 +205,20 @@ impl SettingsStore {
 		self.saved.validate()?;
 		let bytes = serde_json::to_vec_pretty(&Config {
 			version: 1,
-			settings: self.saved.clone(),
+			theme: self.theme,
+			font_size: self.saved.font_size,
+			width: self.saved.width,
+			justify: self.saved.justify,
+			hyphenate: self.saved.hyphenate,
 		})?;
 		let mut temp = tempfile::NamedTempFile::new_in(parent)?;
 		temp.write_all(&bytes)?;
 		temp.as_file().sync_all()?;
 		temp.persist(path)?;
+		// Durability of the rename itself needs the directory entry flushed.
+		if let Ok(dir) = fs::File::open(parent) {
+			let _ = dir.sync_all();
+		}
 		self.dirty = false;
 		Ok(())
 	}
@@ -203,6 +258,46 @@ mod tests {
 		assert!(warning.is_none());
 		assert_eq!(loaded.settings().font_size, 18.0);
 		assert_eq!(loaded.settings().theme, Theme::Dark);
+	}
+	#[test]
+	fn theme_preference_is_optional_and_only_a_choice_pins_it() {
+		let dir = tempfile::tempdir().unwrap();
+		let path = dir.path().join("settings.json");
+		let (store, _) = SettingsStore::load(Some(path.clone()));
+		assert_eq!(store.theme_preference(), None);
+		let (mut store, _) = SettingsStore::load(Some(path.clone()));
+		store.changed(
+			&ReaderSettings {
+				theme: Theme::Dark,
+				..Default::default()
+			},
+			Some(Setting::Theme),
+		);
+		store.flush().unwrap();
+		let (loaded, warning) = SettingsStore::load(Some(path.clone()));
+		assert!(warning.is_none());
+		assert_eq!(loaded.theme_preference(), Some(Theme::Dark));
+		assert_eq!(loaded.settings().theme, Theme::Dark);
+		// Another field must not turn the system theme into a pinned choice.
+		let (mut store, _) = SettingsStore::load(Some(path.clone()));
+		store.changed(
+			&ReaderSettings {
+				font_size: 24.0,
+				theme: Theme::Dark,
+				..Default::default()
+			},
+			Some(Setting::FontSize),
+		);
+		store.flush().unwrap();
+		let (loaded, _) = SettingsStore::load(Some(path.clone()));
+		assert_eq!(loaded.theme_preference(), Some(Theme::Dark));
+		assert_eq!(loaded.settings().font_size, 24.0);
+		// Reset returns to following the system theme.
+		let (mut store, _) = SettingsStore::load(Some(path.clone()));
+		store.changed(&ReaderSettings::default(), None);
+		store.flush().unwrap();
+		let (loaded, _) = SettingsStore::load(Some(path));
+		assert_eq!(loaded.theme_preference(), None);
 	}
 	#[test]
 	fn corrupt_configuration_is_preserved_and_defaults_recover() {

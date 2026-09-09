@@ -990,6 +990,11 @@ impl Renderer {
 		let start = snapshot
 			.blocks
 			.partition_point(|b| b.y + b.layout.height < view.scroll);
+		// Selection sits above block and code backgrounds but below glyphs, so a
+		// highlight never tints the text it covers.
+		let mut backgrounds: Vec<(&Draw, f32, f32, Rect)> = Vec::new();
+		let mut foreground: Vec<(&Draw, f32, f32, Rect)> = Vec::new();
+		let mut tracks: Vec<(Rect, [f32; 4])> = Vec::new();
 		for (index, block) in snapshot.blocks.iter().enumerate().skip(start) {
 			let dy = view.top + block.y - view.scroll;
 			if dy > clip.y + clip.h {
@@ -1012,7 +1017,13 @@ impl Renderer {
 					clip
 				};
 				let dx = view.left - offset;
-				self.draw(draw, dx, dy, clip, view);
+				match draw {
+					// Strike-through and similar marks stay above the glyphs.
+					Draw::Rect(_, Paint::Text)
+					| Draw::Glyph(_)
+					| Draw::Math { .. } => foreground.push((draw, dx, dy, clip)),
+					Draw::Rect(..) => backgrounds.push((draw, dx, dy, clip)),
+				}
 			}
 			for (oi, o) in block.layout.overflow.iter().enumerate() {
 				let offset =
@@ -1023,18 +1034,19 @@ impl Renderer {
 					w: o.rect.w,
 					h: 2.0,
 				};
-				self.solid(track, view.theme.color(Paint::Border), clip, view);
-				self.solid(
+				tracks.push((track, view.theme.color(Paint::Border)));
+				tracks.push((
 					Rect {
 						x: track.x + offset / o.content_width * track.w,
 						w: track.w * track.w / o.content_width,
 						..track
 					},
 					view.theme.color(Paint::Muted),
-					clip,
-					view,
-				);
+				));
 			}
+		}
+		for (draw, dx, dy, clip) in backgrounds {
+			self.draw(draw, dx, dy, clip, view);
 		}
 		if let Some(selection) = view.selection {
 			let mut color = view.theme.color(Paint::Accent);
@@ -1052,6 +1064,12 @@ impl Renderer {
 					view,
 				);
 			}
+		}
+		for (draw, dx, dy, clip) in foreground {
+			self.draw(draw, dx, dy, clip, view);
+		}
+		for (rect, color) in tracks {
+			self.solid(rect, color, clip, view);
 		}
 		for draw in overlay {
 			self.draw(draw, 0.0, 0.0, full, view);

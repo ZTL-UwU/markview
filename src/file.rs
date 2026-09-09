@@ -27,5 +27,8 @@ pub fn read_document(path: &Path) -> Result<String> {
 	}
 	let text = String::from_utf8(bytes)
 		.context("File is not complete UTF-8; waiting for a valid update")?;
-	Ok(text.trim_start_matches('\u{feff}').to_string())
+	Ok(match text.strip_prefix('\u{feff}') {
+		Some(text) => text.to_string(),
+		None => text,
+	})
 }

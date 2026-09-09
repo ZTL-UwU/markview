@@ -3,11 +3,16 @@ mod interaction;
 mod launch;
 use crate::cli::{LaunchOptions, Mode, arguments};
 use crate::settings::{ReaderSettings, Setting, SettingsStore};
-use crate::state::{Command, Grain, InteractionState, ReaderSession};
+use crate::state::{
+	Command, Grain, InteractionState, ReaderSession, ScrollbarAxis,
+	ScrollbarDrag,
+};
 use crate::{
 	benchmark, document,
 	file::read_document,
-	layout::{Draw, LayoutEngine, LayoutOptions, Paint, Rect, TextShaper},
+	layout::{
+		Draw, LayoutEngine, LayoutOptions, Paint, Rect, Scrollbar, TextShaper,
+	},
 	render::{Renderer, Theme, View},
 	watch::FileWatch,
 	worker::{Request, Update, Worker},
@@ -368,14 +373,29 @@ impl App {
 
 	/// Hover state follows scrolling and reflow, not only pointer motion.
 	fn refresh_hover(&mut self) {
-		let hover = if self.interaction.panel_open
-			|| self.interaction.pointer_down.is_some()
-		{
-			None
-		} else {
+		let holding = self.interaction.pointer_down.is_some()
+			|| self.interaction.scrollbar.is_some();
+		let idle = !self.interaction.panel_open && !holding;
+		let hover = if idle {
 			self.link_at(self.interaction.cursor.0, self.interaction.cursor.1)
+		} else {
+			None
 		};
-		let cursor = if self.interaction.pointer_down.is_some() {
+		// Wide-block scrollbars live in the middle of the window, so pointer
+		// motion alone does not repaint them: their hover state is tracked
+		// here and drives the redraw.
+		let hover_overflow = if idle {
+			self.overflow_scrollbar_at(
+				self.interaction.cursor.0,
+				self.interaction.cursor.1,
+			)
+			.map(|(block, overflow, _)| (block, overflow))
+		} else {
+			None
+		};
+		let cursor = if self.interaction.scrollbar.is_some() {
+			CursorIcon::Default
+		} else if self.interaction.pointer_down.is_some() {
 			if self.text_under_cursor() {
 				CursorIcon::Text
 			} else {
@@ -388,8 +408,10 @@ impl App {
 		} else {
 			CursorIcon::Default
 		};
-		let hover_changed = hover != self.interaction.hover;
+		let hover_changed = hover != self.interaction.hover
+			|| hover_overflow != self.interaction.hover_overflow;
 		self.interaction.hover = hover;
+		self.interaction.hover_overflow = hover_overflow;
 		if let Some(w) = &self.window {
 			w.set_cursor(cursor);
 		}
@@ -456,6 +478,15 @@ impl App {
 			theme: self.settings.theme,
 			horizontal: &self.session.horizontal,
 			hovered_link: self.interaction.hover.as_deref(),
+			hovered_overflow: self.interaction.hover_overflow,
+			held_overflow: self.interaction.scrollbar.and_then(
+				|drag| match drag.target {
+					ScrollbarAxis::Overflow { block, overflow } => {
+						Some((block, overflow))
+					}
+					ScrollbarAxis::Document => None,
+				},
+			),
 		};
 		let Some(renderer) = &mut self.renderer else {
 			return Ok(());
@@ -714,21 +745,26 @@ impl ApplicationHandler<Event> for App {
 				let old = self.interaction.cursor;
 				self.interaction.cursor =
 					(position.x as f32 / scale, position.y as f32 / scale);
+				self.drag_scrollbar();
 				self.update_drag();
 				self.refresh_hover();
 				if self.interaction.panel_open
 					|| old.1 < TOP || self.interaction.cursor.1 < TOP
-					|| old.0 > self.dimensions().0 - 16.
-					|| self.interaction.cursor.0 > self.dimensions().0 - 16.
+					|| old.0 >= self.dimensions().0 - 16.
+					|| self.interaction.cursor.0 >= self.dimensions().0 - 16.
 				{
 					self.redraw();
 				}
 			}
 			WindowEvent::CursorLeft { .. } => {
-				// Leaving the window can drop the release event; end the drag.
+				// A scrollbar drag survives leaving the window: the implicit
+				// pointer grab still reports motion and the release, so the
+				// thumb keeps following the pointer past the edges. The text
+				// selection gesture still ends here.
 				self.interaction.pointer_down = None;
 				self.interaction.drag_at = None;
 				self.interaction.hover = None;
+				self.interaction.hover_overflow = None;
 				if let Some(w) = &self.window {
 					w.set_cursor(CursorIcon::Default);
 				}
@@ -739,6 +775,9 @@ impl ApplicationHandler<Event> for App {
 				state: ElementState::Pressed,
 				..
 			} => {
+				// A new press always ends a drag left over from a release the
+				// platform swallowed outside the window.
+				self.interaction.scrollbar = None;
 				if let Some(button) = self.buttons().into_iter().find(|b| {
 					b.rect.contains(
 						self.interaction.cursor.0,
@@ -754,65 +793,60 @@ impl ApplicationHandler<Event> for App {
 					if !self.pointer_in_panel() {
 						self.action(Command::Settings);
 					}
-				} else if !self.pointer_in_panel()
-					&& self.interaction.cursor.1 >= TOP + 10.0
-					&& self.interaction.cursor.1
-						< self.dimensions().1 - BOTTOM - 10.0
-				{
+				} else if !self.pointer_in_panel() {
 					self.interaction.focus = None;
-					if self.interaction.cursor.0 > self.dimensions().0 - 16.0 {
-						self.interaction.reset_clicks();
-						let fraction = ((self.interaction.cursor.1 - TOP)
-							/ (self.dimensions().1 - TOP - BOTTOM))
-							.clamp(0.0, 1.0);
-						self.session.scroll = fraction
-							* (self.session.snapshot.height - self.viewport())
-								.max(0.0);
-					} else if let Some(position) = self.text_at_cursor() {
-						let click_count =
-							if self.interaction.modifiers.shift_key() {
-								self.interaction.reset_clicks();
-								1
-							} else {
-								self.interaction.click_count(Instant::now())
-							};
-						let link = self.link_at(
-							self.interaction.cursor.0,
-							self.interaction.cursor.1,
-						);
-						match click_count {
-							2 => {
-								let selection = self
-									.session
-									.snapshot
-									.select_word_at(position);
-								if !self.interaction.begin_grain_selection(
-									selection,
-									Grain::Word,
-								) {
-									self.interaction
-										.begin_selection(position, link);
+					if self.begin_scrollbar_drag() {
+						self.redraw();
+					} else if self.interaction.cursor.1 >= TOP + 10.0
+						&& self.interaction.cursor.1
+							< self.dimensions().1 - BOTTOM - 10.0
+					{
+						if let Some(position) = self.text_at_cursor() {
+							let click_count =
+								if self.interaction.modifiers.shift_key() {
+									self.interaction.reset_clicks();
+									1
+								} else {
+									self.interaction.click_count(Instant::now())
+								};
+							let link = self.link_at(
+								self.interaction.cursor.0,
+								self.interaction.cursor.1,
+							);
+							match click_count {
+								2 => {
+									let selection = self
+										.session
+										.snapshot
+										.select_word_at(position);
+									if !self.interaction.begin_grain_selection(
+										selection,
+										Grain::Word,
+									) {
+										self.interaction
+											.begin_selection(position, link);
+									}
 								}
-							}
-							3 => {
-								let selection = self
-									.session
-									.snapshot
-									.select_block_at(position);
-								if !self.interaction.begin_grain_selection(
-									selection,
-									Grain::Block,
-								) {
-									self.interaction
-										.begin_selection(position, link);
+								3 => {
+									let selection = self
+										.session
+										.snapshot
+										.select_block_at(position);
+									if !self.interaction.begin_grain_selection(
+										selection,
+										Grain::Block,
+									) {
+										self.interaction
+											.begin_selection(position, link);
+									}
 								}
-							}
-							_ => {
-								self.interaction.begin_selection(position, link)
+								_ => self
+									.interaction
+									.begin_selection(position, link),
 							}
 						}
+						self.redraw();
 					}
-					self.redraw();
 				}
 			}
 			WindowEvent::MouseInput {
@@ -821,6 +855,7 @@ impl ApplicationHandler<Event> for App {
 				..
 			} => {
 				self.interaction.pressed = None;
+				self.interaction.scrollbar = None;
 				let link = self.link_at(
 					self.interaction.cursor.0,
 					self.interaction.cursor.1,
@@ -837,6 +872,7 @@ impl ApplicationHandler<Event> for App {
 				self.interaction.pressed = None;
 				self.interaction.pointer_down = None;
 				self.interaction.drag_at = None;
+				self.interaction.scrollbar = None;
 				self.interaction.modifiers = Default::default();
 			}
 			WindowEvent::MouseWheel { delta, .. } => {
@@ -981,6 +1017,7 @@ impl ApplicationHandler<Event> for App {
 							self.interaction.selection = None;
 							self.interaction.pointer_down = None;
 							self.interaction.drag_at = None;
+							self.interaction.scrollbar = None;
 							self.refresh_hover();
 							self.redraw();
 						}

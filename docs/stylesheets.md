@@ -125,6 +125,11 @@ background = "#315D8648"
 track = "#00000000"
 thumb = "#88807580"
 thumb_hover = "#888075C0"
+thickness = 8.0
+thickness_hover = 14.0
+overflow_thickness = 8.0
+overflow_thickness_hover = 8.0
+gutter = 8.0
 
 [ui]
 font = [{ family = "sans-serif" }]
@@ -168,7 +173,7 @@ TOML 内联表使用 `=`，不是 JSON 的 `:`。`format_version = 1` 和非负�
 | `hr` | `color`、`border_width`、`space_before`、`space_after` |
 | `math` | `color`、`size`；使用数学引擎专用字体，公式显式非黑色颜色保留 |
 | `selection` | `background` |
-| `scrollbar` | `track`、`thumb`、`thumb_hover`，用于正文和宽块滚动条 |
+| `scrollbar` | 颜色 `track`、`thumb`、`thumb_hover`；尺寸 `thickness`、`thickness_hover`、`overflow_thickness`、`overflow_thickness_hover`、`gutter` |
 | `ui` 和其子表 | 基础文字和颜色字段，额外 `muted`、`accent`、`error`、`border_color` |
 | `ui` | 额外 `shadow`、`scrim` |
 | `ui.button` | 额外 `hover_background`、`active_background`、`disabled_color`、`focus_color` |
@@ -185,6 +190,8 @@ UI 不开放控件间距、尺寸或布局；文字缩放以控件的默认文�
 | `space_before`、`space_after`、`padding` | 非负有限数，单位为个人基础字号倍数 |
 | `padding` | 单个数，或四项 `[上, 右, 下, 左]` |
 | `border_width`、`radius` | 非负有限数，单位为逻辑像素 |
+| `scrollbar.thickness`、`scrollbar.thickness_hover`、`scrollbar.overflow_thickness`、`scrollbar.overflow_thickness_hover` | 正有限数，单位为逻辑像素；两个值相等即关闭悬停加粗 |
+| `scrollbar.gutter` | 非负有限数，单位为逻辑像素；`0` 表示溢出块不额外预留空白，横向滚动条改画在内容下沿 |
 | `weight` | 整数 `1..1000`，默认 `400` |
 | `decoration` | `"underline"`、`"line-through"` 数组；`[]` 明确取消装饰 |
 

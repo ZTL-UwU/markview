@@ -62,9 +62,29 @@ pub(crate) struct InteractionState {
 	pub(crate) modifiers: ModifiersState,
 	pub(crate) cursor: (f32, f32),
 	pub(crate) hover: Option<String>,
+	/// The wide block whose horizontal scrollbar the pointer is over.
+	pub(crate) hover_overflow: Option<(usize, usize)>,
 	pub(crate) focus: Option<Command>,
 	pub(crate) pressed: Option<Command>,
+	pub(crate) scrollbar: Option<ScrollbarDrag>,
 	pub(crate) last_click: Option<(Instant, (f32, f32), u8)>,
+}
+
+/// Which scrollbar a press grabbed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScrollbarAxis {
+	/// The document's vertical scrollbar.
+	Document,
+	/// The horizontal scrollbar of one overflowing block.
+	Overflow { block: usize, overflow: usize },
+}
+
+/// An in-flight scrollbar drag: the grabbed bar and how far inside its thumb
+/// the pointer grabbed it, so the thumb never jumps under the pointer.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ScrollbarDrag {
+	pub(crate) target: ScrollbarAxis,
+	pub(crate) grab: f32,
 }
 
 /// Selection unit of an in-flight press.
@@ -223,6 +243,7 @@ impl InteractionState {
 		self.selection = None;
 		self.pointer_down = None;
 		self.drag_at = None;
+		self.scrollbar = None;
 	}
 }
 impl ReaderSession {

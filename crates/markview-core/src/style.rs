@@ -1,5 +1,8 @@
 //! Markview Stylesheet v1: strict parsing, field-wise cascading and semantic text styles.
-use crate::{document::TextStyle, scene::Paint};
+use crate::{
+	document::TextStyle,
+	scene::{Paint, SCROLLBAR_GUTTER, ScrollbarMetrics},
+};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -299,6 +302,11 @@ pub struct Rule {
 	pub track: Option<Color>,
 	pub thumb: Option<Color>,
 	pub thumb_hover: Option<Color>,
+	pub thickness: Option<f32>,
+	pub thickness_hover: Option<f32>,
+	pub overflow_thickness: Option<f32>,
+	pub overflow_thickness_hover: Option<f32>,
+	pub gutter: Option<f32>,
 	pub hover_background: Option<Color>,
 	pub active_background: Option<Color>,
 	pub disabled_color: Option<Color>,
@@ -329,6 +337,11 @@ impl Rule {
 			track,
 			thumb,
 			thumb_hover,
+			thickness,
+			thickness_hover,
+			overflow_thickness,
+			overflow_thickness_hover,
+			gutter,
 			hover_background,
 			active_background,
 			disabled_color,
@@ -465,6 +478,15 @@ impl Stylesheet {
 				("space_after", rule.space_after, false),
 				("border_width", rule.border_width, false),
 				("radius", rule.radius, false),
+				("thickness", rule.thickness, true),
+				("thickness_hover", rule.thickness_hover, true),
+				("overflow_thickness", rule.overflow_thickness, true),
+				(
+					"overflow_thickness_hover",
+					rule.overflow_thickness_hover,
+					true,
+				),
+				("gutter", rule.gutter, false),
 			] {
 				if value.is_some_and(|v| {
 					!v.is_finite() || if positive { v <= 0. } else { v < 0. }
@@ -522,6 +544,38 @@ impl Stylesheet {
 		self.rules
 			.get(&role)
 			.unwrap_or_else(|| EMPTY.get_or_init(Rule::default))
+	}
+	/// Thicknesses of the reader's vertical scrollbar.
+	pub fn scrollbar_metrics(&self) -> ScrollbarMetrics {
+		let rule = self.rule(Role::Scrollbar);
+		ScrollbarMetrics {
+			thickness: rule
+				.thickness
+				.unwrap_or(ScrollbarMetrics::DOCUMENT.thickness),
+			thickness_hover: rule
+				.thickness_hover
+				.unwrap_or(ScrollbarMetrics::DOCUMENT.thickness_hover),
+		}
+	}
+	/// Thicknesses of a wide block's horizontal scrollbar. Setting both fields
+	/// to the same value disables the thickening on hover.
+	pub fn overflow_scrollbar_metrics(&self) -> ScrollbarMetrics {
+		let rule = self.rule(Role::Scrollbar);
+		ScrollbarMetrics {
+			thickness: rule
+				.overflow_thickness
+				.unwrap_or(ScrollbarMetrics::OVERFLOW.thickness),
+			thickness_hover: rule
+				.overflow_thickness_hover
+				.unwrap_or(ScrollbarMetrics::OVERFLOW.thickness_hover),
+		}
+	}
+	/// Space an overflowing block reserves below its content for its
+	/// horizontal scrollbar.
+	pub fn scrollbar_gutter(&self) -> f32 {
+		self.rule(Role::Scrollbar)
+			.gutter
+			.unwrap_or(SCROLLBAR_GUTTER)
 	}
 	pub fn merge(&mut self, higher: &Self) {
 		for (key, def) in &higher.fontdef_variants {
@@ -703,7 +757,7 @@ impl Stylesheet {
 		for &(role, _) in Role::ALL {
 			let r = self.rule(role);
 			s.push_str(&format!(
-				"{role:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
+				"{role:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
 				r.font,
 				r.weight,
 				r.size,
@@ -713,7 +767,8 @@ impl Stylesheet {
 				r.space_after,
 				r.padding,
 				r.border_width,
-				r.radius
+				r.radius,
+				r.gutter
 			));
 		}
 		crate::document::fingerprint(&s)
@@ -810,7 +865,16 @@ fn validate_field(role: Role, key: &str) -> Result<()> {
 	let allowed = if role == Selection {
 		key == "background"
 	} else if role == Scrollbar {
-		matches!(key, "track" | "thumb" | "thumb_hover")
+		matches!(
+			key,
+			"track"
+				| "thumb" | "thumb_hover"
+				| "thickness"
+				| "thickness_hover"
+				| "overflow_thickness"
+				| "overflow_thickness_hover"
+				| "gutter"
+		)
 	} else if role == Hr {
 		matches!(
 			key,
@@ -860,6 +924,62 @@ mod tests {
 			"format_version=1\nversion=1\n[ui]\npadding=2",
 			"format_version=1\nversion=1\n[math]\nfont=[{family='serif'}]",
 			"format_version=1\nversion=1\n[[fontdef]]\nid='cjk'\ntype='none'\nlookfor=['serif']",
+		] {
+			assert!(Stylesheet::parse(bad).is_err(), "{bad}");
+		}
+	}
+	#[test]
+	fn scrollbar_sizes_are_configurable_and_validated() {
+		// A stylesheet without a scrollbar rule falls back to the built-in
+		// defaults; the bundled theme is free to pick its own sizes.
+		let bare = Stylesheet::parse(
+			"format_version=1\nversion=1\n[p]\ncolor='#000000'",
+		)
+		.unwrap();
+		assert_eq!(bare.scrollbar_metrics(), ScrollbarMetrics::DOCUMENT);
+		assert_eq!(
+			bare.overflow_scrollbar_metrics(),
+			ScrollbarMetrics::OVERFLOW
+		);
+		assert_eq!(bare.scrollbar_gutter(), SCROLLBAR_GUTTER);
+		let mut sheet = (*Stylesheet::bundled(false)).clone();
+		sheet.merge(
+			&Stylesheet::parse(
+				"format_version=1\nversion=1\n[scrollbar]\nthickness=3.0\nthickness_hover=9.0\noverflow_thickness=4.0\noverflow_thickness_hover=4.0\ngutter=12.0",
+			)
+			.unwrap(),
+		);
+		assert_eq!(
+			sheet.scrollbar_metrics(),
+			ScrollbarMetrics {
+				thickness: 3.0,
+				thickness_hover: 9.0
+			}
+		);
+		assert_eq!(
+			sheet.overflow_scrollbar_metrics(),
+			ScrollbarMetrics {
+				thickness: 4.0,
+				thickness_hover: 4.0
+			}
+		);
+		assert_eq!(sheet.scrollbar_gutter(), 12.0);
+		// A theme that only overrides colors keeps the bundled sizes.
+		sheet.merge(
+			&Stylesheet::parse(
+				"format_version=1\nversion=1\n[scrollbar]\nthumb='#000000'",
+			)
+			.unwrap(),
+		);
+		assert_eq!(sheet.scrollbar_metrics().thickness, 3.0);
+		assert_eq!(sheet.scrollbar_gutter(), 12.0);
+		for bad in [
+			"format_version=1\nversion=1\n[scrollbar]\nthickness=0.0",
+			"format_version=1\nversion=1\n[scrollbar]\nthickness_hover=-1.0",
+			"format_version=1\nversion=1\n[scrollbar]\noverflow_thickness=0.0",
+			"format_version=1\nversion=1\n[scrollbar]\ngutter=-1.0",
+			"format_version=1\nversion=1\n[scrollbar]\ngutter=nan",
+			"format_version=1\nversion=1\n[p]\nthickness=4.0",
 		] {
 			assert!(Stylesheet::parse(bad).is_err(), "{bad}");
 		}

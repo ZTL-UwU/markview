@@ -119,6 +119,12 @@ pub struct View<'a> {
 	pub theme: Theme,
 	pub horizontal: &'a HashMap<(usize, usize), f32>,
 	pub hovered_link: Option<&'a str>,
+	/// The wide block whose horizontal bar the pointer is over. Tracked by the
+	/// application, which owns the redraw, so the bar thickens on hover even
+	/// though pointer motion elsewhere does not repaint.
+	pub hovered_overflow: Option<(usize, usize)>,
+	/// The wide block whose horizontal bar the reader is currently dragging.
+	pub held_overflow: Option<(usize, usize)>,
 }
 
 impl View<'_> {
@@ -1185,6 +1191,10 @@ impl Renderer {
 			h: view.height as f32 / view.scale,
 		};
 		let clip = view.viewport().clip();
+		let metrics = self.stylesheet.as_ref().map_or_else(
+			|| markview_core::scene::ScrollbarMetrics::OVERFLOW,
+			|s| s.overflow_scrollbar_metrics(),
+		);
 		if let Some(background) = &snapshot.document_box {
 			self.draw(
 				background,
@@ -1261,12 +1271,27 @@ impl Renderer {
 			for (oi, o) in block.layout.overflow.iter().enumerate() {
 				let offset =
 					view.horizontal.get(&(index, oi)).copied().unwrap_or(0.0);
-				let track = Rect {
+				let band = Rect {
 					x: view.left + o.rect.x,
-					y: dy + o.rect.y + o.rect.h - 2.0,
+					y: dy + o.rect.y + o.rect.h,
 					w: o.rect.w,
-					h: 2.0,
+					h: metrics.overflow_band(o.gutter),
 				};
+				let Some(bar) = markview_core::scene::Scrollbar::horizontal(
+					band,
+					offset,
+					o.content_width,
+					o.rect.w,
+					metrics,
+				) else {
+					continue;
+				};
+				let held = view.held_overflow == Some((index, oi));
+				let hovered =
+					held || view.hovered_overflow == Some((index, oi));
+				let on_thumb = held
+					|| self.pointer.is_some_and(|(x, y)| bar.on_thumb(x, y));
+				let (track, thumb) = bar.bars(hovered);
 				tracks.push((
 					track,
 					self.color(
@@ -1278,23 +1303,11 @@ impl Renderer {
 					),
 				));
 				tracks.push((
-					Rect {
-						x: track.x + offset / o.content_width * track.w,
-						w: track.w * track.w / o.content_width,
-						..track
-					},
+					thumb,
 					self.color(
 						Paint::Styled(
 							markview_core::style::Role::Scrollbar,
-							if self.pointer.is_some_and(|(x, y)| {
-								Rect {
-									x: track.x,
-									y: track.y - 4.,
-									w: track.w,
-									h: 10.,
-								}
-								.contains(x, y)
-							}) {
+							if on_thumb {
 								markview_core::style::ColorField::ThumbHover
 							} else {
 								markview_core::style::ColorField::Thumb

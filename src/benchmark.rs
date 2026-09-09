@@ -105,6 +105,8 @@ pub fn run(
 	let mut view = View {
 		selection: None,
 		hovered_link: None,
+		held_overflow: None,
+		hovered_overflow: None,
 		revision: 0,
 		width,
 		height,

@@ -114,35 +114,24 @@ impl App {
 				Paint::Styled(Role::Ui, C::Muted),
 			));
 		}
-		let viewport = self.viewport();
-		if !self.interaction.panel_open
-			&& self.session.snapshot.height > viewport
-		{
-			let track = height - TOP - BOTTOM;
-			let h = (track * viewport / self.session.snapshot.height).max(20.0);
-			let y = TOP
-				+ self.session.scroll
-					/ (self.session.snapshot.height - viewport)
-					* (track - h);
+		if let Some(bar) = self.document_scrollbar() {
+			let held = self
+				.interaction
+				.scrollbar
+				.is_some_and(|drag| drag.target == ScrollbarAxis::Document);
+			let (x, y) = self.interaction.cursor;
+			// Hovering anywhere on the bar thickens it; only the thumb itself
+			// takes the hover color.
+			let (track, thumb) = bar.bars(held || bar.hit(x, y));
 			out.push(Draw::Rect(
-				Rect {
-					x: width - 7.,
-					y: TOP,
-					w: 3.,
-					h: track,
-				},
+				track,
 				Paint::Styled(Role::Scrollbar, C::Track),
 			));
 			out.push(Draw::Rect(
-				Rect {
-					x: width - 7.0,
-					y,
-					w: 3.0,
-					h,
-				},
+				thumb,
 				Paint::Styled(
 					Role::Scrollbar,
-					if self.interaction.cursor.0 > width - 16. {
+					if held || bar.on_thumb(x, y) {
 						C::ThumbHover
 					} else {
 						C::Thumb
@@ -170,6 +159,90 @@ impl App {
 			));
 		}
 		out
+	}
+
+	/// The document scrollbar while it is visible. Drawing and pointer
+	/// handling share this geometry, so the thumb always agrees with what a
+	/// press grabs.
+	pub(super) fn document_scrollbar(&self) -> Option<Scrollbar> {
+		if self.interaction.panel_open {
+			return None;
+		}
+		let (width, height, _) = self.dimensions();
+		let metrics = self.settings.stylesheet.scrollbar_metrics();
+		let band = metrics.band();
+		let track = Rect {
+			x: width - band - 2.0,
+			y: TOP,
+			w: band,
+			h: (height - TOP - BOTTOM).max(0.0),
+		};
+		Scrollbar::vertical(
+			track,
+			self.session.scroll,
+			self.session.snapshot.height,
+			self.viewport(),
+			metrics,
+		)
+	}
+
+	/// The horizontal scrollbar of one overflowing block, in window
+	/// coordinates. The bar sits in the gutter the layout reserved below the
+	/// block's content.
+	pub(super) fn overflow_scrollbar(
+		&self,
+		block: usize,
+		overflow: usize,
+	) -> Option<Scrollbar> {
+		let geometry = self.view_geometry();
+		let placed = self.session.snapshot.blocks.get(block)?;
+		let o = placed.layout.overflow.get(overflow)?;
+		let metrics = self.settings.stylesheet.overflow_scrollbar_metrics();
+		let track = Rect {
+			x: geometry.left + o.rect.x,
+			y: geometry.top - geometry.scroll + placed.y + o.rect.y + o.rect.h,
+			w: o.rect.w,
+			h: metrics.overflow_band(o.gutter),
+		};
+		Scrollbar::horizontal(
+			track,
+			self.session
+				.horizontal
+				.get(&(block, overflow))
+				.copied()
+				.unwrap_or(0.0),
+			o.content_width,
+			o.rect.w,
+			metrics,
+		)
+	}
+
+	/// The horizontal scrollbar under a window point, with the block and
+	/// overflow index it belongs to.
+	pub(super) fn overflow_scrollbar_at(
+		&self,
+		x: f32,
+		y: f32,
+	) -> Option<(usize, usize, Scrollbar)> {
+		let geometry = self.view_geometry();
+		if !geometry.clip().contains(x, y) {
+			return None;
+		}
+		let (_, dy) = geometry.document_point(x, y);
+		for (block, placed) in self.session.snapshot.blocks.iter().enumerate() {
+			let local = dy - placed.y;
+			if local < 0.0 || local > placed.layout.height {
+				continue;
+			}
+			for overflow in 0..placed.layout.overflow.len() {
+				if let Some(bar) = self.overflow_scrollbar(block, overflow)
+					&& bar.hit(x, y)
+				{
+					return Some((block, overflow, bar));
+				}
+			}
+		}
+		None
 	}
 }
 
@@ -703,6 +776,8 @@ mod gpu_tests {
 			let horizontal = HashMap::new();
 			let view = View {
 				hovered_link: None,
+				held_overflow: None,
+				hovered_overflow: None,
 				width: (width * 1.25) as u32,
 				height: (height * 1.25) as u32,
 				scale: 1.25,

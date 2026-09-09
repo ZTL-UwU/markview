@@ -33,11 +33,11 @@ sudo apt-get install libfontconfig1-dev libxkbcommon-dev libwayland-dev fonts-no
 | 调整栏宽 | Ctrl+[ / Ctrl+]，或在 Settings 中调整 |
 | 两端 / 左对齐 | Ctrl+L |
 | 英语断字开关 | Ctrl+H |
-| 阅读滚动 | 滚轮、上下箭头、PageUp / PageDown、空格、Home / End |
+| 阅读滚动 | 滚轮、上下箭头、PageUp / PageDown、空格、Home / End、拖动滚动条 |
 | 打开链接 | 左键点击并释放；拖选不会打开链接，悬停显示目标地址 |
 | 选择与复制 | 拖选、Shift+点击扩展、双击选词、三击选整段；双击 / 三击后拖拽按词 / 按段扩展；Ctrl+A 全选、Ctrl+C 复制、Escape 清除 |
 | 阅读设置 | Settings 按钮或 Ctrl+,；设置自动保存，Reset defaults 恢复默认值 |
-| 超宽代码、表格、公式 | 光标悬停其上，Shift+滚轮或水平触控板手势 |
+| 超宽代码、表格、公式 | 光标悬停其上，拖动滚动条、Shift+滚轮或水平触控板手势 |
 | 工具栏键盘操作 | Tab / Shift+Tab、Enter；Escape 退出焦点 |
 
 macOS 可用 Command 代替 Ctrl。默认字号 18、正文行距至少 1.65、最大栏宽 760 逻辑像素。公式较高时自动增加行高。颜色主题变化复用已有布局。

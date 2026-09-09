@@ -498,7 +498,7 @@ impl LayoutEngine {
 				.iter()
 				.map(|c| c.descent)
 				.fold(size * 0.2, f32::max);
-			let height = (size * self.shaper.appearance.line_height)
+			let mut height = (size * self.shaper.appearance.line_height)
 				.max(ascent + descent + size * 0.18);
 			let baseline =
 				y_cursor + (height - ascent - descent) * 0.5 + ascent;
@@ -641,6 +641,7 @@ impl LayoutEngine {
 				});
 			}
 			if actual > width + 0.5 {
+				let gutter = opts.stylesheet.scrollbar_gutter();
 				out.overflow.push(Overflow {
 					rect: Rect {
 						x,
@@ -650,7 +651,9 @@ impl LayoutEngine {
 					},
 					content_width: actual,
 					commands: start_draw..out.draws.len(),
+					gutter,
 				});
+				height += gutter;
 			}
 			out.width = out.width.max(x + actual.min(width));
 			y_cursor += height;
@@ -961,13 +964,16 @@ impl LayoutEngine {
 					cursor += line_height;
 					line_offset += original.len() + 1;
 				}
-				let h = cursor - y;
+				let mut h = cursor - y;
 				if natural > width {
+					let gutter = opts.stylesheet.scrollbar_gutter();
 					out.overflow.push(Overflow {
 						rect: Rect { x, y, w: width, h },
 						content_width: natural,
 						commands: content_start..out.draws.len(),
+						gutter,
 					});
+					h += gutter;
 				}
 				h
 			}
@@ -1317,7 +1323,9 @@ impl LayoutEngine {
 			}
 			top += row_height;
 		}
+		let mut height = top - y;
 		if total > width + 0.5 {
+			let gutter = opts.stylesheet.scrollbar_gutter();
 			out.overflow.truncate(overflow_start);
 			out.overflow.push(Overflow {
 				rect: Rect {
@@ -1328,10 +1336,12 @@ impl LayoutEngine {
 				},
 				content_width: total,
 				commands: start..out.draws.len(),
+				gutter,
 			});
+			height += gutter;
 		}
 		self.shaper.appearance = table_appearance;
-		top - y
+		height
 	}
 }
 
@@ -1625,6 +1635,41 @@ mod tests {
 		);
 		assert!(math.height > text.height);
 		assert_eq!(math.math_errors, 0);
+	}
+	#[test]
+	fn overflowing_blocks_reserve_the_configured_scrollbar_gutter() {
+		let mut e = LayoutEngine::new();
+		let d = document::parse(
+			"```\n01234567890123456789012345678901234567890123456789012345678901234567890\n```\n",
+		);
+		let opts = LayoutOptions {
+			width: 260.0,
+			..Default::default()
+		};
+		let base = e.layout(&d, &opts);
+		let bundled =
+			crate::style::Stylesheet::bundled(false).scrollbar_gutter();
+		assert_eq!(base.blocks[0].layout.overflow[0].gutter, bundled);
+		// A wider gutter both reserves more space and grows the block.
+		let mut sheet = (*crate::style::Stylesheet::bundled(false)).clone();
+		sheet.merge(
+			&crate::style::Stylesheet::parse(
+				"format_version=1\nversion=1\n[scrollbar]\ngutter=30.0",
+			)
+			.unwrap(),
+		);
+		let taller = e.layout(
+			&d,
+			&LayoutOptions {
+				width: 260.0,
+				stylesheet: Arc::new(sheet),
+				..Default::default()
+			},
+		);
+		assert_eq!(taller.blocks[0].layout.overflow[0].gutter, 30.0);
+		let delta =
+			taller.blocks[0].layout.height - base.blocks[0].layout.height;
+		assert!((delta - (30.0 - bundled)).abs() < 0.01, "{delta}");
 	}
 	#[test]
 	fn benchmark_corpus_needs_no_emergency_greedy_fallback() {

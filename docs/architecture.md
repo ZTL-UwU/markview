@@ -90,9 +90,21 @@ edge of the multi-click selection. Links activate on matching release only when
 the gesture has not become a drag, so a double-click inside a link selects text
 instead of opening it. Reflow preserves logical selection;
 accepting semantically different contents clears it, while a metadata-only reload
-or a failed reload preserves it. The settings panel consumes pointer events in its
-own region and keyboard events when a panel control has focus; clicking the
-document returns keyboard focus to the reader.
+or a failed reload preserves it. Scrollbars are draggable: the document's
+vertical bar and each wide block's horizontal bar share one mapping between thumb
+position and scroll offset, a press on the thumb keeps the pointer's grab offset
+so the thumb never jumps, and a press on the empty track first moves the thumb
+under the pointer, which then continues as the same drag. A scrollbar drag holds
+the pointer grab, so it keeps following the pointer past the window edges until
+the button is released. Bars are drawn thin but grabbed across their full
+interactive thickness, and the document bar thickens to that thickness while
+hovered or dragged; the layout reserves a gutter below every overflowing block so
+a horizontal bar never crowds the last line of text. The `[scrollbar]` section of
+a stylesheet sets both bars' rest and hover thicknesses and that gutter, so a
+theme can thicken the wide-block bar too or reserve no space at all. The settings
+panel consumes pointer events in its own
+region and keyboard events when a panel control has focus; clicking the document
+returns keyboard focus to the reader.
 
 ## Preferences and platform effects
 

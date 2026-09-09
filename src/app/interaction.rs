@@ -103,6 +103,7 @@ impl App {
 				self.interaction.styles_open = false;
 				self.interaction.pointer_down = None;
 				self.interaction.drag_at = None;
+				self.interaction.scrollbar = None;
 				self.interaction.focus =
 					self.interaction.panel_open.then_some(Command::Styles);
 				self.refresh_hover();
@@ -216,6 +217,72 @@ impl App {
 		self.session
 			.snapshot
 			.contains_text(x, y, &self.session.horizontal)
+	}
+
+	/// Starts dragging the scrollbar under the pointer. A press on the thumb
+	/// keeps it under the pointer; a press on the empty track jumps the thumb
+	/// there first, so the same gesture continues as a drag.
+	pub(super) fn begin_scrollbar_drag(&mut self) -> bool {
+		let (x, y) = self.interaction.cursor;
+		if let Some(bar) = self.document_scrollbar()
+			&& bar.hit(x, y)
+		{
+			let grab = if bar.on_thumb(x, y) {
+				bar.grab(x, y)
+			} else {
+				self.session.scroll = bar.scroll_for(x, y, 0.0);
+				0.0
+			};
+			self.interaction.reset_clicks();
+			self.interaction.scrollbar = Some(ScrollbarDrag {
+				target: ScrollbarAxis::Document,
+				grab,
+			});
+			self.refresh_hover();
+			return true;
+		}
+		if let Some((block, overflow, bar)) = self.overflow_scrollbar_at(x, y) {
+			let grab = if bar.on_thumb(x, y) {
+				bar.grab(x, y)
+			} else {
+				let offset = bar.scroll_for(x, y, 0.0);
+				self.session.horizontal.insert((block, overflow), offset);
+				0.0
+			};
+			self.interaction.reset_clicks();
+			self.interaction.scrollbar = Some(ScrollbarDrag {
+				target: ScrollbarAxis::Overflow { block, overflow },
+				grab,
+			});
+			self.refresh_hover();
+			return true;
+		}
+		false
+	}
+
+	/// Applies an in-flight scrollbar drag to the pointer's new position.
+	pub(super) fn drag_scrollbar(&mut self) {
+		let Some(drag) = self.interaction.scrollbar else {
+			return;
+		};
+		let (x, y) = self.interaction.cursor;
+		match drag.target {
+			ScrollbarAxis::Document => {
+				if let Some(bar) = self.document_scrollbar() {
+					self.session.scroll = bar.scroll_for(x, y, drag.grab);
+					self.redraw();
+				}
+			}
+			ScrollbarAxis::Overflow { block, overflow } => {
+				if let Some(bar) = self.overflow_scrollbar(block, overflow) {
+					self.session.horizontal.insert(
+						(block, overflow),
+						bar.scroll_for(x, y, drag.grab),
+					);
+					self.redraw();
+				}
+			}
+		}
 	}
 
 	pub(super) fn update_drag(&mut self) {

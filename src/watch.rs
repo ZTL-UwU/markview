@@ -44,7 +44,6 @@ pub struct FileWatch {
 	_watcher: Option<RecommendedWatcher>,
 	stop: Arc<AtomicBool>,
 	thread: Option<thread::JoinHandle<()>>,
-	pub polling: bool,
 }
 impl FileWatch {
 	pub fn new(path: PathBuf, changed: impl Fn() + Send + 'static) -> Self {
@@ -123,7 +122,6 @@ impl FileWatch {
 			_watcher: watcher,
 			stop,
 			thread: Some(handle),
-			polling,
 		}
 	}
 }

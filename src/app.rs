@@ -29,7 +29,7 @@ use winit::{
 	window::{CursorIcon, Window, WindowId},
 };
 
-const TOP: f32 = 58.0;
+const TOP: f32 = 40.0;
 const BOTTOM: f32 = 28.0;
 
 pub fn run() -> Result<()> {
@@ -134,7 +134,7 @@ impl App {
 			settings_warning,
 			save_at: None,
 			clipboard: Default::default(),
-			status: "Read only · local files".into(),
+			status: String::new(),
 			error: false,
 			dialog_open: false,
 			reflow_at: None,
@@ -499,14 +499,11 @@ impl ApplicationHandler<Event> for App {
 						self.refresh_hover();
 						self.status = if self.session.snapshot.math_errors > 0 {
 							format!(
-								"Watching file · {} formulas shown as source",
+								"{} formulas shown as source",
 								self.session.snapshot.math_errors
 							)
-						} else if self.watch.as_ref().is_some_and(|w| w.polling)
-						{
-							"Watching file · periodic checks".into()
 						} else {
-							"Watching file · read only".into()
+							String::new()
 						};
 						if let Some(w) = &self.window {
 							w.set_title(&format!(

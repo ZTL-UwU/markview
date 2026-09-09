@@ -30,7 +30,7 @@ sudo apt-get install libfontconfig1-dev libxkbcommon-dev libwayland-dev fonts-no
 | 打开文件 | Ctrl+O |
 | 明暗主题 | Ctrl+T |
 | 增减字号 | Ctrl+加号 / 减号，或 Ctrl+滚轮 |
-| 调整栏宽 | Ctrl+[ / Ctrl+]；工具栏 W− / W+ |
+| 调整栏宽 | Ctrl+[ / Ctrl+]，或在 Settings 中调整 |
 | 两端 / 左对齐 | Ctrl+L |
 | 英语断字开关 | Ctrl+H |
 | 阅读滚动 | 滚轮、上下箭头、PageUp / PageDown、空格、Home / End |
@@ -41,6 +41,8 @@ sudo apt-get install libfontconfig1-dev libxkbcommon-dev libwayland-dev fonts-no
 | 工具栏键盘操作 | Tab / Shift+Tab、Enter；Escape 退出焦点 |
 
 macOS 可用 Command 代替 Ctrl。默认字号 18、正文行距至少 1.65、最大栏宽 760 逻辑像素。公式较高时自动增加行高。颜色主题变化复用已有布局。
+
+顶栏高度为 40 逻辑像素，右侧提供 Open 和 Settings。底栏显示全文 chars / words，选择文本时追加 Selected chars / words。统计对象与复制得到的阅读文本一致，不包含 Markdown 标记；chars 按 Unicode 字素簇计数（含空格、换行），words 按 Unicode 单词边界计数，中文不使用词典分词。全文统计仅在内容变化时更新，选区统计随选择更新。
 
 保存后合并短时间内的文件事件；持续写入最多等待 100 ms 就开始一次刷新。兼容原地写入、临时文件重命名替换、删除后重建。更新使用递增版本，过期结果不会覆盖新版本。上方插入内容时尝试保持阅读位置；原本在底部时跟随新增内容。读取失败或不完整 UTF-8 保留上一份可读画面，并在状态栏说明。
 

@@ -36,47 +36,38 @@ impl App {
 				Paint::Background,
 			),
 		];
-		if width >= 720.0 {
-			out.extend(self.ui.label(
-				"MARKVIEW",
-				13.0,
-				20.0,
-				32.0,
-				Paint::Accent,
-			));
+		let selection = self.interaction.selection.filter(|s| {
+			!s.is_empty()
+				&& s.anchor.revision == self.session.accepted_revision
+				&& s.focus.revision == self.session.accepted_revision
+		});
+		if self.interaction.selection_counts.map(|(s, _)| s) != selection {
+			self.interaction.selection_counts = selection.map(|s| {
+				(
+					s,
+					markview_core::text::TextCounts::of(
+						&self
+							.session
+							.snapshot
+							.extract_text(s, self.session.accepted_revision),
+					),
+				)
+			});
 		}
-
-		let max_chars = (width / 7.0) as usize;
-		let status: String = if self.error {
-			&self.status
+		let warning = if self.error {
+			Some(self.status.as_str())
 		} else {
-			self.settings_warning.as_ref().unwrap_or(&self.status)
-		}
-		.chars()
-		.take(max_chars.saturating_sub(8))
-		.collect();
-		out.extend(self.ui.label(
-			&status,
-			11.0,
-			20.0,
-			height - 10.0,
-			if self.error {
-				Paint::Error
-			} else {
-				Paint::Muted
-			},
+			self.settings_warning.as_deref()
+		};
+		out.extend(draw_footer(
+			&mut self.ui,
+			self.session.counts,
+			self.interaction.selection_counts.map(|(_, counts)| counts),
+			warning,
+			self.interaction.hover.as_deref().unwrap_or(&self.status),
+			width,
+			height,
 		));
-		// Like a browser, the hovered target appears at the bottom right.
-		if let Some(url) = self.interaction.hover.clone() {
-			out.extend(self.ui.right_label(
-				&url,
-				11.0,
-				(width * 0.6).max(120.0),
-				width - 20.0,
-				height - 10.0,
-				Paint::Muted,
-			));
-		}
 		if self.session.snapshot.blocks.is_empty() {
 			let x = ((width - 440.0) / 2.0).max(24.0);
 			let y = (height * 0.4).max(110.0);
@@ -127,6 +118,78 @@ impl App {
 	}
 }
 
+fn draw_footer(
+	shaper: &mut TextShaper,
+	counts: markview_core::text::TextCounts,
+	selected: Option<markview_core::text::TextCounts>,
+	warning: Option<&str>,
+	secondary: &str,
+	width: f32,
+	height: f32,
+) -> Vec<Draw> {
+	let mut out = vec![
+		Draw::Rect(
+			Rect {
+				x: 0.0,
+				y: height - BOTTOM,
+				w: width,
+				h: BOTTOM,
+			},
+			Paint::Background,
+		),
+		Draw::Rect(
+			Rect {
+				x: 0.0,
+				y: height - BOTTOM,
+				w: width,
+				h: 1.0,
+			},
+			Paint::Border,
+		),
+	];
+	let mut text = format!("{} chars · {} words", counts.chars, counts.words);
+	if let Some(selected) = selected {
+		text.push_str(&format!(
+			"    ·    Selected {} chars · {} words",
+			selected.chars, selected.words
+		));
+	}
+	let text = shaper.fit(&text, 11.0, width - 32.0);
+	let used = shaper.text_width(&text, 11.0);
+	out.extend(shaper.label(&text, 11.0, 16.0, height - 9.0, Paint::Muted));
+	let available = width - used - 56.0;
+	if !secondary.is_empty() && available >= 80.0 {
+		out.extend(shaper.right_label(
+			secondary,
+			11.0,
+			available,
+			width - 16.0,
+			height - 9.0,
+			Paint::Muted,
+		));
+	}
+	if let Some(warning) = warning {
+		out.push(Draw::Rect(
+			Rect {
+				x: 0.0,
+				y: height - BOTTOM - 24.0,
+				w: width,
+				h: 24.0,
+			},
+			Paint::Background,
+		));
+		let warning = shaper.fit(warning, 11.0, width - 32.0);
+		out.extend(shaper.label(
+			&warning,
+			11.0,
+			16.0,
+			height - BOTTOM - 8.0,
+			Paint::Error,
+		));
+	}
+	out
+}
+
 pub(super) fn panel_rect(width: f32, height: f32) -> Rect {
 	let w = 540.0_f32.min((width - 32.0).max(0.0));
 	let h = 440.0_f32.min((height - 32.0).max(0.0));
@@ -151,12 +214,6 @@ fn controls(
 		"Dark"
 	} else {
 		"Light"
-	};
-	let align = if settings.justify { "Justify" } else { "Left" };
-	let hyphens = if settings.hyphenate {
-		"Hyphens"
-	} else {
-		"No hyph."
 	};
 	if panel_open {
 		let rect = panel_rect(width, height);
@@ -222,35 +279,21 @@ fn controls(
 		}
 		return buttons;
 	}
-	let entries = if width < 820.0 {
-		vec![
-			("Open", 60.0, Command::Open),
-			("Settings", 82.0, Command::Settings),
-		]
-	} else {
-		vec![
-			("Open", 60.0, Command::Open),
-			(theme, 60.0, Command::Theme),
-			("A−", 40.0, Command::Smaller),
-			("A+", 40.0, Command::Larger),
-			("W−", 40.0, Command::Narrower),
-			("W+", 40.0, Command::Wider),
-			(align, 68.0, Command::Align),
-			(hyphens, 82.0, Command::Hyphens),
-			("Settings", 82.0, Command::Settings),
-		]
-	};
-	let mut x = if width >= 720.0 { 126.0 } else { 12.0 };
+	let entries = [
+		("Open", 56.0, Command::Open),
+		("Settings", 76.0, Command::Settings),
+	];
+	let mut x = width - 152.0;
 	entries
 		.into_iter()
 		.map(|(label, w, action)| {
 			let rect = Rect {
 				x,
-				y: 10.0,
+				y: 6.0,
 				w,
-				h: 34.0,
+				h: 28.0,
 			};
-			x += w + 2.0;
+			x += w + 4.0;
 			Button {
 				rect,
 				label,
@@ -392,6 +435,14 @@ mod tests {
 			{
 				assert!(button.rect.x + button.rect.w <= width);
 			}
+			let toolbar =
+				controls(&ReaderSettings::default(), false, width, height);
+			assert_eq!(
+				toolbar.iter().map(|b| b.action).collect::<Vec<_>>(),
+				vec![Command::Open, Command::Settings]
+			);
+			assert_eq!(toolbar[1].rect.x + toolbar[1].rect.w, width - 16.0);
+			assert!(toolbar.iter().all(|b| b.rect.y + b.rect.h < TOP));
 		}
 	}
 }
@@ -402,10 +453,18 @@ mod gpu_tests {
 	#[test]
 	#[ignore = "requires a GPU; writes artifacts/refactor-ui.png"]
 	fn settings_and_selection_frame() -> Result<()> {
-		for (width, height, theme, filename) in [
-			(800.0, 600.0, Theme::Light, "refactor-ui.png"),
-			(800.0, 600.0, Theme::Dark, "settings-dark.png"),
-			(500.0, 300.0, Theme::Light, "settings-compact.png"),
+		for (width, height, theme, panel_open, filename) in [
+			(800.0, 600.0, Theme::Light, true, "refactor-ui.png"),
+			(800.0, 600.0, Theme::Dark, true, "settings-dark.png"),
+			(500.0, 300.0, Theme::Light, true, "settings-compact.png"),
+			(800.0, 600.0, Theme::Light, false, "reader-chrome.png"),
+			(
+				500.0,
+				300.0,
+				Theme::Dark,
+				false,
+				"reader-chrome-compact.png",
+			),
 		] {
 			let settings = ReaderSettings {
 				theme,
@@ -415,19 +474,55 @@ mod gpu_tests {
 				"# Reading selections\n\nSelect **English**, 中文 and $x^2$ across lines.\n\n```rust\n\tlet answer = 42;\n```\n\n| A | B |\n|---|---|\n| one | two |\n",
 			);
 			let snapshot = LayoutEngine::new()
-				.layout(&document, &settings.layout_options(800.0, false));
+				.layout(&document, &settings.layout_options(width, false));
 			let interaction = InteractionState {
-				panel_open: true,
-				focus: Some(Command::Larger),
+				panel_open,
+				focus: Some(if panel_open {
+					Command::Larger
+				} else {
+					Command::Settings
+				}),
 				..Default::default()
 			};
-			let overlay = draw_controls(
+			let counts = markview_core::text::TextCounts::of(
+				&snapshot.extract_text(snapshot.select_all(1).unwrap(), 1),
+			);
+			let mut overlay = vec![
+				Draw::Rect(
+					Rect {
+						x: 0.0,
+						y: 0.0,
+						w: width,
+						h: TOP,
+					},
+					Paint::Background,
+				),
+				Draw::Rect(
+					Rect {
+						x: 0.0,
+						y: TOP - 1.0,
+						w: width,
+						h: 1.0,
+					},
+					Paint::Border,
+				),
+			];
+			overlay.extend(draw_footer(
+				&mut TextShaper::new(),
+				counts,
+				Some(counts),
+				None,
+				"",
+				width,
+				height,
+			));
+			overlay.extend(draw_controls(
 				&mut TextShaper::new(),
 				&settings,
 				&interaction,
 				width,
 				height,
-			);
+			));
 			let mut renderer = pollster::block_on(Renderer::new(None))?;
 			let horizontal = HashMap::new();
 			let view = View {

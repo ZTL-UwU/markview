@@ -3,6 +3,21 @@ use crate::layout::{LayoutSnapshot, Rect};
 use std::{collections::HashMap, ops::Range};
 use unicode_segmentation::UnicodeSegmentation;
 
+/// Counts the same reading text that is copied, including whitespace.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextCounts {
+	pub chars: usize,
+	pub words: usize,
+}
+impl TextCounts {
+	pub fn of(text: &str) -> Self {
+		Self {
+			chars: text.graphemes(true).count(),
+			words: text.unicode_words().count(),
+		}
+	}
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Affinity {
 	Before,
@@ -336,6 +351,22 @@ impl LayoutSnapshot {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	#[test]
+	fn counts_use_graphemes_and_unicode_word_boundaries() {
+		assert_eq!(TextCounts::of(""), TextCounts::default());
+		assert_eq!(
+			TextCounts::of("Hello world!"),
+			TextCounts {
+				chars: 12,
+				words: 2
+			}
+		);
+		assert_eq!(
+			TextCounts::of("e\u{301} 👩‍💻 中文"),
+			TextCounts { chars: 6, words: 3 }
+		);
+		assert_eq!(TextCounts::of(" \n\t"), TextCounts { chars: 3, words: 0 });
+	}
 	use crate::{
 		document,
 		layout::{LayoutEngine, LayoutOptions},

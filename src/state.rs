@@ -3,7 +3,7 @@ use crate::{
 	document,
 	layout::{LayoutOptions, LayoutSnapshot},
 };
-use markview_core::text::TextSelection;
+use markview_core::text::{TextCounts, TextSelection};
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
 use winit::keyboard::ModifiersState;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,6 +24,7 @@ pub(crate) enum Command {
 
 #[derive(Default)]
 pub(crate) struct ReaderSession {
+	pub(crate) counts: TextCounts,
 	pub(crate) path: Option<PathBuf>,
 	pub(crate) snapshot: LayoutSnapshot,
 	pub(crate) accepted_revision: u64,
@@ -39,6 +40,7 @@ pub(crate) struct ReaderSession {
 
 #[derive(Default)]
 pub(crate) struct InteractionState {
+	pub(crate) selection_counts: Option<(TextSelection, TextCounts)>,
 	pub(crate) panel_open: bool,
 	pub(crate) selection: Option<TextSelection>,
 	pub(crate) pointer_down: Option<Drag>,
@@ -119,6 +121,19 @@ impl ReaderSession {
 		// A metadata-only change re-reads identical bytes; only a real content
 		// change may invalidate reading positions.
 		let changed = reader.document.content_id != self.accepted_content_id;
+		if changed {
+			self.counts = reader
+				.layout
+				.select_all(reader.content_version)
+				.map(|selection| {
+					TextCounts::of(
+						&reader
+							.layout
+							.extract_text(selection, reader.content_version),
+					)
+				})
+				.unwrap_or_default();
+		}
 		self.scroll = if self.snapshot.blocks.is_empty() {
 			0.0
 		} else {
@@ -233,7 +248,9 @@ mod tests {
 			content_version: 1,
 		};
 		assert!(session.accept(reader.clone(), 300.0));
+		assert_eq!(session.counts, TextCounts { chars: 5, words: 1 });
 		assert!(!session.accept(reader, 300.0));
+		assert_eq!(session.counts, TextCounts { chars: 5, words: 1 });
 		assert!(Arc::ptr_eq(session.document.as_ref().unwrap(), &document));
 	}
 }

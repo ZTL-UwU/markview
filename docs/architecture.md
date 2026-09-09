@@ -78,13 +78,17 @@ instead of one segment per character. The hit's affinity recovers the grapheme
 under the pointer, punctuation and emoji select their own cluster, and whitespace
 selects the adjacent word. `select_block_at` backs triple-click. Both return
 ordinary logical selections, so reflow, copying and selection counts need no
-special cases.
+special cases. `TextCounts` reuses the same segmentation, so the footer word count
+and double-click agree; a segment counts as a word when it carries a letter or a
+digit, which also covers a base letter followed by a combining mark.
 
 The application owns drag selection, Shift-click extension, double-click word
 selection, triple-click block selection, select-all, copying, edge autoscroll and
-gesture cancellation. Links activate on matching release only when the gesture has
-not become a drag, so a double-click inside a link selects text instead of opening
-it. Reflow preserves logical selection;
+gesture cancellation. A press that already selected a word or block keeps its
+`Grain`, so dragging extends the range by whole words or blocks from the fixed
+edge of the multi-click selection. Links activate on matching release only when
+the gesture has not become a drag, so a double-click inside a link selects text
+instead of opening it. Reflow preserves logical selection;
 accepting semantically different contents clears it, while a metadata-only reload
 or a failed reload preserves it. The settings panel consumes pointer events in its
 own region and keyboard events when a panel control has focus; clicking the

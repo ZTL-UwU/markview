@@ -224,7 +224,8 @@ impl App {
 		} else {
 			None
 		};
-		self.interaction.move_selection(position);
+		self.interaction
+			.move_selection(position, &self.session.snapshot);
 		if self.interaction.pointer_down.is_some() && self.interaction.dragged {
 			let (_, height, _) = self.dimensions();
 			let can_scroll = (self.interaction.cursor.1 < TOP + 24.0

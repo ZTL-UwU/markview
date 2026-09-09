@@ -3,7 +3,7 @@ mod interaction;
 mod launch;
 use crate::cli::{LaunchOptions, Mode, arguments};
 use crate::settings::{ReaderSettings, Setting, SettingsStore};
-use crate::state::{Command, InteractionState, ReaderSession};
+use crate::state::{Command, Grain, InteractionState, ReaderSession};
 use crate::{
 	benchmark, document,
 	file::read_document,
@@ -782,18 +782,30 @@ impl ApplicationHandler<Event> for App {
 						);
 						match click_count {
 							2 => {
-								self.interaction.selection = self
+								let selection = self
 									.session
 									.snapshot
 									.select_word_at(position);
-								self.interaction.pointer_down = None;
+								if !self.interaction.begin_grain_selection(
+									selection,
+									Grain::Word,
+								) {
+									self.interaction
+										.begin_selection(position, link);
+								}
 							}
 							3 => {
-								self.interaction.selection = self
+								let selection = self
 									.session
 									.snapshot
 									.select_block_at(position);
-								self.interaction.pointer_down = None;
+								if !self.interaction.begin_grain_selection(
+									selection,
+									Grain::Block,
+								) {
+									self.interaction
+										.begin_selection(position, link);
+								}
 							}
 							_ => {
 								self.interaction.begin_selection(position, link)

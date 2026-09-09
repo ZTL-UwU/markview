@@ -67,11 +67,45 @@ pub(crate) struct InteractionState {
 	pub(crate) last_click: Option<(Instant, (f32, f32), u8)>,
 }
 
+/// Selection unit of an in-flight press.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Grain {
+	Char,
+	Word,
+	Block,
+}
+
 /// An in-flight press: where it started and the link it would activate.
 #[derive(Clone, Debug)]
 pub(crate) struct Drag {
 	pub(crate) start: (f32, f32),
 	pub(crate) link: Option<String>,
+	pub(crate) grain: Grain,
+	/// The word or block a multi-click press selected, kept as the drag base.
+	pub(crate) base: Option<TextSelection>,
+}
+
+/// Extends a multi-click base selection to the word or block under the pointer,
+/// keeping the base as the fixed edge.
+fn extend(
+	base: TextSelection,
+	unit: TextSelection,
+	position: markview_core::text::TextPosition,
+) -> TextSelection {
+	let (first, last) = base.ordered();
+	if position.cmp_reading(first).is_lt() {
+		TextSelection {
+			anchor: last,
+			focus: unit.anchor,
+		}
+	} else if position.cmp_reading(last).is_gt() {
+		TextSelection {
+			anchor: first,
+			focus: unit.focus,
+		}
+	} else {
+		base
+	}
 }
 
 impl InteractionState {
@@ -114,23 +148,65 @@ impl InteractionState {
 		self.pointer_down = Some(Drag {
 			start: self.cursor,
 			link,
+			grain: Grain::Char,
+			base: None,
 		});
 		self.dragged = self.modifiers.shift_key();
 		self.focus = None;
 	}
+	/// Starts a press that already selected a word or block, so dragging
+	/// extends the selection by that unit instead of by grapheme. Returns
+	/// false when there is no selection to start from.
+	pub(crate) fn begin_grain_selection(
+		&mut self,
+		selection: Option<TextSelection>,
+		grain: Grain,
+	) -> bool {
+		let Some(selection) = selection else {
+			return false;
+		};
+		self.selection = Some(selection);
+		self.pointer_down = Some(Drag {
+			start: self.cursor,
+			link: None,
+			grain,
+			base: Some(selection),
+		});
+		self.dragged = false;
+		self.focus = None;
+		true
+	}
 	pub(crate) fn move_selection(
 		&mut self,
 		position: Option<markview_core::text::TextPosition>,
+		snapshot: &LayoutSnapshot,
 	) {
-		if let Some(drag) = &self.pointer_down {
-			self.dragged |= (self.cursor.0 - drag.start.0)
-				.hypot(self.cursor.1 - drag.start.1)
-				>= 4.0;
-			if self.dragged
-				&& let Some(position) = position
-				&& let Some(selection) = &mut self.selection
-			{
-				selection.focus = position;
+		let Some(drag) = &self.pointer_down else {
+			return;
+		};
+		let (start, grain, base) = (drag.start, drag.grain, drag.base);
+		self.dragged |=
+			(self.cursor.0 - start.0).hypot(self.cursor.1 - start.1) >= 4.0;
+		if !self.dragged {
+			return;
+		}
+		let Some(position) = position else {
+			return;
+		};
+		let Some(selection) = &mut self.selection else {
+			return;
+		};
+		match (grain, base) {
+			(Grain::Char, _) | (_, None) => selection.focus = position,
+			(Grain::Word, Some(base)) => {
+				if let Some(word) = snapshot.select_word_at(position) {
+					*selection = extend(base, word, position);
+				}
+			}
+			(Grain::Block, Some(base)) => {
+				if let Some(block) = snapshot.select_block_at(position) {
+					*selection = extend(base, block, position);
+				}
 			}
 		}
 	}
@@ -205,8 +281,20 @@ mod tests {
 			affinity: Affinity::Before,
 		}
 	}
+	fn position_in(block: usize, offset: usize) -> TextPosition {
+		TextPosition {
+			block,
+			..position(offset)
+		}
+	}
+	fn snapshot_of(source: &str) -> LayoutSnapshot {
+		let document = Arc::new(document::parse(source));
+		crate::layout::LayoutEngine::new()
+			.layout(&document, &LayoutOptions::default())
+	}
 	#[test]
 	fn click_opens_only_on_release_and_drag_never_opens_link() {
+		let snapshot = LayoutSnapshot::default();
 		let mut interaction = InteractionState::default();
 		interaction
 			.begin_selection(position(0), Some("https://example.com".into()));
@@ -218,9 +306,9 @@ mod tests {
 		interaction
 			.begin_selection(position(0), Some("https://example.com".into()));
 		interaction.cursor = (8.0, 0.0);
-		interaction.move_selection(Some(position(4)));
+		interaction.move_selection(Some(position(4)), &snapshot);
 		interaction.cursor = (0.0, 0.0);
-		interaction.move_selection(Some(position(0)));
+		interaction.move_selection(Some(position(0)), &snapshot);
 		assert!(
 			interaction
 				.finish_selection(Some("https://example.com"))
@@ -229,6 +317,48 @@ mod tests {
 		interaction
 			.begin_selection(position(0), Some("https://example.com".into()));
 		assert!(interaction.finish_selection(None).is_none());
+	}
+	#[test]
+	fn word_and_block_drag_extend_from_the_multi_click_base() {
+		let snapshot = snapshot_of("测试 中文 一下");
+		let base = snapshot.select_word_at(position(7)).unwrap();
+		assert_eq!(snapshot.extract_text(base, 1), "中文");
+		let mut interaction = InteractionState {
+			cursor: (0.0, 0.0),
+			..Default::default()
+		};
+		assert!(interaction.begin_grain_selection(Some(base), Grain::Word));
+		// Below the drag threshold the double-clicked word stays selected.
+		interaction.cursor = (2.0, 0.0);
+		interaction.move_selection(Some(position(17)), &snapshot);
+		assert_eq!(interaction.selection.unwrap(), base);
+		// Right of the base word, the far edge follows the word under the pointer.
+		interaction.cursor = (60.0, 0.0);
+		interaction.move_selection(Some(position(17)), &snapshot);
+		assert_eq!(
+			snapshot.extract_text(interaction.selection.unwrap(), 1),
+			"中文 一下"
+		);
+		// Left of the base word, the anchor moves and the base end stays fixed.
+		interaction.move_selection(Some(position(0)), &snapshot);
+		assert_eq!(
+			snapshot.extract_text(interaction.selection.unwrap(), 1),
+			"测试 中文"
+		);
+		// Triple-click drags whole blocks.
+		let blocks = snapshot_of("First paragraph.\n\nSecond paragraph.");
+		let base = blocks.select_block_at(position(2)).unwrap();
+		let mut interaction = InteractionState {
+			cursor: (0.0, 0.0),
+			..Default::default()
+		};
+		assert!(interaction.begin_grain_selection(Some(base), Grain::Block));
+		interaction.cursor = (60.0, 0.0);
+		interaction.move_selection(Some(position_in(1, 2)), &blocks);
+		assert_eq!(
+			blocks.extract_text(interaction.selection.unwrap(), 1),
+			"First paragraph.\n\nSecond paragraph."
+		);
 	}
 	#[test]
 	fn shift_extends_original_anchor_and_reload_clears_gesture() {

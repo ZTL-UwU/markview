@@ -4,35 +4,42 @@ use icu_segmenter::{WordSegmenter, WordSegmenterBorrowed};
 use std::{collections::HashMap, ops::Range, sync::OnceLock};
 use unicode_segmentation::UnicodeSegmentation;
 
-/// Word boundaries for pointer gestures. ICU supplies the UAX #29 rules plus
-/// the Chinese and Japanese dictionaries, so 中文文字 breaks into 中文 / 文字
-/// instead of one segment per character. The segmenter is immutable and cheap
-/// to copy, so one process-wide instance serves every thread.
+/// Word boundaries for pointer gestures and text counts. ICU supplies the
+/// UAX #29 rules plus the Chinese and Japanese dictionaries, so 中文文字 breaks
+/// into 中文 / 文字 instead of one segment per character. The segmenter is
+/// immutable and cheap to copy, so one process-wide instance serves every thread.
 fn word_segmenter() -> WordSegmenterBorrowed<'static> {
 	static SEGMENTER: OnceLock<WordSegmenterBorrowed<'static>> =
 		OnceLock::new();
 	*SEGMENTER.get_or_init(|| WordSegmenter::new_auto(Default::default()))
 }
 
+/// Whether a segment reads as a word: it carries letters or digits. ICU's own
+/// `is_word_like` reports false for a segment that ends in a combining mark
+/// after a base letter, such as `Cafe\u{301}`, so classify by content instead.
+fn is_word(segment: &str) -> bool {
+	segment.chars().any(char::is_alphanumeric)
+}
+
 /// The word-like range a click lands on. A click on punctuation or an emoji
 /// selects that cluster; a click on whitespace selects the nearest word, with
 /// the word before the gap winning a tie.
 fn word_range(text: &str, clicked: Range<usize>) -> Option<Range<usize>> {
-	let mut segments = word_segmenter().segment_str(text);
 	let mut start = 0;
 	let mut containing = None;
 	let mut containing_word = None;
 	let mut preceding = None;
 	let mut following = None;
-	while let Some(end) = segments.next() {
+	for end in word_segmenter().segment_str(text) {
 		let range = start..end;
+		let word = is_word(&text[range.clone()]);
 		if range.start <= clicked.start && clicked.end <= range.end {
-			if segments.is_word_like() {
+			if word {
 				containing_word = Some(range);
 				break;
 			}
 			containing = Some(range);
-		} else if segments.is_word_like() {
+		} else if word {
 			if range.end <= clicked.start {
 				preceding = Some(range);
 			} else if range.start >= clicked.end {
@@ -64,7 +71,9 @@ fn word_range(text: &str, clicked: Range<usize>) -> Option<Range<usize>> {
 	}
 }
 
-/// Counts the same reading text that is copied, including whitespace.
+/// Counts the same reading text that is copied, including whitespace. Words use
+/// the same dictionary segmentation as double-click, so Chinese and Japanese
+/// count by word instead of by character.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TextCounts {
 	pub chars: usize,
@@ -72,9 +81,15 @@ pub struct TextCounts {
 }
 impl TextCounts {
 	pub fn of(text: &str) -> Self {
+		let mut words = 0;
+		let mut start = 0;
+		for end in word_segmenter().segment_str(text) {
+			words += usize::from(is_word(&text[start..end]));
+			start = end;
+		}
 		Self {
 			chars: text.graphemes(true).count(),
-			words: text.unicode_words().count(),
+			words,
 		}
 	}
 }
@@ -95,6 +110,11 @@ pub struct TextPosition {
 impl TextPosition {
 	fn key(self) -> (usize, usize, usize) {
 		(self.block, self.node, self.offset)
+	}
+	/// Reading order of two positions, ignoring revision and affinity. Repeated
+	/// blocks and nodes order by their occurrence.
+	pub fn cmp_reading(self, other: Self) -> std::cmp::Ordering {
+		self.key().cmp(&other.key())
 	}
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -513,7 +533,7 @@ impl LayoutSnapshot {
 mod tests {
 	use super::*;
 	#[test]
-	fn counts_use_graphemes_and_unicode_word_boundaries() {
+	fn counts_use_graphemes_and_dictionary_words() {
 		assert_eq!(TextCounts::of(""), TextCounts::default());
 		assert_eq!(
 			TextCounts::of("Hello world!"),
@@ -524,9 +544,14 @@ mod tests {
 		);
 		assert_eq!(
 			TextCounts::of("e\u{301} 👩‍💻 中文"),
-			TextCounts { chars: 6, words: 3 }
+			TextCounts { chars: 6, words: 2 }
 		);
 		assert_eq!(TextCounts::of(" \n\t"), TextCounts { chars: 3, words: 0 });
+		// Dictionary segmentation counts 中文文字 as two words, not four.
+		assert_eq!(
+			TextCounts::of("中文文字"),
+			TextCounts { chars: 4, words: 2 }
+		);
 	}
 	use crate::{
 		document,

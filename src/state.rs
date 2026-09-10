@@ -32,9 +32,11 @@ pub(crate) enum Command {
 	StylePrev,
 	StyleNext,
 	StylesFolder,
+	SelectTab(usize),
+	CloseTab(usize),
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct ReaderSession {
 	pub(crate) counts: TextCounts,
 	pub(crate) path: Option<PathBuf>,
@@ -48,6 +50,22 @@ pub(crate) struct ReaderSession {
 	pub(crate) scroll: f32,
 	pub(crate) horizontal: HashMap<(usize, usize), f32>,
 	pub(crate) follow_update: bool,
+}
+
+pub(crate) struct ReaderTab {
+	pub(crate) path: PathBuf,
+	pub(crate) session: ReaderSession,
+	pub(crate) last_active: Instant,
+}
+
+impl ReaderTab {
+	pub(crate) fn new(path: PathBuf) -> Self {
+		Self {
+			path,
+			session: ReaderSession::default(),
+			last_active: Instant::now(),
+		}
+	}
 }
 
 #[derive(Default)]
@@ -248,6 +266,13 @@ impl InteractionState {
 	}
 }
 impl ReaderSession {
+	pub(crate) fn release_heavy(&mut self) {
+		self.counts = TextCounts::default();
+		self.snapshot = LayoutSnapshot::default();
+		self.document = None;
+		self.requested_options = None;
+	}
+
 	pub(crate) fn accept(
 		&mut self,
 		reader: crate::worker::ReaderSnapshot,
@@ -270,7 +295,10 @@ impl ReaderSession {
 				.unwrap_or_default();
 		}
 		self.scroll = if self.snapshot.blocks.is_empty() {
-			0.0
+			// A released tab has no old layout to anchor against, but its
+			// scroll position is still user state and should survive reloading.
+			self.scroll
+				.clamp(0.0, (reader.layout.height - viewport).max(0.0))
 		} else {
 			crate::layout::anchored_scroll(
 				&self.snapshot,

@@ -3,6 +3,14 @@ use super::*;
 impl App {
 	pub(super) fn action(&mut self, action: Command) {
 		match action {
+			Command::SelectTab(index) => {
+				self.select_tab(index);
+				return;
+			}
+			Command::CloseTab(index) => {
+				self.close_tab(index);
+				return;
+			}
 			Command::Styles => {
 				self.interaction.panel_open = true;
 				self.interaction.styles_open = !self.interaction.styles_open;

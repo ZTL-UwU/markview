@@ -55,6 +55,7 @@ impl App {
 				Paint::Styled(Role::Toolbar, C::Background),
 			),
 		];
+		out.extend(self.draw_tabs());
 		let selection = self.interaction.selection.filter(|s| {
 			!s.is_empty()
 				&& s.anchor.revision == self.session.accepted_revision
@@ -160,6 +161,101 @@ impl App {
 				&self.interaction,
 				width,
 				height,
+			));
+		}
+		out
+	}
+
+	pub(super) fn tab_at_cursor(&mut self) -> Option<usize> {
+		let point = self.interaction.cursor;
+		self.tab_rects()
+			.into_iter()
+			.find(|(rect, _)| rect.contains(point.0, point.1))
+			.map(|(_, index)| index)
+	}
+
+	pub(super) fn tab_close_at_cursor(&mut self) -> Option<usize> {
+		let point = self.interaction.cursor;
+		self.tab_rects().into_iter().find_map(|(rect, index)| {
+			(rect.contains(point.0, point.1)
+				&& point.0 >= rect.x + rect.w - 24.0)
+				.then_some(index)
+		})
+	}
+
+	fn tab_rects(&mut self) -> Vec<(Rect, usize)> {
+		let (width, _, _) = self.dimensions();
+		let right = toolbar_right_edge(&mut self.ui, width);
+		let mut x = 10.0;
+		let mut out = Vec::new();
+		for (index, tab) in self.tabs.iter().enumerate() {
+			let name = tab
+				.path
+				.file_name()
+				.unwrap_or(tab.path.as_os_str())
+				.to_string_lossy();
+			let label_width = self.ui.text_width(&name, 12.0);
+			let w = (label_width + 34.0).clamp(92.0, 240.0);
+			if x + w > right - 4.0 {
+				break;
+			}
+			out.push((
+				Rect {
+					x,
+					y: 4.0,
+					w,
+					h: 32.0,
+				},
+				index,
+			));
+			x += w + 2.0;
+		}
+		out
+	}
+
+	fn draw_tabs(&mut self) -> Vec<Draw> {
+		let mut out = Vec::new();
+		for (rect, index) in self.tab_rects() {
+			let active = index == self.active_tab;
+			out.push(Draw::Box {
+				rect,
+				role: Role::Toolbar,
+				radius: 0.0,
+				border: 1.0,
+				left_only: false,
+			});
+			let fill = if active {
+				C::ActiveBackground
+			} else if rect
+				.contains(self.interaction.cursor.0, self.interaction.cursor.1)
+			{
+				C::HoverBackground
+			} else {
+				C::Background
+			};
+			out.push(Draw::Rect(rect, Paint::Styled(Role::Toolbar, fill)));
+			let name = self.tabs[index]
+				.path
+				.file_name()
+				.unwrap_or(self.tabs[index].path.as_os_str())
+				.to_string_lossy();
+			let name = self.ui.fit(&name, 12.0, rect.w - 26.0);
+			out.extend(self.ui.label(
+				&name,
+				12.0,
+				rect.x + 12.0,
+				rect.y + 21.0,
+				Paint::Styled(
+					Role::Toolbar,
+					if active { C::Color } else { C::Muted },
+				),
+			));
+			out.extend(self.ui.label(
+				"×",
+				16.0,
+				rect.x + rect.w - 19.0,
+				rect.y + 21.0,
+				Paint::Styled(Role::Toolbar, C::Muted),
 			));
 		}
 		out
@@ -460,7 +556,6 @@ fn toolbar_controls(shaper: &mut TextShaper, width: f32) -> Vec<Button> {
 	const TEXT_SIZE: f32 = 13.0;
 	const HORIZONTAL_PADDING: f32 = 18.0;
 	const GAP: f32 = 4.0;
-	const RIGHT_INSET: f32 = 16.0;
 	let entries = [("Open", Command::Open), ("Settings", Command::Settings)];
 	let old_appearance = shaper.appearance.clone();
 	shaper.appearance =
@@ -472,10 +567,7 @@ fn toolbar_controls(shaper: &mut TextShaper, width: f32) -> Vec<Button> {
 		})
 		.collect();
 	shaper.appearance = old_appearance;
-	let total_width = widths.iter().sum::<f32>()
-		+ GAP * (entries.len() - 1) as f32
-		+ RIGHT_INSET;
-	let mut x = width - total_width;
+	let mut x = toolbar_right_edge(shaper, width);
 	entries
 		.into_iter()
 		.zip(widths)
@@ -494,6 +586,21 @@ fn toolbar_controls(shaper: &mut TextShaper, width: f32) -> Vec<Button> {
 			}
 		})
 		.collect()
+}
+
+fn toolbar_right_edge(shaper: &mut TextShaper, width: f32) -> f32 {
+	const TEXT_SIZE: f32 = 13.0;
+	const HORIZONTAL_PADDING: f32 = 18.0;
+	const GAP: f32 = 4.0;
+	let old_appearance = shaper.appearance.clone();
+	shaper.appearance =
+		shaper.stylesheet.text(&TextAppearance::default(), Role::Ui);
+	let button_widths = ["Open", "Settings"]
+		.into_iter()
+		.map(|label| shaper.text_width(label, TEXT_SIZE) + HORIZONTAL_PADDING)
+		.collect::<Vec<_>>();
+	shaper.appearance = old_appearance;
+	width - button_widths.iter().sum::<f32>() - GAP - 16.0
 }
 
 fn draw_controls(

@@ -4,7 +4,7 @@ mod launch;
 use crate::cli::{LaunchOptions, Mode, arguments};
 use crate::settings::{ReaderSettings, Setting, SettingsStore};
 use crate::state::{
-	Command, Grain, InteractionState, ReaderSession, ScrollbarAxis,
+	Command, Grain, InteractionState, ReaderSession, ReaderTab, ScrollbarAxis,
 	ScrollbarDrag,
 };
 use crate::{
@@ -36,6 +36,7 @@ use winit::{
 
 const TOP: f32 = 40.0;
 const BOTTOM: f32 = 28.0;
+const TAB_RELEASE_AFTER: Duration = Duration::from_secs(20);
 
 pub fn run() -> Result<()> {
 	launch::run()
@@ -66,6 +67,9 @@ fn system_theme(window: &Window) -> Option<Theme> {
 struct App {
 	interaction: InteractionState,
 	session: ReaderSession,
+	tabs: Vec<ReaderTab>,
+	active_tab: usize,
+	request_serial: u64,
 	args: LaunchOptions,
 	proxy: EventLoopProxy<Event>,
 	window: Option<Arc<Window>>,
@@ -187,6 +191,9 @@ impl App {
 		Self {
 			interaction: InteractionState::default(),
 			session: ReaderSession::default(),
+			tabs: Vec::new(),
+			active_tab: 0,
+			request_serial: 0,
 			args,
 			proxy,
 			window: None,
@@ -312,7 +319,8 @@ impl App {
 	}
 	fn request(&mut self, follow: bool) {
 		if let Some(path) = &self.session.path {
-			self.session.version += 1;
+			self.request_serial += 1;
+			self.session.version = self.request_serial;
 			self.session.follow_update |= follow;
 			self.error = false;
 			self.status = "Updating…".into();
@@ -334,6 +342,26 @@ impl App {
 			std::env::current_dir().unwrap_or_default().join(path)
 		};
 		let path = std::fs::canonicalize(&path).unwrap_or(path);
+		if let Some(index) = self.tabs.iter().position(|tab| tab.path == path) {
+			self.select_tab(index);
+			return;
+		}
+		if let Some(current) = self.session.path.clone() {
+			if self.tabs.is_empty() {
+				self.tabs.push(ReaderTab::new(current));
+			} else {
+				self.tabs[self.active_tab].session =
+					std::mem::take(&mut self.session);
+				self.tabs[self.active_tab].last_active = Instant::now();
+			}
+			self.tabs.push(ReaderTab::new(path.clone()));
+			self.active_tab = self.tabs.len() - 1;
+		} else {
+			if self.tabs.is_empty() {
+				self.tabs.push(ReaderTab::new(path.clone()));
+				self.active_tab = 0;
+			}
+		}
 		self.interaction.clear_selection();
 		self.session.path = Some(path.clone());
 		self.session.content_version += 1;
@@ -345,6 +373,101 @@ impl App {
 			let _ = proxy.send_event(Event::Changed(observed.clone()));
 		}));
 		self.request(false);
+	}
+
+	fn select_tab(&mut self, index: usize) {
+		if index >= self.tabs.len() || index == self.active_tab {
+			return;
+		}
+		if self.session.path.is_some() {
+			self.tabs[self.active_tab].session =
+				std::mem::take(&mut self.session);
+			self.tabs[self.active_tab].last_active = Instant::now();
+		}
+		self.active_tab = index;
+		self.tabs[index].last_active = Instant::now();
+		self.session = std::mem::take(&mut self.tabs[index].session);
+		self.watch = None;
+		if let Some(path) = self
+			.session
+			.path
+			.clone()
+			.or_else(|| Some(self.tabs[index].path.clone()))
+		{
+			self.session.path = Some(path.clone());
+			let proxy = self.proxy.clone();
+			let observed = path.clone();
+			self.watch = Some(FileWatch::new(path, move || {
+				let _ = proxy.send_event(Event::Changed(observed.clone()));
+			}));
+		}
+		self.interaction.clear_selection();
+		self.error = false;
+		self.status.clear();
+		if self.session.document.is_none()
+			|| self.session.requested_options.as_ref() != Some(&self.options())
+		{
+			self.request(false);
+		}
+		self.redraw();
+	}
+
+	fn close_tab(&mut self, index: usize) {
+		if index >= self.tabs.len() {
+			return;
+		}
+		if index != self.active_tab {
+			self.tabs.remove(index);
+			if index < self.active_tab {
+				self.active_tab -= 1;
+			}
+			self.redraw();
+			return;
+		}
+
+		self.tabs[index].session = std::mem::take(&mut self.session);
+		self.tabs.remove(index);
+		self.watch = None;
+		self.interaction.clear_selection();
+		self.error = false;
+		self.status.clear();
+		if self.tabs.is_empty() {
+			self.active_tab = 0;
+			self.session = ReaderSession::default();
+			if let Some(window) = &self.window {
+				window.set_title("Markview");
+			}
+		} else {
+			self.active_tab = index.min(self.tabs.len() - 1);
+			self.session =
+				std::mem::take(&mut self.tabs[self.active_tab].session);
+			self.tabs[self.active_tab].last_active = Instant::now();
+			if let Some(path) = self.session.path.clone() {
+				let proxy = self.proxy.clone();
+				let observed = path.clone();
+				self.watch = Some(FileWatch::new(path, move || {
+					let _ = proxy.send_event(Event::Changed(observed.clone()));
+				}));
+				if self.session.document.is_none()
+					|| self.session.requested_options.as_ref()
+						!= Some(&self.options())
+				{
+					self.request(false);
+				}
+			}
+		}
+		self.redraw();
+	}
+
+	fn release_inactive_tabs(&mut self, now: Instant) {
+		for (index, tab) in self.tabs.iter_mut().enumerate() {
+			if index != self.active_tab
+				&& now.duration_since(tab.last_active) >= TAB_RELEASE_AFTER
+				&& tab.session.document.is_some()
+			{
+				tab.session.release_heavy();
+			}
+		}
 	}
 	fn pointer_in_panel(&self) -> bool {
 		let (width, height, _) = self.dimensions();
@@ -413,7 +536,10 @@ impl App {
 			} else {
 				CursorIcon::Default
 			}
-		} else if self.button_at_cursor() || hover.is_some() {
+		} else if self.button_at_cursor()
+			|| self.tab_at_cursor().is_some()
+			|| hover.is_some()
+		{
 			CursorIcon::Pointer
 		} else if !self.interaction.panel_open && self.text_under_cursor() {
 			CursorIcon::Text
@@ -686,7 +812,8 @@ impl ApplicationHandler<Event> for App {
 				self.request(true)
 			}
 			Event::Ready(mut update)
-				if update.version == self.session.version =>
+				if update.version == self.session.version
+					&& self.session.path.as_ref() == Some(&update.path) =>
 			{
 				match update.result.take() {
 					Some(Ok(reader)) => {
@@ -822,6 +949,17 @@ impl ApplicationHandler<Event> for App {
 				self.redraw();
 			}
 			WindowEvent::MouseInput {
+				button: MouseButton::Middle,
+				state: ElementState::Pressed,
+				..
+			} => {
+				if !self.interaction.panel_open
+					&& let Some(index) = self.tab_at_cursor()
+				{
+					self.action(Command::CloseTab(index));
+				}
+			}
+			WindowEvent::MouseInput {
 				button: MouseButton::Left,
 				state: ElementState::Pressed,
 				..
@@ -829,12 +967,27 @@ impl ApplicationHandler<Event> for App {
 				// A new press always ends a drag left over from a release the
 				// platform swallowed outside the window.
 				self.interaction.scrollbar = None;
-				if let Some(button) = self.buttons().into_iter().find(|b| {
-					b.rect.contains(
-						self.interaction.cursor.0,
-						self.interaction.cursor.1,
-					)
-				}) {
+				if let Some(index) = (!self.interaction.panel_open)
+					.then(|| self.tab_close_at_cursor())
+					.flatten()
+				{
+					self.interaction.reset_clicks();
+					self.interaction.focus = None;
+					self.action(Command::CloseTab(index));
+				} else if let Some(index) = (!self.interaction.panel_open)
+					.then(|| self.tab_at_cursor())
+					.flatten()
+				{
+					self.interaction.reset_clicks();
+					self.interaction.focus = None;
+					self.action(Command::SelectTab(index));
+				} else if let Some(button) =
+					self.buttons().into_iter().find(|b| {
+						b.rect.contains(
+							self.interaction.cursor.0,
+							self.interaction.cursor.1,
+						)
+					}) {
 					self.interaction.reset_clicks();
 					self.interaction.focus = Some(button.action);
 					self.interaction.pressed = Some(button.action);
@@ -1092,6 +1245,7 @@ impl ApplicationHandler<Event> for App {
 	}
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
 		let now = Instant::now();
+		self.release_inactive_tabs(now);
 		if self.save_at.is_some_and(|d| d <= now) {
 			self.flush_settings();
 			self.redraw();
@@ -1132,6 +1286,12 @@ impl ApplicationHandler<Event> for App {
 			.chain(self.retry_at)
 			.chain(self.save_at)
 			.chain(self.interaction.drag_at)
+			.chain(
+				self.tabs
+					.iter()
+					.filter(|tab| tab.session.document.is_some())
+					.map(|tab| tab.last_active + TAB_RELEASE_AFTER),
+			)
 			.chain(
 				(self.args.mode == Mode::Smoke)
 					.then_some(self.started + Duration::from_secs(30)),

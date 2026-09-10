@@ -16,6 +16,7 @@ pub struct ReaderSettings {
 	pub justify: bool,
 	pub hyphenate: bool,
 	pub cjk_type: CjkType,
+	pub codeblock_theme_override: Option<String>,
 }
 impl Default for ReaderSettings {
 	fn default() -> Self {
@@ -29,6 +30,7 @@ impl Default for ReaderSettings {
 			justify: true,
 			hyphenate: true,
 			cjk_type: default_cjk_type(),
+			codeblock_theme_override: None,
 		}
 	}
 }
@@ -61,6 +63,7 @@ impl ReaderSettings {
 			hyphenate: self.hyphenate,
 			greedy,
 			stylesheet: self.stylesheet.clone(),
+			codeblock_theme_override: self.codeblock_theme_override.clone(),
 		}
 	}
 	pub fn validate(&self) -> Result<()> {
@@ -113,6 +116,11 @@ struct Config {
 	hyphenate: bool,
 	#[serde(rename = "cjk-type")]
 	cjk_type: Option<CjkType>,
+	#[serde(
+		rename = "codeblock-theme-override",
+		skip_serializing_if = "Option::is_none"
+	)]
+	codeblock_theme_override: Option<String>,
 }
 fn default_cjk_type() -> CjkType {
 	let Some(locale) = sys_locale::get_locale() else {
@@ -144,6 +152,7 @@ impl Default for Config {
 			justify: settings.justify,
 			hyphenate: settings.hyphenate,
 			cjk_type: Some(settings.cjk_type),
+			codeblock_theme_override: None,
 		}
 	}
 }
@@ -181,6 +190,7 @@ impl Config {
 			justify: self.justify,
 			hyphenate: self.hyphenate,
 			cjk_type: self.cjk_type.unwrap_or_else(default_cjk_type),
+			codeblock_theme_override: self.codeblock_theme_override.clone(),
 			..Default::default()
 		}
 	}
@@ -411,6 +421,10 @@ impl SettingsStore {
 			justify: self.saved.justify,
 			hyphenate: self.saved.hyphenate,
 			cjk_type: Some(self.saved.cjk_type),
+			codeblock_theme_override: self
+				.saved
+				.codeblock_theme_override
+				.clone(),
 		};
 		let values = toml_edit::ser::to_document(&config)?;
 		let mut document = self

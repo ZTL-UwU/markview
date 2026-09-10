@@ -12,7 +12,9 @@ use crate::{
 use std::{
 	collections::{BTreeMap, HashMap, HashSet},
 	ops::Range,
-	sync::Arc,
+	sync::atomic::{AtomicUsize, Ordering},
+	sync::{Arc, mpsc},
+	thread,
 };
 
 pub use crate::scene::*;
@@ -64,6 +66,7 @@ pub struct LayoutOptions {
 	pub justify: bool,
 	pub hyphenate: bool,
 	pub greedy: bool,
+	pub codeblock_theme_override: Option<String>,
 	pub stylesheet: Arc<crate::style::Stylesheet>,
 }
 impl Default for LayoutOptions {
@@ -74,6 +77,7 @@ impl Default for LayoutOptions {
 			justify: true,
 			hyphenate: true,
 			greedy: false,
+			codeblock_theme_override: None,
 			stylesheet: crate::style::Stylesheet::bundled(false),
 		}
 	}
@@ -86,6 +90,7 @@ impl PartialEq for LayoutOptions {
 			&& self.justify == other.justify
 			&& self.hyphenate == other.hyphenate
 			&& self.greedy == other.greedy
+			&& self.codeblock_theme_override == other.codeblock_theme_override
 			&& self.stylesheet.layout_key() == other.stylesheet.layout_key()
 	}
 }
@@ -104,6 +109,20 @@ pub struct LayoutEngine {
 	shaper: TextShaper,
 	math: MathEngine,
 	cache: HashMap<CacheKey, Arc<BlockLayout>>,
+	highlight_cache: HashMap<
+		u64,
+		Arc<Vec<Vec<(Range<usize>, Option<crate::style::Color>)>>>,
+	>,
+	highlight_tx: mpsc::Sender<(
+		u64,
+		Arc<Vec<Vec<(Range<usize>, Option<crate::style::Color>)>>>,
+	)>,
+	highlight_rx: mpsc::Receiver<(
+		u64,
+		Arc<Vec<Vec<(Range<usize>, Option<crate::style::Color>)>>>,
+	)>,
+	highlight_inflight: HashSet<u64>,
+	highlight_generation: u64,
 }
 
 #[derive(Hash, PartialEq, Eq)]
@@ -115,6 +134,9 @@ struct CacheKey {
 	justify: bool,
 	hyphenate: bool,
 	greedy: bool,
+	codeblock_theme_override: Option<String>,
+	codeblock_theme: Option<String>,
+	highlight_generation: u64,
 	style: u64,
 }
 impl Default for LayoutEngine {
@@ -124,11 +146,17 @@ impl Default for LayoutEngine {
 }
 impl LayoutEngine {
 	pub fn new() -> Self {
+		let (highlight_tx, highlight_rx) = mpsc::channel();
 		Self {
 			images: Default::default(),
 			shaper: TextShaper::new(),
 			math: MathEngine::default(),
 			cache: HashMap::new(),
+			highlight_cache: HashMap::new(),
+			highlight_tx,
+			highlight_rx,
+			highlight_inflight: HashSet::new(),
+			highlight_generation: 0,
 		}
 	}
 	pub fn clear_document_cache(&mut self) {
@@ -157,6 +185,7 @@ impl LayoutEngine {
 	) -> LayoutSnapshot {
 		self.images = images.clone();
 		self.shaper.set_stylesheet(options.stylesheet.clone());
+		self.poll_highlights();
 		let mut result = LayoutSnapshot {
 			images: images.clone(),
 			width: options.width,
@@ -169,6 +198,11 @@ impl LayoutEngine {
 			.map(|p| p.sides().map(|v| v * options.font_size))
 			.unwrap_or([0.; 4]);
 		let content_width = (options.width - padding[1] - padding[3]).max(1.);
+		self.prepare_highlights(&document.blocks, options);
+		let codeblock_theme = options
+			.codeblock_theme_override
+			.clone()
+			.or_else(|| options.stylesheet.rule(Role::CodeBlock).theme.clone());
 		result.height =
 			padding[0] + body.space_before.unwrap_or(0.) * options.font_size;
 		let previous = std::mem::take(&mut self.cache);
@@ -182,6 +216,11 @@ impl LayoutEngine {
 				justify: options.justify,
 				hyphenate: options.hyphenate,
 				greedy: options.greedy,
+				codeblock_theme_override: options
+					.codeblock_theme_override
+					.clone(),
+				codeblock_theme: codeblock_theme.clone(),
+				highlight_generation: self.highlight_generation,
 				style: options.stylesheet.layout_key(),
 			};
 			let layout = if let Some(cached) = previous.get(&key) {
@@ -228,6 +267,118 @@ impl LayoutEngine {
 			left_only: false,
 		});
 		result
+	}
+
+	fn prepare_highlights(
+		&mut self,
+		blocks: &[Block],
+		options: &LayoutOptions,
+	) {
+		let theme = options
+			.codeblock_theme_override
+			.as_deref()
+			.or(options.stylesheet.rule(Role::CodeBlock).theme.as_deref())
+			.map(str::to_owned);
+		let mut jobs = Vec::new();
+		fn collect(
+			blocks: &[Block],
+			theme: Option<&str>,
+			jobs: &mut Vec<(u64, String, String, Option<String>)>,
+		) {
+			for block in blocks {
+				match &block.kind {
+					BlockKind::Code { language, text } => {
+						let key = crate::document::fingerprint(&(
+							language, text, theme,
+						));
+						jobs.push((
+							key,
+							language.clone(),
+							text.clone(),
+							theme.map(str::to_owned),
+						));
+					}
+					BlockKind::Quote { blocks, .. } => {
+						collect(blocks, theme, jobs)
+					}
+					BlockKind::List { items, .. } => {
+						for item in items {
+							collect(&item.blocks, theme, jobs);
+						}
+					}
+					BlockKind::Footnote { blocks, .. } => {
+						collect(blocks, theme, jobs)
+					}
+					_ => {}
+				}
+			}
+		}
+		collect(blocks, theme.as_deref(), &mut jobs);
+		jobs.retain(|(key, ..)| {
+			!self.highlight_cache.contains_key(key)
+				&& !self.highlight_inflight.contains(key)
+		});
+		if jobs.is_empty() {
+			return;
+		}
+		for (key, ..) in &jobs {
+			self.highlight_inflight.insert(*key);
+		}
+		let worker_count = thread::available_parallelism()
+			.map_or(1, std::num::NonZeroUsize::get)
+			.min(jobs.len())
+			.min(if jobs.len() < 4 { 1 } else { 4 });
+		let tx = self.highlight_tx.clone();
+		thread::spawn(move || {
+			let next = AtomicUsize::new(0);
+			thread::scope(|scope| {
+				for _ in 0..worker_count {
+					let next = &next;
+					let jobs = &jobs;
+					let tx = tx.clone();
+					scope.spawn(move || {
+						loop {
+							let index = next.fetch_add(1, Ordering::Relaxed);
+							let Some((key, language, text, theme)) =
+								jobs.get(index)
+							else {
+								break;
+							};
+							let lines = text
+								.trim_end_matches('\n')
+								.split('\n')
+								.map(|line| {
+									expand_tabs_mapped(line, 4).0.to_owned()
+								});
+							let highlighted = crate::highlight::highlight_block(
+								language,
+								theme.as_deref(),
+								lines,
+							);
+							let _ = tx.send((*key, Arc::new(highlighted)));
+						}
+					});
+				}
+			});
+		});
+	}
+
+	pub fn poll_highlights(&mut self) -> bool {
+		let mut changed = false;
+		while let Ok((key, highlighted)) = self.highlight_rx.try_recv() {
+			self.highlight_inflight.remove(&key);
+			if self.highlight_cache.len() >= 256 {
+				self.highlight_cache.clear();
+			}
+			self.highlight_cache.insert(key, highlighted);
+			changed = true;
+		}
+		if changed {
+			self.highlight_generation =
+				self.highlight_generation.wrapping_add(1);
+			self.cache.clear();
+		}
+		changed
 	}
 
 	pub fn label(
@@ -1219,15 +1370,36 @@ impl LayoutEngine {
 				}
 				let content_start = out.draws.len();
 				let mut natural = 0.0_f32;
-				for line in text.trim_end_matches('\n').split('\n') {
+				let theme = opts.codeblock_theme_override.as_deref().or(opts
+					.stylesheet
+					.rule(Role::CodeBlock)
+					.theme
+					.as_deref());
+				let highlight_key =
+					crate::document::fingerprint(&(language, text, theme));
+				let highlighted = self
+					.highlight_cache
+					.get(&highlight_key)
+					.cloned()
+					.unwrap_or_else(|| {
+						Arc::new(vec![
+							Vec::new();
+							text.trim_end_matches('\n')
+								.split('\n')
+								.count()
+						])
+					});
+				for (line_index, line) in
+					text.trim_end_matches('\n').split('\n').enumerate()
+				{
 					let original = line;
 					let (line, offsets) = expand_tabs_mapped(line, 4);
+					// Syntax colors are applied after shaping. Keeping the shaper input
+					// plain means highlighting cannot affect font selection, shaping,
+					// line breaking, or any geometry used by selection.
 					let spans = [Span {
 						range: 0..line.len(),
-						style: TextStyle {
-							code: false,
-							..Default::default()
-						},
+						style: TextStyle::default(),
 					}];
 					let clusters =
 						self.shaper.shape(&line, &spans, size, false);
@@ -1247,6 +1419,13 @@ impl LayoutEngine {
 						+ line_ascent;
 					let mut left = x;
 					for c in clusters {
+						let color = highlighted[line_index]
+							.iter()
+							.find(|(range, _)| {
+								range.start <= c.range.start
+									&& c.range.start < range.end
+							})
+							.and_then(|(_, color)| *color);
 						let start = offsets[c.range.start];
 						let end = offsets[c.range.end];
 						let end = if start == end {
@@ -1270,6 +1449,9 @@ impl LayoutEngine {
 							command: out.draws.len(),
 						});
 						for mut g in c.glyphs {
+							if let Some(color) = color {
+								g.paint = Paint::Color(color);
+							}
 							g.x += left;
 							g.y += baseline;
 							out.draws.push(Draw::Glyph(g));

@@ -135,6 +135,7 @@ size = 0.9
 background = "#EFF1F3"
 
 [code_block]
+theme = "InspiredGitHub"
 font = [{ family = "monospace" }, { family = "monospace[cjk]" }, { family = "emoji" }]
 size = 0.9
 line_height = 1.6

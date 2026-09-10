@@ -358,6 +358,7 @@ pub struct Rule {
 	pub active_background: Option<Color>,
 	pub disabled_color: Option<Color>,
 	pub focus_color: Option<Color>,
+	pub theme: Option<String>,
 }
 impl Rule {
 	pub fn overlay(&mut self, higher: &Self) {
@@ -394,7 +395,8 @@ impl Rule {
 			hover_background,
 			active_background,
 			disabled_color,
-			focus_color
+			focus_color,
+			theme
 		);
 	}
 	pub fn color(&self, field: ColorField) -> Option<Color> {
@@ -742,6 +744,7 @@ impl Stylesheet {
 		}
 		let (r, c) = match paint {
 			Paint::Cascade(..) => unreachable!(),
+			Paint::Color(color) => return color.rgba(),
 			Paint::Styled(r, c) => (r, c),
 			Paint::Text => (R::Body, C::Color),
 			Paint::Background => (R::Body, C::Background),
@@ -880,6 +883,9 @@ impl Stylesheet {
 		{
 			out = self.text(&out, r);
 		}
+		if let Some(color) = s.color {
+			out.paint = Paint::Color(color);
+		}
 		out
 	}
 }
@@ -974,6 +980,7 @@ fn validate_field(role: Role, key: &str) -> Result<()> {
 			"shadow" | "scrim" => role == Ui,
 			"hover_background" | "active_background" | "disabled_color"
 			| "focus_color" => role == Button,
+			"theme" => role == CodeBlock,
 			_ => false,
 		}
 	};

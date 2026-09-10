@@ -25,3 +25,56 @@ for name, math in [("ordinary-10k.md", False), ("math-10k.md", True)]:
     data = text.encode()
     assert len(data) == 10240
     (ROOT / name).write_bytes(data)
+
+
+def exact_code_fixture(name: str, blocks: list[str], heading: str) -> None:
+    """Write a 10 KiB fixture while keeping the final code fence complete."""
+    text = f"# {heading}\n\n"
+    prefix = "```text\n"
+    suffix = "\n```\n"
+    for block in blocks:
+        if len((text + block + prefix + "x\n" + suffix).encode()) > 10240:
+            break
+        text += block
+    remaining = 10240 - len(text.encode())
+    body_length = remaining - len((prefix + suffix).encode())
+    assert body_length >= 1
+    body = "x" * (body_length - 1) + "\n"
+    text += prefix + body + suffix
+    data = text.encode()
+    assert len(data) == 10240
+    (ROOT / name).write_bytes(data)
+
+
+small_block = """```rust
+fn highlighted_{index}(value: usize) -> usize {{
+    let doubled = value * 2;
+    if doubled > 10 {{ doubled }} else {{ doubled + 1 }}
+}}
+```
+
+"""
+small_blocks = [small_block.format(index=i) for i in range(200)]
+exact_code_fixture("code-10k.md", small_blocks, "Many code blocks")
+
+long_prefix = """```rust
+fn long_code_sample() {
+"""
+long_suffix = """}
+```
+"""
+long_body_length = 10240 - len(("# Long code block\n\n" + long_prefix + long_suffix).encode())
+long_lines = []
+while True:
+    index = len(long_lines)
+    line = f'    let value_{index:04} = {index}; println!("{{}}", value_{index:04});\n'
+    if sum(len(item.encode()) for item in long_lines) + len(line.encode()) + len("// filler\n".encode()) > long_body_length:
+        break
+    long_lines.append(line)
+long_body = "".join(long_lines)
+remaining = long_body_length - len(long_body.encode())
+long_body += "// " + "x" * (remaining - len("// \n".encode())) + "\n"
+long_text = "# Long code block\n\n" + long_prefix + long_body + long_suffix
+long_data = long_text.encode()
+assert len(long_data) == 10240
+(ROOT / "long-code-10k.md").write_bytes(long_data)

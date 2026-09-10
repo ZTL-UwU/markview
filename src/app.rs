@@ -132,6 +132,7 @@ impl App {
 			justify: args.options.justify,
 			hyphenate: args.options.hyphenate,
 			cjk_type: settings.cjk_type,
+			codeblock_theme_override: settings.codeblock_theme_override.clone(),
 		};
 		for field in &args.overrides {
 			settings.copy_field(&explicit, *field);
@@ -244,8 +245,19 @@ impl App {
 				});
 				match result {
 					Ok(sheet) => {
+						let old_codeblock_theme = self
+							.settings
+							.stylesheet
+							.rule(markview_core::style::Role::CodeBlock)
+							.theme
+							.clone();
+						let new_codeblock_theme = sheet
+							.rule(markview_core::style::Role::CodeBlock)
+							.theme
+							.clone();
 						let reflow = sheet.layout_key()
-							!= self.settings.stylesheet.layout_key();
+							!= self.settings.stylesheet.layout_key()
+							|| old_codeblock_theme != new_codeblock_theme;
 						self.settings.stylesheet = sheet.clone();
 						self.ui.set_stylesheet(sheet.clone());
 						self.ui.appearance = sheet.text(

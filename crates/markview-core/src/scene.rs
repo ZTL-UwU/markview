@@ -4,6 +4,7 @@ use parley::FontData;
 use std::{collections::HashMap, ops::Range, sync::Arc};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Paint {
+	Color(crate::style::Color),
 	Styled(crate::style::Role, crate::style::ColorField),
 	Cascade(u128, crate::style::ColorField),
 	#[default]

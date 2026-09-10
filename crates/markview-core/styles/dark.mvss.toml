@@ -20,6 +20,7 @@ background = "#2A3139"
 
 [code_block]
 background = "#2A3139"
+theme = "base16-ocean.dark"
 
 [code_block.label]
 color = "#98A5B1"

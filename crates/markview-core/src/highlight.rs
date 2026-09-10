@@ -1,0 +1,75 @@
+use crate::style::Color;
+use std::{ops::Range, sync::OnceLock};
+use syntect::{
+	easy::HighlightLines, highlighting::ThemeSet, parsing::SyntaxSet,
+};
+
+fn syntax_set() -> &'static SyntaxSet {
+	static SET: OnceLock<SyntaxSet> = OnceLock::new();
+	SET.get_or_init(two_face::syntax::extra_newlines)
+}
+
+fn theme_set() -> &'static ThemeSet {
+	static SET: OnceLock<ThemeSet> = OnceLock::new();
+	SET.get_or_init(|| ThemeSet::from(&two_face::theme::extra()))
+}
+
+pub(crate) struct Highlighter {
+	inner: Option<HighlightLines<'static>>,
+}
+
+pub(crate) type HighlightedLines = Vec<Vec<(Range<usize>, Option<Color>)>>;
+
+impl Highlighter {
+	pub(crate) fn new(language: &str, theme: Option<&str>) -> Self {
+		let language = language.split(',').next().unwrap_or(language).trim();
+		let syntax = syntax_set()
+			.find_syntax_by_token(language)
+			.or_else(|| syntax_set().find_syntax_by_name(language));
+		let theme = theme
+			.and_then(|name| theme_set().themes.get(name))
+			.or_else(|| theme_set().themes.get("InspiredGitHub"));
+		Self {
+			inner: syntax
+				.zip(theme)
+				.map(|(syntax, theme)| HighlightLines::new(syntax, theme)),
+		}
+	}
+
+	pub(crate) fn highlight(
+		&mut self,
+		line: &str,
+	) -> Vec<(Range<usize>, Option<Color>)> {
+		let Some(highlighter) = &mut self.inner else {
+			return vec![(0..line.len(), None)];
+		};
+		let Ok(regions) = highlighter.highlight_line(line, syntax_set()) else {
+			return vec![(0..line.len(), None)];
+		};
+		regions
+			.into_iter()
+			.scan(0, |offset, (style, text)| {
+				let start = *offset;
+				*offset += text.len();
+				Some((
+					start..*offset,
+					Some(Color(
+						(u32::from(style.foreground.r) << 24)
+							| (u32::from(style.foreground.g) << 16)
+							| (u32::from(style.foreground.b) << 8)
+							| u32::from(style.foreground.a),
+					)),
+				))
+			})
+			.collect()
+	}
+}
+
+pub(crate) fn highlight_block(
+	language: &str,
+	theme: Option<&str>,
+	lines: impl Iterator<Item = String>,
+) -> HighlightedLines {
+	let mut highlighter = Highlighter::new(language, theme);
+	lines.map(|line| highlighter.highlight(&line)).collect()
+}

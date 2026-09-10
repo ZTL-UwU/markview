@@ -93,6 +93,11 @@ impl Worker {
 							if inbox.pending.is_none() && images.poll() {
 								inbox.pending = last.clone();
 							}
+							if inbox.pending.is_none()
+								&& last.is_some() && engine.poll_highlights()
+							{
+								inbox.pending = last.clone();
+							}
 						}
 						if inbox.stopped {
 							break;

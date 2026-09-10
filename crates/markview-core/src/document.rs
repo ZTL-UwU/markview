@@ -20,6 +20,7 @@ pub struct TextStyle {
 	pub code: bool,
 	pub superscript: bool,
 	pub link: Option<String>,
+	pub color: Option<crate::style::Color>,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]

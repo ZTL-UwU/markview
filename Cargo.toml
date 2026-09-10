@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 description = "A native, read-only Markdown reader with optimized paragraph layout"
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords = ["markdown", "reader", "desktop", "typography", "wgpu"]
+categories = ["text-processing", "gui"]
 publish = false
 
 [lints]
@@ -19,6 +24,9 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
+repository = "https://github.com/szdytom/markview"
+homepage = "https://github.com/szdytom/markview"
+documentation = "https://github.com/szdytom/markview/tree/main/docs"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -1,101 +1,33 @@
-# MVP 性能记录
+# Performance model
 
-日期：2026-09-08。构建：`cargo build --release --locked`，Rust 1.96.0-nightly，Linux x86_64。
+This page explains what Markview measures and how to interpret the current baseline. It is not a change log and does not define a performance guarantee.
 
-CPU：Intel Core Ultra 5 125H。GPU：Intel Arc Graphics (MTL)，wgpu Vulkan 后端。字体：系统 Noto Serif / Noto Serif CJK SC，数学字体来自 ratex-katex-fonts 0.1.14。明色主题，字号 18、栏宽 760、Knuth–Plass 与英语断字开启。
+## What the timings mean
 
-## 离屏测量
+- **Initialization** covers device, pipeline, font, and renderer setup before a document is opened.
+- **First frame** covers reading, parsing, full geometry layout, visible glyph preparation, and GPU completion. It does not include compositor presentation.
+- **Full reflow** measures rebuilding document geometry after content or layout settings change. The block cache is cleared for this measurement, while font and shaping resources remain warm.
+- **Block refresh** measures reusing unchanged blocks after a localized invalidation, such as an image completing or a file update affecting only part of the document.
+- **RSS** is process resident memory after scrolling through the document. It is not GPU memory.
+- **Tracked GPU resources** are the capacities of resources Markview can account for; they are not a complete driver-memory report.
 
-固定 1200×800 物理像素，1× DPI，每份语料严格为 10,240 字节。以下数字是一次基准运行的结果，并非跨设备承诺。
+The benchmark separates a cold first open from repeated warm reflows. A P95 from repeated runs must not be presented as a cold-start P95.
 
-| 指标 | 普通中英文文档 | 含 4 条短公式的文档 |
+## Current repository baseline
+
+The latest checked-in measurements used Linux x86_64, an Intel Arc GPU through Vulkan, release mode, Noto Serif/CJK fonts, 18 px text, a 760 px column, and 10 KiB fixtures. They are useful for detecting regressions in the same environment:
+
+| Measurement | Ordinary fixture | Math fixture |
 | --- | ---: | ---: |
-| 窗口外初始化（设备、管线、字体上下文等） | 73.63 ms | 61.13 ms |
-| 首次读取 → 全文布局 + 首屏 GPU 完成，单次 | 21.76 ms | 23.21 ms |
-| 全文重新解析排版，P50 / 100 次 | 8.03 ms | 8.06 ms |
-| 全文重新解析排版，P95 / 100 次 | 8.57 ms | 9.83 ms |
-| 块缓存刷新，P95 / 100 次 | 0.75 ms | 0.76 ms |
-| 全文滚动后进程 RSS | 85.64 MB | 82.13 MB |
-| 可追踪 GPU 资源容量 | 8.30 MB | 8.30 MB |
-| 段落贪心降级 / 公式错误 | 0 / 0 | 0 / 0 |
+| First read to completed GPU frame | about 22–25 ms | about 24–25 ms |
+| Full reflow P95 | about 9 ms | about 10 ms |
+| Block refresh P95 | about 1 ms | about 1 ms |
+| RSS after full scroll | about 82 MB | about 84 MB |
 
-这里 MB 为十进制。全文重排每次清空应用块缓存，保留字体/塑形引擎、公式和字形缓存；文件系统缓存未清空。首屏只绘制可见区域，全文几何布局已完成。GPU 完成通过 submission fence 等待，未测合成器实际显示时刻。
+A small image-layout comparison measured approximately 13.4 ms with no image, 13.6 ms with one inline SVG, and 14.3 ms with ten repeated inline SVGs on the same machine. The important architectural result is that images participate as atomic inline boxes, so they do not trigger a separate float-layout pass.
 
-该机器、该语料下达到 <50 ms 和 <100 MB 的 MVP 目标；它不证明所有首次打开的 P95、任意文档或其他设备都达标。
+## What can change the result
 
-## 原生窗口
+Font discovery and glyph coverage, language shaping, DPI, GPU backend, driver state, image dimensions, long unbreakable runs, and table or formula complexity all affect memory and time. The ordinary-document memory target is an optimization target, not a hard limit for arbitrary input.
 
-使用实际 Wayland 会话、Intel Vulkan 后端运行：
-
-```sh
-target/release/markview --smoke-test tests/fixtures/math-10k.md --output artifacts/release-window.png
-```
-
-系统缩放下的窗口截图为 1920×1280 物理像素。一次运行中，从打开请求到首个文档 GPU 帧完成 **40.89 ms**，从应用计时入口到该帧 **96.00 ms**，进程 RSS **87.23 MB**。读取约 0.03 ms，解析 0.24 ms，排版 14.79 ms。进程创建与进入 Rust 入口前的时间不在 96 ms 内；显示器呈现等待也不在此计时内。
-
-## 可复现性与限制
-
-原生窗口热更新也做了端到端验证：12 次原地写入、原子重命名替换、删除后重建的混合操作，从开始写入到日志确认 GPU 完成，P50 **34.89 ms**、P95 **42.28 ms**。约 400 ms 的持续追加测试共完成 4 个更新帧，其中 3 个在写入结束前完成，验证了最长等待机制不会被连续事件饿死。复现命令为 `python3 scripts/smoke_watch.py target/release/markview`；该脚本只写临时文件，并在完成后关闭自己启动的窗口。
-
-- 两份语料及生成脚本已经纳入仓库；完整每次样本由 `--bench --output` 输出 JSON。开发时的原始记录保存在忽略版本控制的 `artifacts/` 下。
-- 检查了明暗主题、350 逻辑像素窄栏、普通/高 DPI、表格、代码、矩阵、分式、根号与 underbrace 的截图。
-- 软件后端截图仅用于绘制正确性检查；上述性能结果来自实际 Intel GPU。
-- 100 MB 是普通文档的优化目标。大文档、病态段落、更多字体、高 DPI、图形驱动和窗口缓冲策略都可能改变占用。
-- Windows/macOS 尚无运行或性能数据。完整字体一致性、复杂双向文字、辅助功能与后续阅读交互不包含在本次性能结论中。
-
-
-## Workspace 与阅读交互重构复测（2026-09-09）
-
-同一台机器、Intel Arc Vulkan 后端，使用重构前保留的 release 二进制与
-重构后的 release 二进制依次测试；每份语料各 100 次，与上述基准口径一致。
-这里是一次顺序对照，P95 的小幅差异可能包含系统噪声，不能视为跨机器保证。
-
-| 指标 | 普通文档：重构前 → 后 | 数学文档：重构前 → 后 |
-| --- | --- | --- |
-| 首次读取到首屏 GPU 完成 | 22.28 → 22.60 ms | 24.05 → 24.92 ms |
-| 全文解析排版 P95 | 8.88 → 8.84 ms | 8.58 → 9.77 ms |
-| 块缓存刷新 P95 | 0.72 → 0.91 ms | 1.00 → 0.97 ms |
-| 全文滚动后 RSS | 80.67 → 81.78 MB | 81.99 → 83.53 MB |
-| 新增阅读文本/命中索引容量 | 70,230 bytes | 72,648 bytes |
-
-索引容量按唯一 `Arc<BlockLayout>` 去重，计入文本、字素边界和命中簇的
-分配容量，不含分配器开销；它不是 RSS 增量的解释总和。基准仍保留原来的
-“重新读取、解析、排版”口径；窗口内字号/栏宽调整现在复用文档，不执行
-读取或解析，这一行为由 worker 测试直接验证。
-
-常规视图的欢迎文档在 llvmpipe 离屏后端重构前后逐像素一致。
-设置面板和全选高亮在 1.25× DPI 下通过实际 GPU 管线生成回归图。
-本次桌面热更新的 12 次原子保存、原地写入、删除重建混合测试 P50 为
-34.59 ms，P95 为 43.56 ms，连续写入期间共观察到 4 个更新帧。
-
-后续修正：选择命中测试原先会遍历光标上方的所有块，代价随文档增长；改为
-按块 `y` 二分定位并在不可能更近时提前结束。release 构建下，2000 个短段落
-（约 88k 逻辑像素高）的单次命中由 0.75 ms 降到 0.001 ms 量级，50 块与
-2000 块的结果差异回到测量噪声内。选择高亮现在画在块背景之上、字形之下，
-全选帧中字形核心像素不再被强调色染色（回归测试比较有/无选择两帧，3097 个
-深色字形像素的最大通道偏差为 4）。
-
-原始记录位于忽略版本控制的 `artifacts/refactor-{before,after}-{ordinary,math}-bench.json`、
-`artifacts/refactor-watch.json` 和 `artifacts/refactor-ui.png`。
-本轮最早一次原生窗口首帧为 222.86 ms；在完成其余构建检查后，相邻运行
-重构前后版本，读取请求到首屏 GPU 完成为 43.85 → 43.46 ms，应用入口到
-首屏为 96.65 → 95.15 ms。没有控制驱动/字体冷缓存，因此这些单次窗口
-结果不用于推断冷启动 P95。
-
-Windows x64 与 macOS ARM64 的全 workspace、all-targets 交叉检查通过；
-两者仍未进行本轮原生交互测试。
-
-## 图片布局复测（2026-09-10）
-
-同一台机器、Intel Arc Vulkan 后端，release 构建。语料是同一段约 8 KiB 的
-中英文正文：无图片、段首一张 160×120 SVG、段内均匀分布 10 张同样的 SVG，
-每份语料各测 3 次全文重排。
-
-| 指标 | 无图片 | 1 张图片 | 10 张图片 |
-| --- | ---: | ---: | ---: |
-| 全文重新解析排版 P50 | 13.36 ms | 13.62 ms | 14.26 ms |
-| 段落贪心降级 | 0 | 0 | 0 |
-
-图片现在按行内原子盒参与断行，与公式走同一条测量路径，不再有独立的浮动带和
-逐行重排。同一语料在旧的浮动排版实现下 P50 为 549.19 ms，且因断行预算耗尽有
-27 行降级为贪心断行；改为行内盒后重排代价与无图片语料基本一致。
+Windows and macOS compile checks do not establish native runtime or performance behavior. When a performance-sensitive change is made, compare like-for-like fixtures and report the machine, backend, fonts, build profile, and whether the cache was warm.

@@ -1,162 +1,56 @@
 # Markview
 
-只读、原生的 Markdown 阅读器。Rust + winit + wgpu，不使用浏览器、WebView、JavaScript 或外部 TeX 进程。
+Markview is a native, read-only Markdown reader for people who want a calm reading surface instead of a browser tab. It renders Markdown, math, code, tables, links, and images in a desktop window without a browser, WebView, JavaScript, or an external TeX process.
 
-正文使用 Knuth–Plass 段落优化、中文分行禁则和英语断字；行内公式按真实基线参与行高计算。修改磁盘文件后自动刷新，可与外部编辑器分屏使用。
+Markview is a fast, native Markdown reader with multi-threaded processing, GPU-accelerated rendering, and low memory usage, bringing publication-quality typography to your documents.
 
-## 运行
+## Try it
 
-需要 Rust 1.88+、系统字体，以及可用的 Vulkan / OpenGL / Metal / Direct3D 12 驱动。
+Markview requires Rust 1.88 or newer, system fonts, and a working Vulkan, OpenGL, Metal, or Direct3D 12 driver.
 
 ```sh
 cargo run --release -- examples/welcome.md
 cargo run --release -- /path/to/document.md
 ```
 
-不传路径会打开空窗口，也可以拖放文件或使用打开按钮。只读取 UTF-8 文件；支持 UTF-8 BOM，大小暂限 32 MiB。
+Launching without a file opens an empty window. You can also drop a Markdown file onto the window or use **Open**. Markview reads UTF-8 Markdown (including UTF-8 BOM) and watches the file for changes, which makes it useful beside an editor.
 
-Linux 构建依赖 Fontconfig。Debian/Ubuntu 可安装：
+On Debian or Ubuntu, the native build commonly needs:
 
 ```sh
 sudo apt-get install libfontconfig1-dev libxkbcommon-dev libwayland-dev fonts-noto-core fonts-noto-cjk
 ```
 
-优先使用系统 Noto Serif / Noto Serif CJK SC，缺失时通过 Fontique 回退到系统字体。标题和控件使用系统无衬线字体，代码使用等宽字体。数学字体已经内嵌，运行时无需下载。
+## Reading
 
-## 操作
+- `Ctrl+O` opens a file; `Ctrl+T` chooses styles; `Ctrl+,` opens settings.
+- `Ctrl++` / `Ctrl+-` changes the type size. `Ctrl+[` / `Ctrl+]` changes the reading column.
+- Scroll with the wheel, arrow keys, Page Up/Down, Space, Home, End, or the scrollbar.
+- Drag to select and use `Ctrl+C` to copy. `Ctrl+A` selects the document.
+- Click a link to open `http`, `https`, or `mailto` links in the system browser.
+- Hover over a wide code block, table, or formula to scroll it horizontally.
 
-| 操作 | 快捷键 |
-| --- | --- |
-| 打开文件 | Ctrl+O |
-| 样式表列表 | Ctrl+T |
-| 增减字号 | Ctrl+加号 / 减号，或 Ctrl+滚轮 |
-| 调整栏宽 | Ctrl+[ / Ctrl+]，或在 Settings 中调整 |
-| 两端 / 左对齐 | Ctrl+L |
-| 英语断字开关 | Ctrl+H |
-| 阅读滚动 | 滚轮、上下箭头、PageUp / PageDown、空格、Home / End、拖动滚动条 |
-| 打开链接 | 左键点击并释放；拖选不会打开链接，悬停显示目标地址 |
-| 选择与复制 | 拖选、Shift+点击扩展、双击选词、三击选整段；双击 / 三击后拖拽按词 / 按段扩展；Ctrl+A 全选、Ctrl+C 复制、Escape 清除 |
-| 阅读设置 | Settings 按钮或 Ctrl+,；设置自动保存，Reset defaults 恢复默认值 |
-| 超宽代码、表格、公式 | 光标悬停其上，拖动滚动条、Shift+滚轮或水平触控板手势 |
-| 工具栏键盘操作 | Tab / Shift+Tab、Enter；Escape 退出焦点 |
+macOS uses Command in place of Ctrl. The default reading column is 760 logical pixels and the default text size is 18 logical pixels.
 
-macOS 可用 Command 代替 Ctrl。默认字号 18、正文行距至少 1.65、最大栏宽 760 逻辑像素。公式较高时自动增加行高。颜色主题变化复用已有布局。
+## Supported content
 
-顶栏高度为 40 逻辑像素，右侧提供 Open 和 Settings。底栏显示全文 chars / words，选择文本时追加 Selected chars / words。统计对象与复制得到的阅读文本一致，不包含 Markdown 标记；chars 按 Unicode 字素簇计数（含空格、换行），words 与双击选词使用同一套 ICU 词典分词，中文、日文按词计数。双击选词、三击选中整个块，双击或三击后继续拖拽按词 / 按段扩展选区。全文统计仅在内容变化时更新，选区统计随选择更新。
+Markview supports CommonMark headings, paragraphs, quotes, lists, emphasis, code blocks, GFM tables and task lists, footnotes, GitHub-style alerts, links, raw HTML equivalents, inline and display math, and local or remote images. Images can be PNG, JPEG, GIF, WebP, BMP, ICO, or SVG; animated images show their first frame.
 
-保存后合并短时间内的文件事件；持续写入最多等待 100 ms 就开始一次刷新。兼容原地写入、临时文件重命名替换、删除后重建。更新使用递增版本，过期结果不会覆盖新版本。上方插入内容时尝试保持阅读位置；原本在底部时跟随新增内容。读取失败或不完整 UTF-8 保留上一份可读画面，并在状态栏说明。
+The reader is intentionally read-only. It does not edit or save Markdown, provide a table of contents or search, follow relative links or anchors, print, or provide a multi-document workspace. See the [documentation map](docs/README.md) for behavior and implementation boundaries.
 
-## 语法范围
+## Customize
 
-| 内容 | MVP 行为 |
-| --- | --- |
-| CommonMark 标题、段落、引用、分隔线 | 原生排版；保留硬换行，软换行按普通空格处理 |
-| 有序 / 无序列表、嵌套、松散列表 | 保留编号、缩进及段落结构 |
-| 粗体、斜体、删除线、行内代码 | 字体与装饰样式 |
-| 围栏 / 缩进代码块 | 等宽显示，保留空白；暂无语法高亮 |
-| GFM 表格 | 列对齐、表头、单元格换行；超宽表格局部滚动 |
-| GFM 任务列表 | 只读状态框 |
-| 链接、引用链接、裸 URL、邮箱 | 解析并显示链接样式；悬停显示地址，点击在系统浏览器打开 http / https / mailto |
-| 脚注、GitHub 提示块 | 编号脚注与提示引用块 |
-| 行内、块级数学 | RaTeX 原生解析与绘制 |
-| 原始 HTML | 注释忽略；与 Markdown 同义的简单标签按相同语义排版，属性忽略；其余标签显示源码 |
-| 图片 | 独立成段时居中，与文字同段时按行内元素排版；支持本地、`file:`、`http(s):` 与 `data:` 地址 |
-
-数学分隔符采用 Comrak 的 `math_dollars`、`math_code` 规则：`$...$`、`$$...$$`、GitHub 数学代码片段和标记为 `math` 的围栏代码块。金额中的美元符号可写为 `\$`。本版不启用 `\(...\)` / `\[...\]` 扩展。
-
-原始 HTML 只解释与 Markdown 同义的简单标签：行内 `<b>` `<strong>` `<i>` `<em>` `<del>` `<s>` `<code>` `<kbd>` `<sup>` `<a href>` `<br>`，以及独占一行的 `<h1>`–`<h6>`、`<p>`、`<hr>`。`<img src alt title width height>` 也按图片语义处理，只写一个方向时按原始比例补全另一个方向。`<!-- 注释 -->` 直接丢弃，`class`、`style` 等属性不参与解析，其他标签仍按源码显示。
-
-图片独立成段时居中显示，宽度不超过栏宽；与文字同处一段时按行内元素排版，行高随图片增高，文字位于图片上方或下方，不会环绕在两侧。位图支持 PNG、JPEG、GIF、WebP、BMP 和 ICO；SVG 使用矢量渲染，脚本与外部资源不会加载；动图只显示第一帧。地址相对文档所在目录解析，也接受 `file:`、`http(s):` 和 `data:` 地址；`--offline` 拒绝网络图片。加载失败时占位框显示替代文本与原因，图片本身按替代文本复制，图注和占位文字支持逐字选择复制。
-
-RaTeX 支持分式、根号、上下标、积分、矩阵等；不支持的语法、尚未写完的公式或超过 16 KiB 的单条公式显示 LaTeX 源码。行内公式内部不换行，超宽公式单独占行并可横向滚动。数学中的黑色使用样式表的公式文字颜色，其他显式颜色保留。
-
-目前支持基本选择复制、图片渲染和持久化阅读设置。搜索、目录、高亮、系统文件关联、完整辅助功能、打印导出及多文档工作区尚未实现。链接只把 http、https、mailto 交给系统处理；相对路径与站内锚点不跳转。优先验证中英文；其他复杂文字继承底层塑形能力，但混合方向段落尚未做全面质量验证。彩色 emoji 暂用单色轮廓显示。GFM 的 HTML 显示策略与网页渲染不同。
-
-选择复制输出阅读文本：代码保留原始空白，表格用制表符分列、换行分行，公式按整体选择并输出 LaTeX。排版生成的断字号不会被复制。改字号、栏宽保留选择；文件语义内容变化后清除选择（仅元数据变化或读取失败则保留）。拖选到正文视口上下边缘可自动滚动。第一版不提供 Markdown 源码复制、双击选词和完整键盘选择导航。
-
-设置窗口以半透明浮层居中显示，可选择和排序样式表、调整字号、栏宽、对齐与英语断字；点击外部或按 Escape 关闭。UI 更改自动保存，System 恢复跟随系统主题，Reset defaults 恢复所有默认值。
-
-配置使用 `settings.toml`，通过设置窗口的 Open settings.toml 打开。Linux 默认路径为 `~/.config/markview/settings.toml`（支持 `XDG_CONFIG_HOME`）；macOS 和 Windows 路径见 [架构文档](docs/architecture.md)。首次启动自动创建文件；存在旧版 `settings.json` 时迁移有效设置，并保留原文件。
-
-```toml
-version = 1
-# 省略 style 即跟随系统；左侧优先，空数组固定使用亮色基础
-style = ["dark"]
-font_size = 18.0 # 10–40 逻辑像素
-width = 760.0 # 240–1600 逻辑像素
-justify = true
-hyphenate = true
-```
-
-保存 TOML 后实时应用，无需重启，兼容编辑器的原子替换保存。解析失败或数值越界时保留当前设置，并在状态栏提示；修复文件后自动恢复。UI 保存保留注释和额外字段，同期外部修改与 UI 修改按字段合并，同一字段以待保存的 UI 值为准。
-
-设置优先级为默认值 → 用户配置 → 显式 CLI 参数；UI 调整某字段后解除该字段的 CLI 覆盖，Reset defaults 解除全部覆盖。浮层不改变正文栏宽。`--render`、`--bench`、`--smoke-test` 不读取个人配置，确保结果可复现。
-
-样式表由用户编写，使用 `.mvss.toml` 后缀；`markview ss install FILE.mvss.toml` 安装到本用户的样式目录。设置中的 Styles… 或 `Ctrl+T` 打开列表，保存文件后实时应用。完整格式、字体回退与安装行为见 [样式表文档](docs/stylesheets.md)。
-
-## 实现与边界
-
-图片样式通过 MVSS 的 `img`、`img.caption`、`img.placeholder` 控制。独立单图默认显示 caption，优先使用 title，否则使用 alt；`[img.caption] source = "none"` 可关闭。图注支持字体、颜色、对齐、行距及上下间距，图片支持背景、边框和内边距。详见 [图片与 caption 配置](docs/stylesheets.md#图片与-caption)。
-
-采用三个 crate 的 Cargo workspace：`markview` 管理桌面应用与平台服务，`markview-core` 管理文档、阅读文本和排版，`markview-render` 管理 GPU 渲染。根目录的运行命令不变。
-
-`Comrak AST → Document → ReaderSnapshot（文档 + LayoutSnapshot）→ 可见区绘制 → wgpu`
-
-模块职责、版本模型和选择接口见 [docs/architecture.md](docs/architecture.md)。
-
-- `document` 保留语义结构和源码范围，缓存身份包括解析后的引用内容，避免引用定义变化时复用错误布局。`html` 只把与 Markdown 同义的简单标签映射到同一套语义，注释丢弃、属性忽略，未知标签保留源码。
-- `layout` 使用 Parley/Fontique 塑形，ICU4X 提供合法断点，hypher 提供英语断字。`linebreak` 实现整段动态规划、伸缩胶、断字惩罚、相邻行松紧等级与强制换行。断行后重新塑形并校验宽度。正文默认两端对齐、末行左对齐；极松的行允许保留参差行尾，避免无限拉大空隙。排版同时按行记录链接片段矩形，供悬停与点击命中测试，跨行链接不会把中间的正文一并框住。
-- 正常段落使用优化断行。每段最多评估 250,000 次候选连接，超预算或无可行方案时按合法断点贪心降级；诊断工具报告降级数。不可拆分对象保持原尺寸并局部滚动。
-- `math` 直接使用 RaTeX DisplayList，缓存最多 256 个公式结果。正文与数学共用 GPU 字形缓存。
-- `image` 保存图片语义、解码后的像素和按来源索引的元数据。加载在独立线程完成：单张最多 32 MiB、1600 万像素，网络 15 s 超时且重定向只走 http(s)，`--offline` 拒绝网络来源，解码线程捕获 panic 并转为错误。像素到达后复用同一内容版本重新布局，只失效受影响的块，选择与阅读位置不变。
-- `render` 使用 Swash 栅格化字形，tiny-skia 栅格化特殊数学路径，固定 4 MiB R8 图集，按实际 DPI 缓存。字形使用四档水平亚像素相位，基线对齐物理像素，位图逐像素显示，避免小数位置上的二次滤波导致文字模糊。大路径分块处理。图集满时清空并重建当前可见帧，不使用已失效的 UV；单个可见帧仍超过图集上限时报告错误。图片按来源和版本缓存为 sRGB 纹理并线性采样，可见 SVG 的实际显示尺寸回传给加载器用于按需重绘；CPU 像素与 GPU 纹理各有 256 MiB 预算。
-- `watch` 监控父目录，30 ms 静默防抖、100 ms 最长等待；另有 500 ms 元数据轮询补偿。独立的 `worker` 只保存最新待处理请求，主线程只接收最新版本结果；字号与栏宽调整复用已解析文档，不重新读文件。布局缓存最多 256 个块 / 100,000 条绘制指令，仅保留当前文档的缓存。
-- `app` 在选择、控件或指针下的链接变化时重绘：悬停显示目标地址并改为手型光标，点击通过 `open` 调用系统默认程序，只放行 http、https、mailto 三种 scheme。
-- 静止阅读时事件循环等待事件，不持续绘制。字形资源、布局快照与临时缓冲仍可能随文档复杂度增长；100 MB 目标适用于声明的普通文档基准，不是任意输入的硬上限。
-
-## 测试、截图与基准
+Use the built-in light and dark styles, or install a `.mvss.toml` stylesheet:
 
 ```sh
-cargo test --workspace --all-targets --locked
-cargo fmt --all --check
-cargo clippy --workspace --locked --all-targets -- -D warnings
-cargo build --release --locked
-
-# 设置面板与选择高亮的真实 GPU 回归截图
-cargo test --locked settings_and_selection_frame -- --ignored
-
-# 解码后的位图与 SVG 确实进入 GPU 帧的真实管线回归
-cargo test --locked gpu_frame_draws_decoded_images -- --ignored
-
-# 使用真实 wgpu 管线离屏绘制，输出 PNG
-target/release/markview --render examples/welcome.md --output artifacts/light.png
-target/release/markview --render examples/welcome.md --dark --scroll 780 --output artifacts/dark.png
-target/release/markview --render examples/welcome.md --scale 2 --width 1600 --height 1200 --output artifacts/2x.png
-target/release/markview --render examples/images.md --width 800 --height 1800 --output artifacts/images.png
-
-# 原生窗口首帧冒烟测试；首次文档帧完成后自动退出
-target/release/markview --smoke-test examples/welcome.md --output artifacts/window.png
-
-# 实际桌面上的原子保存与连续写入测试（仅修改临时文件，随后关闭测试窗口）
-python3 scripts/smoke_watch.py target/release/markview
-
-# 固定的 10 KiB 文档，各测 100 次全文重排和缓存刷新
-target/release/markview --bench tests/fixtures/ordinary-10k.md --output artifacts/ordinary-bench.json
-target/release/markview --bench tests/fixtures/math-10k.md --output artifacts/math-bench.json
+markview ss install paper.mvss.toml
+markview document.md --style paper
 ```
 
-`--render` / `--bench` 的 width、height 指物理像素，`--scale` 指像素与逻辑单位之比。窗口模式使用系统 DPI，width、height 指逻辑窗口尺寸。`--greedy` 供同字体、同栏宽的断行对照；`--left`、`--no-hyphens`、`--font-size`、`--column` 可调整排版；`--offline` 禁用网络图片。
+The [stylesheet guide](docs/stylesheets.md) explains the format and its supported roles.
 
-窗口启动时在终端打印实际 DPR、物理帧缓冲尺寸和逻辑窗口尺寸；跨屏缩放变化也会记录。无需手动把 DPR 固定为 2，系统的分数缩放比例同样会用于字形栅格化。
+## Development
 
-基准明确区分初始化、首次文档打开、缓存已热的全文重排和块缓存刷新。计时包括读取、解析、全文几何布局、首屏字形准备及 **GPU 完成**；离屏结果不包括窗口系统与合成器呈现等待。首次打开单独记录，不把重复打开 P95 当作冷缓存首开 P95。操作系统文件缓存未人为清空。
+The project is a Rust workspace. Start with the [development guide](docs/development.md); the [architecture](docs/architecture.md) explains the boundaries that changes should preserve.
 
-内存读取 Linux `VmRSS` / `VmHWM`；另列图集、顶点缓冲及离屏目标的资源容量，不用应用堆分配替代 RSS，也不把可追踪的 GPU 字节数视为完整驱动显存。
-
-本次实测与环境说明见 [docs/performance.md](docs/performance.md)。固定语料可以通过 `python3 scripts/generate_fixtures.py` 重建。详细测试覆盖语法、源码范围、引用缓存、最优断行穷举对照、中文禁则、基线、滚动锚点、链接命中区域、原子保存及版本淘汰。
-
-## 平台状态
-
-Linux 已在 Wayland + Intel Vulkan 和 Mesa llvmpipe 离屏后端验证。链接打开依赖系统默认程序（Linux 的 xdg-open / gio open 等、macOS 的 open、Windows 的 start），未安装启动器时状态栏会报告错误。Windows x64 (`x86_64-pc-windows-gnu`) 与 macOS ARM64 (`aarch64-apple-darwin`) 的 `cargo check --locked --all-targets` 交叉检查已通过。CI 另配置了三个原生 runner 上的编译、测试及静态检查，但尚未运行远程 CI，也尚未在 Windows/macOS 实机验证；交叉检查不等同于链接可发布二进制或实机交付。
-
-依赖固定在 `Cargo.lock`。数学字体和依赖许可见 [THIRD_PARTY.md](THIRD_PARTY.md)。
+Markview is MIT-licensed. Third-party notices are in [THIRD_PARTY.md](THIRD_PARTY.md).

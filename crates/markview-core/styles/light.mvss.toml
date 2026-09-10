@@ -3,11 +3,11 @@ version = 1
 
 [[fontdef]]
 id = "serif"
-lookfor = ["Georgia", "Times New Roman", "serif"]
+lookfor = ["Georgia", "Times New Roman", "Noto Serif", "DejaVu Serif", "Liberation Serif", "Linux Libertine", "serif"]
 
 [[fontdef]]
 id = "sans-serif"
-lookfor = ["Helvetica", "Arial", "sans-serif"]
+lookfor = ["Helvetica", "Arial", "Noto Sans", "DejaVu Sans", "Liberation Sans", "Ubuntu", "sans-serif"]
 
 [[fontdef]]
 id = "serif[cjk]"

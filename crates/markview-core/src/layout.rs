@@ -440,8 +440,21 @@ impl LayoutEngine {
 							p.math.insert(start, m);
 							p.text.push('\u{fffc}');
 						}
-						Err(_) => {
+						Err(error) => {
 							p.text.push_str(latex);
+							let show_error = self
+								.shaper
+								.stylesheet
+								.rule(Role::MathError)
+								.show
+								.unwrap_or(true);
+							if show_error {
+								let diagnostic =
+									format!(" [Math error: {error}]");
+								p.reading.push_str(&diagnostic);
+								p.text.push_str(&diagnostic);
+								style.math_error = true;
+							}
 							style.code = true;
 							out.math_errors += 1;
 						}
@@ -2067,6 +2080,41 @@ mod tests {
 			},
 		);
 		assert_eq!(c.reused, 0);
+	}
+	#[test]
+	fn math_errors_are_visible_and_copyable_when_enabled() {
+		let doc = document::parse("$$S_2^\\*$$");
+		let mut engine = LayoutEngine::new();
+		let shown = engine.layout(&doc, &LayoutOptions::default());
+		let selected = shown.select_all(1).unwrap();
+		assert_eq!(shown.math_errors, 1);
+		assert!(
+			shown
+				.extract_text(selected, 1)
+				.contains("Undefined control sequence: \\*")
+		);
+
+		let mut stylesheet =
+			(*crate::style::Stylesheet::bundled(false)).clone();
+		stylesheet.merge(
+			&crate::style::Stylesheet::parse(
+				"format_version=1\nversion=1\n[math.error]\nshow=false",
+			)
+			.unwrap(),
+		);
+		let hidden = engine.layout(
+			&doc,
+			&LayoutOptions {
+				stylesheet: Arc::new(stylesheet),
+				..Default::default()
+			},
+		);
+		assert_eq!(hidden.math_errors, 1);
+		assert!(
+			!hidden
+				.extract_text(hidden.select_all(1).unwrap(), 1)
+				.contains("Undefined control sequence")
+		);
 	}
 	#[test]
 	fn cjk_boundaries_and_hyphenation() {

@@ -42,6 +42,7 @@ pub enum Role {
 	TaskMarker,
 	Hr,
 	Math,
+	MathError,
 	Selection,
 	Scrollbar,
 	Ui,
@@ -84,6 +85,7 @@ impl Role {
 		(Self::TaskMarker, "task_marker"),
 		(Self::Hr, "hr"),
 		(Self::Math, "math"),
+		(Self::MathError, "math.error"),
 		(Self::Selection, "selection"),
 		(Self::Scrollbar, "scrollbar"),
 		(Self::Ui, "ui"),
@@ -326,6 +328,7 @@ impl From<TextAlign> for crate::document::CellAlign {
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
+	pub show: Option<bool>,
 	pub source: Option<CaptionSource>,
 	pub align: Option<TextAlign>,
 	pub color: Option<Color>,
@@ -364,6 +367,7 @@ impl Rule {
 	pub fn overlay(&mut self, higher: &Self) {
 		macro_rules! merge { ($($f:ident),*) => { $(if higher.$f.is_some(){self.$f=higher.$f.clone();})* }; }
 		merge!(
+			show,
 			source,
 			align,
 			color,
@@ -808,7 +812,7 @@ impl Stylesheet {
 		let mut s = String::new();
 		for &(role, _) in Role::ALL {
 			let r = self.rule(role);
-			s.push_str(&format!("{:?}{:?}", r.source, r.align));
+			s.push_str(&format!("{:?}{:?}{:?}", r.source, r.align, r.show));
 			s.push_str(&format!(
 				"{role:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
 				r.font,
@@ -877,6 +881,7 @@ impl Stylesheet {
 			s.strike.then_some(Role::Del),
 			s.superscript.then_some(Role::Sup),
 			s.code.then_some(Role::Code),
+			s.math_error.then_some(Role::MathError),
 		]
 		.into_iter()
 		.flatten()
@@ -963,6 +968,16 @@ fn validate_field(role: Role, key: &str) -> Result<()> {
 		)
 	} else if role == Math {
 		matches!(key, "color" | "size")
+	} else if role == MathError {
+		matches!(
+			key,
+			"show"
+				| "color" | "font"
+				| "weight" | "size"
+				| "decoration"
+				| "background"
+				| "line_height"
+		)
 	} else {
 		match key {
 			"color" | "font" | "weight" | "decoration" => true,

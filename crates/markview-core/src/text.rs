@@ -968,7 +968,7 @@ mod tests {
 		let node = &snapshot.blocks[0].layout.text[0];
 		assert_eq!(
 			snapshot.extract_text(snapshot.select_all(1).unwrap(), 1),
-			"x^2 \\notacommand{x} internationalization representation"
+			"x^2 \\notacommand{x} [Math error: ParseError at position 0: Undefined control sequence: \\notacommand] internationalization representation"
 		);
 		assert!(node.clusters.iter().any(|c| c.range == (0..3)));
 		for cluster in &node.clusters {

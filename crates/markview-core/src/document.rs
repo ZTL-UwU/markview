@@ -18,6 +18,7 @@ pub struct TextStyle {
 	pub italic: bool,
 	pub strike: bool,
 	pub code: bool,
+	pub math_error: bool,
 	pub superscript: bool,
 	pub link: Option<String>,
 	pub color: Option<crate::style::Color>,

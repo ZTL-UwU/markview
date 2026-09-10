@@ -104,23 +104,18 @@ struct Prepared {
 	math: BTreeMap<usize, Arc<MathBox>>,
 }
 
+type HighlightLines = Vec<Vec<(Range<usize>, Option<crate::style::Color>)>>;
+type HighlightResult = Arc<HighlightLines>;
+type HighlightMessage = (u64, HighlightResult);
+
 pub struct LayoutEngine {
 	images: crate::image::ImageSnapshot,
 	shaper: TextShaper,
 	math: MathEngine,
 	cache: HashMap<CacheKey, Arc<BlockLayout>>,
-	highlight_cache: HashMap<
-		u64,
-		Arc<Vec<Vec<(Range<usize>, Option<crate::style::Color>)>>>,
-	>,
-	highlight_tx: mpsc::Sender<(
-		u64,
-		Arc<Vec<Vec<(Range<usize>, Option<crate::style::Color>)>>>,
-	)>,
-	highlight_rx: mpsc::Receiver<(
-		u64,
-		Arc<Vec<Vec<(Range<usize>, Option<crate::style::Color>)>>>,
-	)>,
+	highlight_cache: HashMap<u64, HighlightResult>,
+	highlight_tx: mpsc::Sender<HighlightMessage>,
+	highlight_rx: mpsc::Receiver<HighlightMessage>,
 	highlight_inflight: HashSet<u64>,
 	highlight_generation: u64,
 }

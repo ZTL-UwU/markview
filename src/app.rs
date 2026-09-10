@@ -88,6 +88,7 @@ struct App {
 	save_at: Option<Instant>,
 	clipboard: crate::platform::Clipboard,
 	status: String,
+	status_until: Option<Instant>,
 	error: bool,
 	dialog_open: bool,
 	reflow_at: Option<Instant>,
@@ -212,6 +213,7 @@ impl App {
 			save_at: None,
 			clipboard: Default::default(),
 			status: String::new(),
+			status_until: None,
 			error: false,
 			dialog_open: false,
 			reflow_at: None,
@@ -323,6 +325,7 @@ impl App {
 			self.session.version = self.request_serial;
 			self.session.follow_update |= follow;
 			self.error = false;
+			self.status_until = None;
 			self.status = "Updating…".into();
 			self.session.requested_options = Some(self.options());
 			self.worker.submit(Request {
@@ -404,6 +407,7 @@ impl App {
 		self.interaction.clear_selection();
 		self.error = false;
 		self.status.clear();
+		self.status_until = None;
 		if self.session.document.is_none()
 			|| self.session.requested_options.as_ref() != Some(&self.options())
 		{
@@ -431,6 +435,7 @@ impl App {
 		self.interaction.clear_selection();
 		self.error = false;
 		self.status.clear();
+		self.status_until = None;
 		if self.tabs.is_empty() {
 			self.active_tab = 0;
 			self.session = ReaderSession::default();
@@ -578,11 +583,7 @@ impl App {
 		}
 	}
 	fn open_link(&mut self, url: &str) {
-		if !document::openable_link(url) {
-			self.error = true;
-			self.status =
-				format!("Not opened: {url} — only http, https and mailto");
-		} else {
+		if document::openable_link(url) {
 			self.error = false;
 			self.status = match open::that_detached(url) {
 				Ok(()) => format!("Opened {url}"),
@@ -591,8 +592,64 @@ impl App {
 					format!("Cannot open {url}: {error}")
 				}
 			};
+			self.status_until = Some(Instant::now() + Duration::from_secs(4));
+		} else if let Some(path) = self.local_link_path(url) {
+			if path
+				.extension()
+				.is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+			{
+				self.open(path);
+				return;
+			}
+			self.error = false;
+			self.status = match open::that_detached(&path) {
+				Ok(()) => format!("Opened {}", path.display()),
+				Err(error) => {
+					self.error = true;
+					format!("Cannot open {}: {error}", path.display())
+				}
+			};
+			self.status_until = Some(Instant::now() + Duration::from_secs(4));
+		} else {
+			self.error = true;
+			self.status = format!("Not opened: {url}");
+			self.status_until = Some(Instant::now() + Duration::from_secs(4));
 		}
 		self.redraw();
+	}
+
+	fn local_link_path(&self, link: &str) -> Option<PathBuf> {
+		let path = if let Ok(url) = url::Url::parse(link) {
+			if url.scheme().eq_ignore_ascii_case("file") {
+				url.to_file_path().ok()?
+			} else {
+				return None;
+			}
+		} else {
+			if link.contains("://") || link.starts_with('#') {
+				return None;
+			}
+			let link = link.split(['#', '?']).next()?;
+			if link.is_empty() {
+				return None;
+			}
+			PathBuf::from(
+				percent_encoding::percent_decode_str(link)
+					.decode_utf8_lossy()
+					.into_owned(),
+			)
+		};
+		let path = if path.is_absolute() {
+			path
+		} else {
+			self.session
+				.path
+				.as_deref()
+				.and_then(std::path::Path::parent)
+				.unwrap_or_else(|| std::path::Path::new("."))
+				.join(path)
+		};
+		Some(std::fs::canonicalize(&path).unwrap_or(path))
 	}
 	fn horizontal_by(&mut self, dx: f32) {
 		let (cx, cy) = self.view_geometry().document_point(
@@ -1246,6 +1303,12 @@ impl ApplicationHandler<Event> for App {
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
 		let now = Instant::now();
 		self.release_inactive_tabs(now);
+		if self.status_until.is_some_and(|until| until <= now) {
+			self.status_until = None;
+			self.status.clear();
+			self.error = false;
+			self.redraw();
+		}
 		if self.save_at.is_some_and(|d| d <= now) {
 			self.flush_settings();
 			self.redraw();
@@ -1284,6 +1347,7 @@ impl ApplicationHandler<Event> for App {
 			.reflow_at
 			.into_iter()
 			.chain(self.retry_at)
+			.chain(self.status_until)
 			.chain(self.save_at)
 			.chain(self.interaction.drag_at)
 			.chain(

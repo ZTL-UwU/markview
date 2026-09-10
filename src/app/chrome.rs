@@ -74,7 +74,11 @@ impl App {
 				)
 			});
 		}
-		let warning = if self.error {
+		let warning = if self.error
+			&& !self
+				.status_until
+				.is_some_and(|until| until > Instant::now())
+		{
 			Some(self.status.as_str())
 		} else {
 			self.style_warning
@@ -86,11 +90,18 @@ impl App {
 			self.session.counts,
 			self.interaction.selection_counts.map(|(_, counts)| counts),
 			warning,
-			self.interaction
-				.hover_image
-				.as_deref()
-				.or(self.interaction.hover.as_deref())
-				.unwrap_or(&self.status),
+			if self
+				.status_until
+				.is_some_and(|until| until > Instant::now())
+			{
+				&self.status
+			} else {
+				self.interaction
+					.hover_image
+					.as_deref()
+					.or(self.interaction.hover.as_deref())
+					.unwrap_or("")
+			},
 			width,
 			height,
 		));

@@ -53,7 +53,7 @@ Painting is consequently a projection of an already-decided layout. Scrolling an
 
 The application owns focus, hover, selection gestures, scrolling, scrollbar grabs, and modal settings input. Core owns hit testing and selection geometry so those operations remain testable without a window or GPU.
 
-Links are activated only on a matching, non-drag release and only for `http`, `https`, and `mailto`. Markdown is never opened for writing. Clipboard output is reading text: code preserves meaningful whitespace, tables use tabs, formulas contribute LaTeX, and Markdown markers are omitted.
+Links are activated only on a matching, non-drag release. Web and mail links use the system handler; local files use the system default application, while local `.md` links open as reader tabs. Markdown is never opened for writing. Clipboard output is reading text: code preserves meaningful whitespace, tables use tabs, formulas contribute LaTeX, and Markdown markers are omitted.
 
 Settings are layered as defaults, user TOML, then explicit command-line overrides. Interactive changes may persist user preferences; render, benchmark, and smoke modes intentionally avoid personal configuration so their output is reproducible. Stylesheets are parsed and merged transactionally: an invalid update leaves the last effective stylesheet in place.
 

@@ -27,7 +27,7 @@ sudo apt-get install libfontconfig1-dev libxkbcommon-dev libwayland-dev fonts-no
 - `Ctrl++` / `Ctrl+-` changes the type size. `Ctrl+[` / `Ctrl+]` changes the reading column.
 - Scroll with the wheel, arrow keys, Page Up/Down, Space, Home, End, or the scrollbar.
 - Drag to select and use `Ctrl+C` to copy. `Ctrl+A` selects the document.
-- Click a link to open `http`, `https`, or `mailto` links in the system browser.
+- Click a link to open web, mail, and local file links with the operating system's default handler. Links to other `.md` files open in a new tab.
 - Hover over a wide code block, table, or formula to scroll it horizontally.
 
 macOS uses Command in place of Ctrl. The default reading column is 760 logical pixels and the default text size is 18 logical pixels.
@@ -36,7 +36,7 @@ macOS uses Command in place of Ctrl. The default reading column is 760 logical p
 
 Markview supports CommonMark headings, paragraphs, quotes, lists, emphasis, code blocks, GFM tables and task lists, footnotes, GitHub-style alerts, links, raw HTML equivalents, inline and display math, and local or remote images. Images can be PNG, JPEG, GIF, WebP, BMP, ICO, or SVG; animated images show their first frame.
 
-The reader is intentionally read-only. It does not edit or save Markdown, provide a table of contents or search, follow relative links or anchors, print, or provide a multi-document workspace. See the [documentation map](docs/README.md) for behavior and implementation boundaries.
+The reader is intentionally read-only. It does not edit or save Markdown, provide a table of contents or search, follow anchors, print, or provide a multi-document workspace beyond tabs opened from Markdown links. See the [documentation map](docs/README.md) for behavior and implementation boundaries.
 
 ## Customize
 

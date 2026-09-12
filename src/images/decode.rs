@@ -97,7 +97,7 @@ pub(super) fn decode(
 		);
 		// tiny-skia stores premultiplied alpha; the image pipeline uses straight alpha.
 		let mut rgba = pixmap.take();
-		for p in rgba.chunks_exact_mut(4) {
+		for p in rgba.as_chunks_mut::<4>().0 {
 			if p[3] > 0 {
 				for i in 0..3 {
 					p[i] = ((u32::from(p[i]) * 255 + u32::from(p[3]) / 2)

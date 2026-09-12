@@ -48,7 +48,8 @@ impl App {
 	/// Hover state follows scrolling and reflow, not only pointer motion.
 	pub(super) fn refresh_hover(&mut self) {
 		let holding = self.interaction.pointer_down.is_some()
-			|| self.interaction.scrollbar.is_some();
+			|| self.interaction.scrollbar.is_some()
+			|| self.tab_strip.drag.is_some();
 		let idle = !self.interaction.panel_open && !holding;
 		let hover = if idle {
 			self.link_at(self.interaction.cursor.0, self.interaction.cursor.1)
@@ -67,7 +68,9 @@ impl App {
 		} else {
 			None
 		};
-		let cursor = if self.interaction.scrollbar.is_some() {
+		let cursor = if self.tab_strip.drag.is_some_and(|d| d.moving) {
+			CursorIcon::Grabbing
+		} else if self.interaction.scrollbar.is_some() {
 			CursorIcon::Default
 		} else if self.interaction.pointer_down.is_some() {
 			if self.text_under_cursor() {
@@ -117,7 +120,7 @@ impl App {
 			self.redraw();
 		}
 	}
-	pub(super) fn open_link(&mut self, url: &str) {
+	pub(super) fn open_link(&mut self, url: &str, background: bool) {
 		if document::openable_link(url) {
 			self.error = false;
 			self.status = match open::that_detached(url) {
@@ -133,7 +136,13 @@ impl App {
 				.extension()
 				.is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
 			{
-				self.open(path);
+				if background {
+					if self.readers.open_background(path) {
+						self.redraw();
+					}
+				} else {
+					self.open(path);
+				}
 				return;
 			}
 			self.error = false;

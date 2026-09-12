@@ -1873,6 +1873,7 @@ dependencies = [
  "sys-locale",
  "tempfile",
  "toml_edit",
+ "unicode-segmentation",
  "url",
  "wgpu",
  "winit",

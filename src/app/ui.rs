@@ -10,6 +10,8 @@ impl App {
 			session: &self.readers.session,
 			tabs: self.readers.entries(),
 			active_tab: self.readers.active(),
+			tab_strip: &self.tab_strip,
+			tab_widths: &self.tab_metrics.widths,
 			settings: &self.preferences.values,
 			interaction: &self.interaction,
 			style_entries: &self.preferences.style_entries,
@@ -31,6 +33,7 @@ impl App {
 		self.chrome().buttons()
 	}
 	pub(super) fn overlay(&mut self) -> Vec<Draw> {
+		self.normalize_tab_scroll();
 		let session = &self.readers.session;
 		let selection = self.interaction.selection.filter(|s| {
 			!s.is_empty()
@@ -51,24 +54,8 @@ impl App {
 		}
 		self.chrome().overlay()
 	}
-	pub(super) fn tab_at_cursor(&mut self) -> Option<usize> {
-		let (x, y) = self.interaction.cursor;
-		self.chrome()
-			.tab_bar()
-			.tab_rects()
-			.into_iter()
-			.find(|(rect, _)| rect.contains(x, y))
-			.map(|(_, i)| i)
-	}
-	pub(super) fn tab_close_at_cursor(&mut self) -> Option<usize> {
-		let (x, y) = self.interaction.cursor;
-		self.chrome()
-			.tab_bar()
-			.tab_rects()
-			.into_iter()
-			.find_map(|(rect, i)| {
-				(rect.contains(x, y) && x >= rect.x + rect.w - 24.0)
-					.then_some(i)
-			})
+	pub(super) fn tab_layout(&mut self) -> super::tab_strip::TabLayout {
+		self.tab_metrics.sync(&mut self.ui, self.readers.entries());
+		self.chrome().tab_bar().layout()
 	}
 }

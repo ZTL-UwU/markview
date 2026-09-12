@@ -26,6 +26,7 @@ The render and benchmark modes use the GPU offscreen and do not load personal se
 
 ```sh
 cargo test --workspace --locked settings_and_selection_frame -- --ignored
+cargo test --workspace --locked tab_strip_frames_clip_overflow_at_fractional_dpi -- --ignored
 cargo test --workspace --locked gpu_frame_draws_decoded_images -- --ignored
 ```
 

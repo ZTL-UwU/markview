@@ -1,48 +1,57 @@
 use super::controls::toolbar_right_edge;
+use crate::app::tab_strip::{TabLayout, TabStrip};
 use crate::layout::{Draw, Paint, Rect, TextShaper};
 use crate::state::ReaderTab;
 use markview_core::style::{ColorField as C, Role};
+use unicode_segmentation::UnicodeSegmentation;
 pub(in crate::app) struct TabBar<'a> {
 	pub(super) ui: &'a mut TextShaper,
+	pub(super) strip: &'a TabStrip,
+	pub(super) widths: &'a [(f32, f32)],
 	pub(super) tabs: &'a [ReaderTab],
 	pub(super) active_tab: usize,
 	pub(super) cursor: (f32, f32),
 	pub(super) width: f32,
 }
 impl TabBar<'_> {
-	pub(in crate::app) fn tab_rects(&mut self) -> Vec<(Rect, usize)> {
-		let width = self.width;
-		let right = toolbar_right_edge(self.ui, width);
-		let mut x = 10.0;
-		let mut out = Vec::new();
-		for (index, tab) in self.tabs.iter().enumerate() {
-			let name = tab
-				.path
-				.file_name()
-				.unwrap_or(tab.path.as_os_str())
-				.to_string_lossy();
-			let label_width = self.ui.text_width(&name, 12.0);
-			let w = (label_width + 34.0).clamp(92.0, 240.0);
-			if x + w > right - 4.0 {
-				break;
-			}
-			out.push((
-				Rect {
-					x,
-					y: 4.0,
-					w,
-					h: 32.0,
-				},
-				index,
-			));
-			x += w + 2.0;
-		}
-		out
+	pub(in crate::app) fn layout(&mut self) -> TabLayout {
+		let right = toolbar_right_edge(self.ui, self.width) - 4.0;
+		TabLayout::new(
+			Rect {
+				x: 10.0,
+				y: 4.0,
+				w: (right - 10.0).max(0.0),
+				h: 32.0,
+			},
+			self.widths,
+			self.strip.scroll,
+		)
 	}
 
 	pub(super) fn draw_tabs(&mut self) -> Vec<Draw> {
+		let layout = self.layout();
+		let old = self.ui.appearance.clone();
+		self.ui.appearance = crate::app::tab_metrics::tab_appearance(self.ui);
 		let mut out = Vec::new();
-		for (rect, index) in self.tab_rects() {
+		let dragged = self.strip.drag.filter(|d| d.moving);
+		let mut indices: Vec<_> = (0..self.tabs.len())
+			.filter(|i| dragged.is_none_or(|d| d.index != *i))
+			.collect();
+		if let Some(drag) = dragged {
+			indices.push(drag.index);
+		}
+		for index in indices {
+			let mut rect = layout.rects[index];
+			if let Some(drag) = dragged.filter(|d| d.index == index) {
+				rect.x = (self.cursor.0 - drag.grab).clamp(
+					layout.viewport.x,
+					(layout.viewport.x + layout.viewport.w - rect.w)
+						.max(layout.viewport.x),
+				);
+			}
+			if rect.intersect(layout.viewport).is_none() {
+				continue;
+			}
 			let active = index == self.active_tab;
 			out.push(Draw::Box {
 				rect,
@@ -64,7 +73,7 @@ impl TabBar<'_> {
 				.file_name()
 				.unwrap_or(self.tabs[index].path.as_os_str())
 				.to_string_lossy();
-			let name = self.ui.fit(&name, 12.0, rect.w - 26.0);
+			let name = fit_label(self.ui, &name, rect.w - 36.0);
 			out.extend(self.ui.label(
 				&name,
 				12.0,
@@ -83,6 +92,52 @@ impl TabBar<'_> {
 				Paint::Styled(Role::Toolbar, C::Muted),
 			));
 		}
-		out
+		self.ui.appearance = old;
+		let mut draws = vec![Draw::Clipped {
+			rect: layout.viewport,
+			draws: out,
+		}];
+		if layout.max_scroll > 0.0 {
+			let w = layout.viewport.w * layout.viewport.w
+				/ (layout.viewport.w + layout.max_scroll);
+			draws.push(Draw::Rect(
+				Rect {
+					x: layout.viewport.x
+						+ (layout.viewport.w - w) * layout.scroll
+							/ layout.max_scroll,
+					y: 37.0,
+					w,
+					h: 2.0,
+				},
+				Paint::Styled(Role::Scrollbar, C::Thumb),
+			));
+		}
+		draws
 	}
 }
+
+// At minimum width show the first two graphemes without spending space on an ellipsis.
+fn fit_label(ui: &mut TextShaper, name: &str, width: f32) -> String {
+	if ui.text_width(name, 12.0) <= width {
+		return name.to_owned();
+	}
+	let chars: Vec<_> = name.graphemes(true).collect();
+	let mut lo = 2.min(chars.len());
+	let mut hi = chars.len();
+	if ui.text_width(&format!("{}…", chars[..lo].concat()), 12.0) > width {
+		return chars[..lo].concat();
+	}
+	while lo < hi {
+		let mid = (lo + hi).div_ceil(2);
+		if ui.text_width(&format!("{}…", chars[..mid].concat()), 12.0) <= width
+		{
+			lo = mid;
+		} else {
+			hi = mid - 1;
+		}
+	}
+	format!("{}…", chars[..lo].concat())
+}
+
+#[cfg(test)]
+mod tests;

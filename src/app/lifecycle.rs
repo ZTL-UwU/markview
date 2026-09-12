@@ -175,6 +175,7 @@ impl ApplicationHandler<Event> for App {
 	}
 	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
 		let now = Instant::now();
+		self.auto_scroll_tabs(now);
 		self.readers.release_inactive(now);
 		if self.status_until.is_some_and(|until| until <= now) {
 			self.status_until = None;
@@ -224,6 +225,7 @@ impl ApplicationHandler<Event> for App {
 			.chain(self.status_until)
 			.chain(self.preferences.save_deadline())
 			.chain(self.interaction.drag_at)
+			.chain(self.tab_strip.scroll_at)
 			.chain(self.readers.release_deadline())
 			.chain(
 				(self.args.mode == Mode::Smoke)

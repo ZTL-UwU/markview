@@ -72,6 +72,7 @@ components; helpers receive borrowed inputs instead of an application-wide conte
 | --- | --- | --- |
 | Application `Tabs` | Active session, inactive tabs, request serial | Tab transitions return to the window adapter for watching, redraws and requests. |
 | Application `Preferences` | Effective settings, persistence store, stylesheet catalog, save deadline | Stylesheet validation finishes before the effective sheet and UI appearance change. The application applies successful changes to the renderer. |
+| Application tab strip | Scroll offset, drag gesture and cached filename widths | Pure strip geometry drives both painting and hit testing. Reordering moves sessions without submitting layout requests; clipped draw groups contain overflow. |
 | Application chrome | Borrowed display state | Controls, footer, tabs and styles produce geometry without window, worker or configuration I/O access. Selection-count caching remains in the application adapter. |
 | Image scheduler | Versioned entries, jobs and published snapshot | Source reads, bounded decoding and allocation-aware pixel eviction are separate modules. |
 | `LayoutEngine` | Document block cache, shaping/math resources, highlight owner | Snapshot assembly and invalidation stay at this entry point; immutable stylesheet identity is computed once per document pass. |
@@ -92,5 +93,5 @@ concrete types and borrowed resources, with no dispatch registry or additional
 synchronization. A source-file target of about 500 production lines is a review
 heuristic, not a reason to split an otherwise cohesive algorithm. Tests live next
 to their owning modules in separate sources when they obscure production code.
-`scene.rs` remains a small exception at about 515 lines: it keeps the shared
+`scene.rs` remains a small exception at about 530 lines: it keeps the shared
 immutable drawing, viewport and scrollbar geometry vocabulary together.

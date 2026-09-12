@@ -20,6 +20,7 @@ impl App {
 		match event {
 			WindowEvent::CloseRequested => event_loop.exit(),
 			WindowEvent::Resized(PhysicalSize { width, height }) => {
+				self.tab_strip.reveal_active = true;
 				if let Some(r) = &mut self.renderer {
 					r.resize(width, height);
 				}
@@ -30,6 +31,7 @@ impl App {
 				}
 			}
 			WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+				self.tab_strip.reveal_active = true;
 				eprintln!("Display scale (DPR) changed: {scale_factor:.3}");
 				if let Some(r) = &mut self.renderer {
 					r.clear_raster_cache();
@@ -50,6 +52,7 @@ impl App {
 				let old = self.interaction.cursor;
 				self.interaction.cursor =
 					(position.x as f32 / scale, position.y as f32 / scale);
+				self.move_tab_drag();
 				self.drag_scrollbar();
 				self.update_drag();
 				self.refresh_hover();
@@ -79,11 +82,14 @@ impl App {
 				button: MouseButton::Middle,
 				state: ElementState::Pressed,
 				..
-			} => {
-				if !self.interaction.panel_open
-					&& let Some(index) = self.tab_at_cursor()
-				{
+			} if !self.interaction.panel_open => {
+				if let Some(index) = self.tab_at_cursor() {
 					self.action(Command::CloseTab(index));
+				} else if let Some(link) = self.link_at(
+					self.interaction.cursor.0,
+					self.interaction.cursor.1,
+				) {
+					self.open_link(&link, true);
 				}
 			}
 			WindowEvent::MouseInput {
@@ -91,6 +97,7 @@ impl App {
 				state: ElementState::Pressed,
 				..
 			} => {
+				self.tab_strip.cancel_drag();
 				// A new press always ends a drag left over from a release the
 				// platform swallowed outside the window.
 				self.interaction.scrollbar = None;
@@ -107,7 +114,7 @@ impl App {
 				{
 					self.interaction.reset_clicks();
 					self.interaction.focus = None;
-					self.action(Command::SelectTab(index));
+					self.begin_tab_drag(index);
 				} else if let Some(button) =
 					self.buttons().into_iter().find(|b| {
 						b.rect.contains(
@@ -187,6 +194,7 @@ impl App {
 				state: ElementState::Released,
 				..
 			} => {
+				self.tab_strip.cancel_drag();
 				self.interaction.pressed = None;
 				self.interaction.scrollbar = None;
 				let link = self.link_at(
@@ -196,17 +204,20 @@ impl App {
 				if let Some(link) =
 					self.interaction.finish_selection(link.as_deref())
 				{
-					self.open_link(&link);
+					self.open_link(&link, false);
 				}
 				self.refresh_hover();
 				self.redraw();
 			}
 			WindowEvent::Focused(false) => {
+				self.tab_strip.cancel_drag();
 				self.interaction.pressed = None;
 				self.interaction.pointer_down = None;
 				self.interaction.drag_at = None;
 				self.interaction.scrollbar = None;
 				self.interaction.modifiers = Default::default();
+				self.refresh_hover();
+				self.redraw();
 			}
 			WindowEvent::MouseWheel { delta, .. } => {
 				if self.interaction.panel_open {
@@ -219,6 +230,10 @@ impl App {
 						p.y as f32 / self.dimensions().2,
 					),
 				};
+				if self.scroll_tabs(if dx.abs() > dy.abs() { -dx } else { -dy })
+				{
+					return;
+				}
 				if self.interaction.modifiers.control_key()
 					|| self.interaction.modifiers.super_key()
 				{
@@ -343,6 +358,7 @@ impl App {
 							}
 						}
 						Key::Named(NamedKey::Escape) => {
+							self.tab_strip.cancel_drag();
 							self.interaction.focus = None;
 							self.interaction.panel_open = false;
 							self.interaction.styles_open = false;

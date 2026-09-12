@@ -80,6 +80,18 @@ impl Renderer {
 		hovered: bool,
 	) {
 		match draw {
+			Draw::Clipped { rect, draws } => {
+				let rect = Rect {
+					x: rect.x + dx,
+					y: rect.y + dy,
+					..*rect
+				};
+				if let Some(clip) = clip.intersect(rect) {
+					for draw in draws {
+						self.draw(draw, dx, dy, clip, view, hovered);
+					}
+				}
+			}
 			Draw::Image {
 				src, version, rect, ..
 			} => {

@@ -23,6 +23,8 @@ pub(super) struct Chrome<'a> {
 	pub(super) session: &'a ReaderSession,
 	pub(super) tabs: &'a [ReaderTab],
 	pub(super) active_tab: usize,
+	pub(super) tab_strip: &'a super::tab_strip::TabStrip,
+	pub(super) tab_widths: &'a [(f32, f32)],
 	pub(super) settings: &'a ReaderSettings,
 	pub(super) interaction: &'a InteractionState,
 	pub(super) style_entries: &'a [crate::stylesheet::Entry],
@@ -194,6 +196,8 @@ impl Chrome<'_> {
 	pub(super) fn tab_bar(&mut self) -> tabs::TabBar<'_> {
 		tabs::TabBar {
 			ui: self.ui,
+			strip: self.tab_strip,
+			widths: self.tab_widths,
 			tabs: self.tabs,
 			active_tab: self.active_tab,
 			cursor: self.interaction.cursor,

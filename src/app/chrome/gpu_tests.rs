@@ -151,3 +151,136 @@ fn settings_and_selection_frame() -> Result<()> {
 	}
 	Ok(())
 }
+
+#[test]
+#[ignore = "requires a GPU; writes artifacts/tab-bar/*.png"]
+fn tab_strip_frames_clip_overflow_at_fractional_dpi() -> Result<()> {
+	use crate::app::{
+		tab_metrics::TabMetrics,
+		tab_strip::{TabDrag, TabStrip},
+	};
+	let mut renderer = pollster::block_on(Renderer::new(None))?;
+	let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+		.join("artifacts/tab-bar");
+	std::fs::create_dir_all(&directory)?;
+	for (count, scroll, dragging, dark, filename) in [
+		(3, 0.0, false, false, "normal.png"),
+		(5, 0.0, false, false, "compressed.png"),
+		(30, 25.0, false, false, "overflow.png"),
+		(30, 125.0, true, true, "drag-dark.png"),
+	] {
+		let settings = ReaderSettings {
+			theme: if dark { Theme::Dark } else { Theme::Light },
+			stylesheet: markview_core::style::Stylesheet::bundled(dark),
+			..Default::default()
+		};
+		renderer.set_stylesheet(settings.stylesheet.clone());
+		let mut ui = TextShaper::new();
+		ui.set_stylesheet(settings.stylesheet.clone());
+		let entries: Vec<_> = (0..count)
+			.map(|i| {
+				ReaderTab::new(
+					format!("{}文档{i}.md", ["中文", "开发", "阅读"][i % 3])
+						.into(),
+				)
+			})
+			.collect();
+		let mut metrics = TabMetrics::default();
+		metrics.sync(&mut ui, &entries);
+		let strip = TabStrip {
+			scroll,
+			drag: dragging.then_some(TabDrag {
+				index: 3,
+				start: 100.0,
+				grab: 20.0,
+				last: 150.0,
+				moving: true,
+			}),
+			..Default::default()
+		};
+		let width = if count == 3 { 800.0 } else { 500.0 };
+		let mut bar = tabs::TabBar {
+			ui: &mut ui,
+			strip: &strip,
+			widths: &metrics.widths,
+			tabs: &entries,
+			active_tab: 3.min(count - 1),
+			cursor: (150.0, 20.0),
+			width,
+		};
+		let viewport = bar.layout().viewport;
+		let tabs = bar.draw_tabs();
+		let background = Draw::Rect(
+			Rect {
+				x: 0.0,
+				y: 0.0,
+				w: width,
+				h: TOP,
+			},
+			Paint::Styled(Role::Toolbar, C::Background),
+		);
+		let controls = draw_controls(
+			&mut ui,
+			&settings,
+			&InteractionState::default(),
+			width,
+			100.0,
+		);
+		let horizontal = HashMap::new();
+		let view = View {
+			width: (width * 1.25) as u32,
+			height: 125,
+			scale: 1.25,
+			left: 20.0,
+			top: 50.0,
+			bottom: 10.0,
+			scroll: 0.0,
+			theme: settings.theme,
+			horizontal: &horizontal,
+			selection: None,
+			revision: 0,
+			hovered_link: None,
+			hovered_overflow: None,
+			held_overflow: None,
+		};
+		let snapshot = Default::default();
+		let target = renderer.offscreen(view.width, view.height);
+		let mut images = Vec::new();
+		for visible in [false, true] {
+			let mut overlay = vec![background.clone()];
+			if visible {
+				overlay.extend(tabs.clone());
+			}
+			overlay.extend(controls.clone());
+			let submission = renderer.render(
+				&snapshot,
+				&view,
+				&overlay,
+				&target.create_view(&Default::default()),
+			)?;
+			renderer.wait(Some(submission))?;
+			let output = directory.join(if visible {
+				filename.to_string()
+			} else {
+				format!("baseline-{filename}")
+			});
+			renderer.save_png(&target, &output)?;
+			images.push(image::open(output)?.to_rgba8());
+		}
+		for y in 5..45 {
+			for x in 0..view.width {
+				if x < (viewport.x * view.scale).floor() as u32
+					|| x >= ((viewport.x + viewport.w) * view.scale).ceil()
+						as u32
+				{
+					assert_eq!(
+						images[0].get_pixel(x, y),
+						images[1].get_pixel(x, y),
+						"tab escaped its clip at {x},{y}: {filename}"
+					);
+				}
+			}
+		}
+	}
+	Ok(())
+}

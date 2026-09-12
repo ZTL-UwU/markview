@@ -6,6 +6,9 @@ mod lifecycle;
 mod painting;
 mod pointer;
 mod preferences;
+mod tab_metrics;
+mod tab_navigation;
+mod tab_strip;
 mod tabs;
 mod ui;
 mod viewport;
@@ -54,6 +57,8 @@ fn system_theme(window: &Window) -> Option<Theme> {
 struct App {
 	interaction: InteractionState,
 	readers: tabs::Tabs,
+	tab_strip: tab_strip::TabStrip,
+	tab_metrics: tab_metrics::TabMetrics,
 	args: LaunchOptions,
 	proxy: EventLoopProxy<Event>,
 	window: Option<Arc<Window>>,
@@ -101,6 +106,8 @@ impl App {
 		Self {
 			interaction: InteractionState::default(),
 			readers: tabs::Tabs::default(),
+			tab_strip: Default::default(),
+			tab_metrics: Default::default(),
 			args,
 			proxy,
 			window: None,

@@ -84,6 +84,11 @@ impl Rect {
 
 #[derive(Clone, Debug)]
 pub enum Draw {
+	/// A group clipped to a local rectangle.
+	Clipped {
+		rect: Rect,
+		draws: Vec<Draw>,
+	},
 	Image {
 		src: String,
 		version: u64,
@@ -109,6 +114,13 @@ pub enum Draw {
 impl Draw {
 	pub fn translate(&mut self, x: f32, y: f32) {
 		match self {
+			Self::Clipped { rect, draws } => {
+				rect.x += x;
+				rect.y += y;
+				for draw in draws {
+					draw.translate(x, y);
+				}
+			}
 			Self::Glyph(g) => {
 				g.x += x;
 				g.y += y;

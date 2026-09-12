@@ -87,6 +87,7 @@ impl Renderer {
 							markview_core::style::ColorField::Color,
 						),
 					)
+					| Draw::Clipped { .. }
 					| Draw::Glyph(_)
 					| Draw::Image { .. }
 					| Draw::Math { .. } => foreground.push((draw, dx, dy, clip, hovered)),

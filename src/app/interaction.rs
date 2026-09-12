@@ -19,6 +19,7 @@ impl App {
 				return;
 			}
 			Command::Styles => {
+				self.tab_strip.cancel_drag();
 				self.interaction.panel_open = true;
 				self.interaction.styles_open = !self.interaction.styles_open;
 				self.preferences.style_entries = crate::stylesheet::catalog(
@@ -116,6 +117,7 @@ impl App {
 				return;
 			}
 			Command::Settings => {
+				self.tab_strip.cancel_drag();
 				self.interaction.panel_open = !self.interaction.panel_open;
 				self.interaction.styles_open = false;
 				self.interaction.pointer_down = None;

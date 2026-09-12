@@ -30,6 +30,23 @@ impl Tabs {
 	pub(super) fn active(&self) -> usize {
 		self.active
 	}
+	/// Reorder entries without replacing the active session or issuing requests.
+	pub(super) fn move_tab(&mut self, from: usize, to: usize) -> bool {
+		if from >= self.entries.len() || to >= self.entries.len() || from == to
+		{
+			return false;
+		}
+		let tab = self.entries.remove(from);
+		self.entries.insert(to, tab);
+		if self.active == from {
+			self.active = to;
+		} else if from < self.active && to >= self.active {
+			self.active -= 1;
+		} else if from > self.active && to <= self.active {
+			self.active += 1;
+		}
+		true
+	}
 	pub(super) fn find(&self, path: &std::path::Path) -> Option<usize> {
 		self.entries.iter().position(|tab| tab.path == path)
 	}
@@ -52,6 +69,17 @@ impl Tabs {
 		self.session.content_version += 1;
 		self.session.scroll = 0.0;
 		self.session.horizontal.clear();
+	}
+	/// Queue a tab for first use without disturbing the active reader or worker.
+	pub(super) fn open_background(&mut self, path: PathBuf) -> bool {
+		if self.session.path.is_none() || self.find(&path).is_some() {
+			return false;
+		}
+		let mut tab = ReaderTab::new(path.clone());
+		tab.session.path = Some(path);
+		tab.session.content_version = 1;
+		self.entries.push(tab);
+		true
 	}
 	pub(super) fn select(&mut self, index: usize, now: Instant) -> bool {
 		if index >= self.entries.len() || index == self.active {

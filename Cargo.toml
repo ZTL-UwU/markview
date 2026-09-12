@@ -61,6 +61,7 @@ wgpu = { version = "29.0.4", default-features = false, features = ["std", "parki
 winit = "0.30.13"
 
 [dependencies]
+unicode-segmentation.workspace = true
 image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
 resvg = "0.45"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }

@@ -23,6 +23,8 @@ impl App {
 		});
 	}
 	pub(super) fn open(&mut self, path: PathBuf) {
+		self.tab_strip.cancel_drag();
+		self.tab_strip.reveal_active = true;
 		let path = if path.is_absolute() {
 			path
 		} else {
@@ -39,7 +41,10 @@ impl App {
 		self.request(false);
 	}
 	pub(super) fn select_tab(&mut self, index: usize) {
+		self.tab_strip.cancel_drag();
+		self.tab_strip.reveal_active = true;
 		if !self.readers.select(index, Instant::now()) {
+			self.redraw();
 			return;
 		}
 		self.observe_document();
@@ -56,6 +61,8 @@ impl App {
 		self.redraw();
 	}
 	pub(super) fn close_tab(&mut self, index: usize) {
+		self.tab_strip.cancel_drag();
+		self.tab_strip.reveal_active = true;
 		match self.readers.close(index, Instant::now()) {
 			tabs::Closed::Missing => return,
 			tabs::Closed::Inactive => {

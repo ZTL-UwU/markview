@@ -250,11 +250,13 @@ impl RasterCache {
 		let data = match image.content {
 			swash::scale::image::Content::Mask => image.data,
 			swash::scale::image::Content::Color => {
-				image.data.chunks_exact(4).map(|p| p[3]).collect()
+				image.data.as_chunks::<4>().0.iter().map(|p| p[3]).collect()
 			}
 			swash::scale::image::Content::SubpixelMask => image
 				.data
-				.chunks_exact(4)
+				.as_chunks::<4>()
+				.0
+				.iter()
 				.map(|p| p[0].max(p[1]).max(p[2]))
 				.collect(),
 		};

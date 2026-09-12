@@ -221,7 +221,7 @@ impl Gpu {
 			wgpu::TextureFormat::Bgra8UnormSrgb
 				| wgpu::TextureFormat::Bgra8Unorm
 		) {
-			for p in pixmap.data_mut().chunks_exact_mut(4) {
+			for p in pixmap.data_mut().as_chunks_mut::<4>().0 {
 				p.swap(0, 2);
 			}
 		}

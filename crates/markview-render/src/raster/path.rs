@@ -129,8 +129,13 @@ impl RasterCache {
 							None,
 						);
 					}
-					let mask: Vec<u8> =
-						pixmap.data().chunks_exact(4).map(|p| p[3]).collect();
+					let mask: Vec<u8> = pixmap
+						.data()
+						.as_chunks::<4>()
+						.0
+						.iter()
+						.map(|p| p[3])
+						.collect();
 					self.insert(
 						queue,
 						key,

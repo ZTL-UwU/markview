@@ -61,4 +61,36 @@ Settings are layered as defaults, user TOML, then explicit command-line override
 
 The practical performance boundary is not a promise about every Markdown file. Ordinary paragraphs have a line-break budget, image decoding has byte and pixel caps, and CPU image pixels and GPU textures have independent budgets. Caches are bounded or scoped to the current document where possible.
 
-The maintained baseline on Linux with an Intel Vulkan backend is roughly 20–25 ms from document read to first completed GPU frame for a 10 KiB document, with ordinary full reflow around 8–14 ms in the repository fixtures. The measured process RSS is around 80–90 MB for those fixtures. These numbers are diagnostic baselines, not cross-machine guarantees; fonts, drivers, DPI, pathological paragraphs, and large assets change the result.
+Measured baselines and their environment live in the [performance model](performance.md). Compare like-for-like runs: fonts, drivers, DPI, pathological paragraphs and large assets all affect the result.
+
+## Internal ownership
+
+The package boundaries also apply inside each crate. Entry points compose concrete
+components; helpers receive borrowed inputs instead of an application-wide context.
+
+| Component | Owns | Boundary |
+| --- | --- | --- |
+| Application `Tabs` | Active session, inactive tabs, request serial | Tab transitions return to the window adapter for watching, redraws and requests. |
+| Application `Preferences` | Effective settings, persistence store, stylesheet catalog, save deadline | Stylesheet validation finishes before the effective sheet and UI appearance change. The application applies successful changes to the renderer. |
+| Application chrome | Borrowed display state | Controls, footer, tabs and styles produce geometry without window, worker or configuration I/O access. Selection-count caching remains in the application adapter. |
+| Image scheduler | Versioned entries, jobs and published snapshot | Source reads, bounded decoding and allocation-aware pixel eviction are separate modules. |
+| `LayoutEngine` | Document block cache, shaping/math resources, highlight owner | Snapshot assembly and invalidation stay at this entry point; immutable stylesheet identity is computed once per document pass. |
+| Block layout context | Borrowed shaper, math engine, image snapshot and completed highlights | Inline preparation, paragraphs, code, images, tables and containers cannot start jobs or invalidate document caches. |
+| Renderer `Gpu` | Device, queue, surface and device-loss state | Owns acquisition, resize/recovery, completion and offscreen readback. |
+| Renderer raster cache | Atlas, raster keys, scaler and math fonts | Glyph/path preparation borrows the queue; paths write to the shared geometry buffer. |
+| Renderer image textures | Texture cache, image runs and current-frame demand | Owns budget checks, version pruning and atomic demand publication. |
+| Renderer geometry | Vertices and reusable GPU vertex storage | Produces clipped quads; the frame adapter preserves paint order and submission. |
+
+Parsing and representation have separate source modules: Markdown translation
+owns the comrak reader, settings persistence owns the serialized configuration,
+and stylesheet parsing owns validation. Reading selection and visual hit testing
+share the immutable text nodes without rebuilding their logical content.
+
+Module extraction does not change line-break budgets, cache keys, worker counts,
+image budgets, request acceptance, or ordering of draw commands. Hot paths use
+concrete types and borrowed resources, with no dispatch registry or additional
+synchronization. A source-file target of about 500 production lines is a review
+heuristic, not a reason to split an otherwise cohesive algorithm. Tests live next
+to their owning modules in separate sources when they obscure production code.
+`scene.rs` remains a small exception at about 515 lines: it keeps the shared
+immutable drawing, viewport and scrollbar geometry vocabulary together.

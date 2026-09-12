@@ -1,0 +1,87 @@
+use super::tabs;
+use crate::watch::FileWatch;
+use std::{path::PathBuf, time::Instant};
+
+use super::{App, Event};
+impl App {
+	pub(super) fn request(&mut self, follow: bool) {
+		if let Some(request) = self.readers.request(self.options(), follow) {
+			self.error = false;
+			self.status_until = None;
+			self.status = "Updating…".into();
+			self.worker.submit(request);
+			self.redraw();
+		}
+	}
+	pub(super) fn observe_document(&mut self) {
+		self.watch = self.readers.session.path.clone().map(|path| {
+			let proxy = self.proxy.clone();
+			let observed = path.clone();
+			FileWatch::new(path, move || {
+				let _ = proxy.send_event(Event::Changed(observed.clone()));
+			})
+		});
+	}
+	pub(super) fn open(&mut self, path: PathBuf) {
+		let path = if path.is_absolute() {
+			path
+		} else {
+			std::env::current_dir().unwrap_or_default().join(path)
+		};
+		let path = std::fs::canonicalize(&path).unwrap_or(path);
+		if let Some(index) = self.readers.find(&path) {
+			self.select_tab(index);
+			return;
+		}
+		self.readers.open(path, Instant::now());
+		self.interaction.clear_selection();
+		self.observe_document();
+		self.request(false);
+	}
+	pub(super) fn select_tab(&mut self, index: usize) {
+		if !self.readers.select(index, Instant::now()) {
+			return;
+		}
+		self.observe_document();
+		self.interaction.clear_selection();
+		self.error = false;
+		self.status.clear();
+		self.status_until = None;
+		if self.readers.session.document.is_none()
+			|| self.readers.session.requested_options.as_ref()
+				!= Some(&self.options())
+		{
+			self.request(false);
+		}
+		self.redraw();
+	}
+	pub(super) fn close_tab(&mut self, index: usize) {
+		match self.readers.close(index, Instant::now()) {
+			tabs::Closed::Missing => return,
+			tabs::Closed::Inactive => {
+				self.redraw();
+				return;
+			}
+			tabs::Closed::Active => {}
+		}
+		self.watch = None;
+		self.interaction.clear_selection();
+		self.error = false;
+		self.status.clear();
+		self.status_until = None;
+		if self.readers.entries().is_empty() {
+			if let Some(window) = &self.window {
+				window.set_title("Markview");
+			}
+		} else if self.readers.session.path.is_some() {
+			self.observe_document();
+			if self.readers.session.document.is_none()
+				|| self.readers.session.requested_options.as_ref()
+					!= Some(&self.options())
+			{
+				self.request(false);
+			}
+		}
+		self.redraw();
+	}
+}

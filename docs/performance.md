@@ -15,16 +15,39 @@ The benchmark separates a cold first open from repeated warm reflows. A P95 from
 
 ## Current repository baseline
 
-The latest checked-in measurements used Linux x86_64, an Intel Arc GPU through Vulkan, release mode, Noto Serif/CJK fonts, 18 px text, a 760 px column, and 10 KiB fixtures. They are useful for detecting regressions in the same environment:
+The 2026-09-12 refactor comparison used Linux x86_64, an Intel Core Ultra 5
+125H with Intel Arc (MTL) through Vulkan, Rust 1.96.0-nightly (2026-03-26),
+release mode with thin LTO and one codegen unit, bundled light styles, system
+fonts, 18 px text, a 760 px column and a 1200 × 800 offscreen target at scale 1.
+Both binaries used the default affinity across all 18 logical CPUs.
 
-| Measurement | Ordinary fixture | Math fixture |
-| --- | ---: | ---: |
-| First read to completed GPU frame | about 22–25 ms | about 24–25 ms |
-| Full reflow P95 | about 9 ms | about 10 ms |
-| Block refresh P95 | about 1 ms | about 1 ms |
-| RSS after full scroll | about 82 MB | about 84 MB |
+| Fixture | First open (ms) | Full pipeline P95 (ms) | Cached pipeline P50 (ms) | RSS (MiB) |
+| --- | ---: | ---: | ---: | ---: |
+| ordinary-10k | 26.16 | 13.74 | 0.63 | 45.79 |
+| math-10k | 28.93 | 13.76 | 0.72 | 47.74 |
+| code-10k | 16.77 | 11.01 | 0.50 | 55.32 |
+| long-code-10k | 17.03 | 11.34 | 0.66 | 51.77 |
+| images | 46.73 | 4.09 | 0.50 | 47.95 |
 
-A small image-layout comparison measured approximately 13.4 ms with no image, 13.6 ms with one inline SVG, and 14.3 ms with ten repeated inline SVGs on the same machine. The important architectural result is that images participate as atomic inline boxes, so they do not trigger a separate float-layout pass.
+The comparison preserved the release binary from commit
+`2529179b65f63a32badf02a6e33dd46160ba8783` and alternated it with the candidate
+for five groups of 100 full and 100 cached iterations per process. The long-code
+fixture needed 15 additional groups because GPU wait times were noisy; all 20
+groups were retained. Every acceptance metric stayed within the 5% regression
+limit. Tracked GPU capacities were unchanged.
+
+Computing the immutable stylesheet layout identity once per document pass,
+instead of once per block lookup, reduced ordinary cached-pipeline P50 from
+2.05 ms to 0.63 ms and ordinary full-pipeline P95 from 15.18 ms to 13.74 ms.
+Cache identity and invalidation semantics did not change. These are whole-pipeline
+measurements: `full_layout_reopens` and `cached_refreshes` summarize `total_ms`,
+including read, parse and completed GPU work. Individual `layout_ms` samples
+remain available for geometry-only diagnosis.
+
+The local raw reports, environment and binary hashes, early diagnostic runs,
+and merged comparison are under `artifacts/refactor/`; these generated artifacts
+are ignored by Git. See the [development guide](development.md#refactor-with-a-preserved-baseline)
+for the repeatable comparison and merge commands.
 
 ## What can change the result
 

@@ -1,0 +1,420 @@
+use super::{BlockContext, LayoutOptions};
+use crate::text::{TextCluster, TextNode};
+use crate::{
+	document::{Block, BlockKind, CellAlign, InlineKind, RichText},
+	scene::{BlockLayout, Draw, Paint, Rect},
+	style::{ColorField, Role},
+};
+impl BlockContext<'_> {
+	#[expect(
+		clippy::too_many_arguments,
+		reason = "Text style and block geometry are independent layout inputs"
+	)]
+	pub(super) fn rich(
+		&mut self,
+		rich: &RichText,
+		x: f32,
+		y: f32,
+		width: f32,
+		size: f32,
+		sans: bool,
+		align: CellAlign,
+		justify: bool,
+		opts: &LayoutOptions,
+		out: &mut BlockLayout,
+	) -> f32 {
+		let first_node = out.text.len();
+		let mut start = 0;
+		let mut cursor = y;
+		for (i, inline) in rich.iter().enumerate() {
+			if let InlineKind::Math { display: true, .. } = inline.kind {
+				if i > start {
+					cursor += self.paragraph(
+						&rich[start..i],
+						x,
+						cursor,
+						width,
+						size,
+						sans,
+						align,
+						justify,
+						opts,
+						out,
+					);
+				}
+				cursor += size * 0.5;
+				cursor += self.paragraph(
+					&rich[i..i + 1],
+					x,
+					cursor,
+					width,
+					size,
+					false,
+					CellAlign::Center,
+					false,
+					opts,
+					out,
+				);
+				cursor += size * 0.5;
+				start = i + 1;
+			}
+		}
+		if start < rich.len() {
+			cursor += self.paragraph(
+				&rich[start..],
+				x,
+				cursor,
+				width,
+				size,
+				sans,
+				align,
+				justify,
+				opts,
+				out,
+			);
+		}
+		if let Some(node) = out.text.get_mut(first_node) {
+			node.separator = "\n\n";
+		}
+		cursor - y
+	}
+
+	#[expect(
+		clippy::too_many_arguments,
+		reason = "Recursive block geometry and spacing"
+	)]
+	pub(super) fn children(
+		&mut self,
+		blocks: &[Block],
+		x: f32,
+		y: f32,
+		width: f32,
+		opts: &LayoutOptions,
+		_gap: f32,
+		out: &mut BlockLayout,
+	) -> f32 {
+		let mut cursor = y;
+		for block in blocks {
+			cursor += self.block(block, x, cursor, width, opts, out);
+		}
+		cursor - y
+	}
+
+	pub(super) fn block(
+		&mut self,
+		block: &Block,
+		x: f32,
+		y: f32,
+		width: f32,
+		opts: &LayoutOptions,
+		out: &mut BlockLayout,
+	) -> f32 {
+		let role = match &block.kind {
+			BlockKind::Paragraph(_) => Role::P,
+			BlockKind::Heading { level, .. } => Role::heading(*level),
+			BlockKind::Code { .. } => Role::CodeBlock,
+			BlockKind::Quote { .. } => Role::Blockquote,
+			BlockKind::List { .. } => Role::List,
+			BlockKind::Table { .. } => Role::Table,
+			BlockKind::Footnote { .. } => Role::Footnote,
+			BlockKind::Rule => Role::Hr,
+		};
+		let previous = self.shaper.appearance.clone();
+		let rule = opts.stylesheet.rule(role).clone();
+		self.shaper.appearance = opts.stylesheet.text(&previous, role);
+		self.shaper.appearance.background = None;
+		let before = rule.space_before.unwrap_or(0.) * opts.font_size;
+		let after = rule.space_after.unwrap_or(0.) * opts.font_size;
+		let pad = rule
+			.padding
+			.as_ref()
+			.map(|p| p.sides().map(|v| v * opts.font_size))
+			.unwrap_or([0.; 4]);
+		let inner_y = y + before + pad[0];
+		let placeholder = out.draws.len();
+		out.draws.push(Draw::Box {
+			rect: Rect::default(),
+			role,
+			radius: rule.radius.unwrap_or(0.),
+			border: rule.border_width.unwrap_or(0.),
+			left_only: role == Role::Blockquote,
+		});
+		let height = self.block_inner(
+			block,
+			x + pad[3],
+			inner_y,
+			(width - pad[1] - pad[3]).max(1.),
+			opts,
+			out,
+		);
+		let box_height = pad[0] + height + pad[2];
+		out.draws[placeholder] = Draw::Box {
+			rect: Rect {
+				x,
+				y: y + before,
+				w: width,
+				h: box_height,
+			},
+			role,
+			radius: rule.radius.unwrap_or(0.),
+			border: if role == Role::Hr || role == Role::Table {
+				0.
+			} else {
+				rule.border_width.unwrap_or(0.)
+			},
+			left_only: role == Role::Blockquote,
+		};
+		self.shaper.appearance = previous;
+		let total = before + box_height + after;
+		out.height = out.height.max(y + total);
+		out.width = out.width.max(x + width);
+		total
+	}
+	pub(super) fn block_inner(
+		&mut self,
+		block: &Block,
+		x: f32,
+		y: f32,
+		width: f32,
+		opts: &LayoutOptions,
+		out: &mut BlockLayout,
+	) -> f32 {
+		let size = opts.font_size * self.shaper.appearance.size;
+		let width = width.max(40.0);
+		let height = match &block.kind {
+			BlockKind::Paragraph(text) => self.rich(
+				text,
+				x,
+				y,
+				width,
+				size,
+				false,
+				CellAlign::Left,
+				opts.justify,
+				opts,
+				out,
+			),
+			BlockKind::Heading { text, .. } => self.rich(
+				text,
+				x,
+				y,
+				width,
+				size,
+				true,
+				CellAlign::Left,
+				false,
+				opts,
+				out,
+			),
+			BlockKind::Rule => {
+				out.draws.push(Draw::Rect(
+					Rect {
+						x,
+						y,
+						w: width,
+						h: opts
+							.stylesheet
+							.rule(Role::Hr)
+							.border_width
+							.unwrap_or(1.),
+					},
+					Paint::Styled(Role::Hr, ColorField::Color),
+				));
+				opts.stylesheet.rule(Role::Hr).border_width.unwrap_or(1.)
+			}
+			BlockKind::Code { language, text } => {
+				self.code(language, text, x, y, width, size, opts, out)
+			}
+			BlockKind::Quote { label, blocks } => {
+				let mut top = y;
+				if let Some(label) = label {
+					out.draws.extend(self.shaper.label(
+						label,
+						size * 0.8,
+						x,
+						top + size,
+						Paint::Styled(Role::Blockquote, ColorField::Color),
+					));
+					top += size * self.shaper.appearance.line_height;
+				}
+				top - y
+					+ self.children(
+						blocks,
+						x,
+						top,
+						width,
+						opts,
+						size * 0.6,
+						out,
+					)
+			}
+			BlockKind::List {
+				start,
+				tight: _,
+				items,
+			} => {
+				let mut top = y;
+				let list_appearance = self.shaper.appearance.clone();
+				let item_rule = opts.stylesheet.rule(Role::ListItem).clone();
+				let padding = item_rule
+					.padding
+					.as_ref()
+					.map(|p| p.sides().map(|v| v * opts.font_size))
+					.unwrap_or([0.; 4]);
+				for (i, item) in items.iter().enumerate() {
+					self.shaper.appearance =
+						opts.stylesheet.text(&list_appearance, Role::ListItem);
+					top +=
+						item_rule.space_before.unwrap_or(0.) * opts.font_size;
+					let box_y = top;
+					let box_index = out.draws.len();
+					out.draws.push(Draw::Rect(Rect::default(), Paint::Text));
+					top += padding[0];
+					let item_x = x + padding[3];
+					let item_width = (width - padding[1] - padding[3]).max(1.);
+
+					let marker = match item.checked {
+						Some(true) => "[x] ".into(),
+						Some(false) => "[ ] ".into(),
+						None => start.map_or_else(
+							|| "• ".into(),
+							|n| format!("{}. ", n + i),
+						),
+					};
+					let mut node = TextNode::new(marker.clone(), "\n");
+					node.push(TextCluster {
+						range: 0..marker.len(),
+						rect: Rect {
+							x,
+							y: top,
+							w: 25.0,
+							h: size * self.shaper.appearance.line_height,
+						},
+						rtl: false,
+						command: out.draws.len(),
+					});
+					out.text.push(node);
+					let first_child = out.text.len();
+					let indent = if start.is_some_and(|n| n + i >= 100) {
+						48.0
+					} else {
+						30.0
+					};
+					if let Some(checked) = item.checked {
+						let task = opts
+							.stylesheet
+							.text(&self.shaper.appearance, Role::TaskMarker);
+						let marker_size = opts.font_size * task.size;
+						let r = Rect {
+							x: item_x + 2.,
+							y: top + size * 0.5,
+							w: marker_size * 0.7,
+							h: marker_size * 0.7,
+						};
+						out.draws.push(Draw::Rect(
+							r,
+							Paint::Styled(
+								Role::TaskMarker,
+								ColorField::BorderColor,
+							),
+						));
+						out.draws.push(Draw::Rect(
+							Rect {
+								x: r.x + 1.,
+								y: r.y + 1.,
+								w: (r.w - 2.).max(0.),
+								h: (r.h - 2.).max(0.),
+							},
+							Paint::Styled(
+								Role::TaskMarker,
+								ColorField::Background,
+							),
+						));
+						if checked {
+							out.draws.extend(self.shaper.label(
+								"✓",
+								opts.font_size * 0.7,
+								r.x,
+								r.y + r.h,
+								Paint::Styled(
+									Role::TaskMarker,
+									ColorField::Color,
+								),
+							));
+						}
+					} else {
+						let marker = start.map_or_else(
+							|| "•".to_string(),
+							|n| format!("{}.", n + i),
+						);
+						out.draws.extend(self.shaper.label(
+							&marker,
+							opts.font_size,
+							item_x + 2.0,
+							top + size * 1.15,
+							Paint::Styled(Role::ListMarker, ColorField::Color),
+						));
+					}
+					top += self
+						.children(
+							&item.blocks,
+							item_x + indent,
+							top,
+							(item_width - indent).max(1.),
+							opts,
+							size * 0.6,
+							out,
+						)
+						.max(size * self.shaper.appearance.line_height);
+					top += padding[2];
+					out.draws[box_index] = Draw::Box {
+						rect: Rect {
+							x,
+							y: box_y,
+							w: width,
+							h: top - box_y,
+						},
+						role: Role::ListItem,
+						radius: item_rule.radius.unwrap_or(0.),
+						border: item_rule.border_width.unwrap_or(0.),
+						left_only: false,
+					};
+					top += item_rule.space_after.unwrap_or(0.) * opts.font_size;
+					if let Some(node) = out.text.get_mut(first_child) {
+						node.separator = "";
+					}
+				}
+				self.shaper.appearance = list_appearance;
+				top - y
+			}
+			BlockKind::Table { align, rows } => {
+				self.table(align, rows, x, y, width, opts, out)
+			}
+			BlockKind::Footnote { label, blocks } => {
+				out.draws.extend(self.shaper.label(
+					&format!("[{label}]"),
+					size * 0.75,
+					x,
+					y + size,
+					Paint::Styled(Role::Footnote, ColorField::Color),
+				));
+				let smaller = LayoutOptions {
+					font_size: opts.font_size,
+					..opts.clone()
+				};
+				self.children(
+					blocks,
+					x + 36.0,
+					y,
+					width - 36.0,
+					&smaller,
+					size * 0.5,
+					out,
+				)
+			}
+		};
+		out.height = out.height.max(y + height);
+		out.width = out.width.max(x + width);
+		height
+	}
+}

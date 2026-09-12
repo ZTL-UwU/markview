@@ -1,5 +1,12 @@
 //! Commands, selection gestures and clipboard actions.
-use super::*;
+use crate::cli::Mode;
+use crate::settings::{ReaderSettings, Setting};
+use crate::state::{Command, ScrollbarAxis, ScrollbarDrag};
+use markview_core::text::TextPosition;
+use std::time::{Duration, Instant};
+
+use super::{App, BOTTOM, Event, TOP, system_theme};
+
 impl App {
 	pub(super) fn action(&mut self, action: Command) {
 		match action {
@@ -14,11 +21,11 @@ impl App {
 			Command::Styles => {
 				self.interaction.panel_open = true;
 				self.interaction.styles_open = !self.interaction.styles_open;
-				self.style_entries = crate::stylesheet::catalog(
+				self.preferences.style_entries = crate::stylesheet::catalog(
 					crate::stylesheet::directory().as_deref(),
-					self.settings.style.as_deref(),
+					self.preferences.values.style.as_deref(),
 				);
-				self.style_page = 0;
+				self.preferences.style_page = 0;
 				self.interaction.focus = None;
 				self.redraw();
 				return;
@@ -32,28 +39,31 @@ impl App {
 						Ok(())
 					});
 				if let Err(e) = result {
-					self.style_warning = Some(format!("{e:#}"));
+					self.preferences.style_warning = Some(format!("{e:#}"));
 				}
 				self.redraw();
 				return;
 			}
 			Command::StylePrev => {
-				self.style_page = self.style_page.saturating_sub(1);
+				self.preferences.style_page =
+					self.preferences.style_page.saturating_sub(1);
 				self.redraw();
 				return;
 			}
 			Command::StyleNext => {
-				self.style_page += 1;
+				self.preferences.style_page += 1;
 				self.redraw();
 				return;
 			}
 			Command::StyleToggle(index)
 			| Command::StyleUp(index)
 			| Command::StyleDown(index) => {
-				let Some(entry) = self.style_entries.get(index) else {
+				let Some(entry) = self.preferences.style_entries.get(index)
+				else {
 					return;
 				};
-				let mut ids = self.settings.style.clone().unwrap_or_default();
+				let mut ids =
+					self.preferences.values.style.clone().unwrap_or_default();
 				let position = ids.iter().position(|id| id == &entry.id);
 				match action {
 					Command::StyleToggle(_) => {
@@ -78,19 +88,19 @@ impl App {
 					}
 					_ => {}
 				}
-				self.settings.style = Some(ids);
+				self.preferences.values.style = Some(ids);
 				self.setting_changed(Some(Setting::Theme));
 				self.reload_styles();
 				self.redraw();
 				return;
 			}
 			Command::OpenConfig => {
-				let result = self.settings_store.ensure_file().and_then(|()| {
-					open::that_detached(self.settings_store.path().unwrap())
+				let result = self.preferences.ensure_file().and_then(|()| {
+					open::that_detached(self.preferences.path().unwrap())
 						.map_err(Into::into)
 				});
 				if let Err(error) = result {
-					self.settings_warning =
+					self.preferences.settings_warning =
 						Some(format!("Cannot open settings: {error}"));
 				}
 				self.redraw();
@@ -100,10 +110,9 @@ impl App {
 				self.args.overrides.retain(|f| *f != Setting::Theme);
 				self.args.theme = None;
 				self.args.style = None;
-				self.settings_store.follow_system();
+				self.preferences.follow_system();
 				self.apply_saved_settings();
-				self.save_at =
-					Some(Instant::now() + Duration::from_millis(250));
+				self.preferences.schedule_save();
 				return;
 			}
 			Command::Settings => {
@@ -119,13 +128,13 @@ impl App {
 				return;
 			}
 			Command::Reset => {
-				self.settings = ReaderSettings::default();
+				self.preferences.values = ReaderSettings::default();
 				// Reset also drops the saved theme preference, so the system
 				// theme applies again immediately and on the next launch.
 				if let Some(theme) =
 					self.window.as_ref().and_then(|w| system_theme(w))
 				{
-					self.settings.theme = theme;
+					self.preferences.values.theme = theme;
 				}
 			}
 			Command::Open => {
@@ -146,25 +155,31 @@ impl App {
 				return;
 			}
 			Command::Smaller => {
-				self.settings.font_size =
-					(self.settings.font_size - 1.0).max(10.0)
+				self.preferences.values.font_size =
+					(self.preferences.values.font_size - 1.0).max(10.0)
 			}
 			Command::Larger => {
-				self.settings.font_size =
-					(self.settings.font_size + 1.0).min(40.0)
+				self.preferences.values.font_size =
+					(self.preferences.values.font_size + 1.0).min(40.0)
 			}
 			Command::Narrower => {
-				self.settings.width = (self.settings.width - 60.0).max(240.0)
+				self.preferences.values.width =
+					(self.preferences.values.width - 60.0).max(240.0)
 			}
 			Command::Wider => {
-				self.settings.width = (self.settings.width + 60.0).min(1600.0)
+				self.preferences.values.width =
+					(self.preferences.values.width + 60.0).min(1600.0)
 			}
-			Command::Align => self.settings.justify = !self.settings.justify,
+			Command::Align => {
+				self.preferences.values.justify =
+					!self.preferences.values.justify
+			}
 			Command::Hyphens => {
-				self.settings.hyphenate = !self.settings.hyphenate
+				self.preferences.values.hyphenate =
+					!self.preferences.values.hyphenate
 			}
 			Command::CjkType(value) => {
-				self.settings.cjk_type = value;
+				self.preferences.values.cjk_type = value;
 				self.setting_changed(Some(Setting::CjkType));
 				self.request(false);
 				self.redraw();
@@ -193,8 +208,7 @@ impl App {
 			self.reload_styles();
 		}
 		if self.args.mode == Mode::Window {
-			self.settings_store.changed(&self.settings, field);
-			self.save_at = Some(Instant::now() + Duration::from_millis(250));
+			self.preferences.changed(field);
 		}
 	}
 	pub(super) fn text_at_cursor(&self) -> Option<TextPosition> {
@@ -202,11 +216,11 @@ impl App {
 			self.interaction.cursor.0,
 			self.interaction.cursor.1,
 		);
-		self.session.snapshot.hit_test_text(
+		self.readers.session.snapshot.hit_test_text(
 			x,
 			y,
-			&self.session.horizontal,
-			self.session.accepted_revision,
+			&self.readers.session.horizontal,
+			self.readers.session.accepted_revision,
 		)
 	}
 
@@ -222,9 +236,11 @@ impl App {
 			self.interaction.cursor.0,
 			self.interaction.cursor.1,
 		);
-		self.session
-			.snapshot
-			.contains_text(x, y, &self.session.horizontal)
+		self.readers.session.snapshot.contains_text(
+			x,
+			y,
+			&self.readers.session.horizontal,
+		)
 	}
 
 	/// Starts dragging the scrollbar under the pointer. A press on the thumb
@@ -238,7 +254,7 @@ impl App {
 			let grab = if bar.on_thumb(x, y) {
 				bar.grab(x, y)
 			} else {
-				self.session.scroll = bar.scroll_for(x, y, 0.0);
+				self.readers.session.scroll = bar.scroll_for(x, y, 0.0);
 				0.0
 			};
 			self.interaction.reset_clicks();
@@ -254,7 +270,10 @@ impl App {
 				bar.grab(x, y)
 			} else {
 				let offset = bar.scroll_for(x, y, 0.0);
-				self.session.horizontal.insert((block, overflow), offset);
+				self.readers
+					.session
+					.horizontal
+					.insert((block, overflow), offset);
 				0.0
 			};
 			self.interaction.reset_clicks();
@@ -277,13 +296,14 @@ impl App {
 		match drag.target {
 			ScrollbarAxis::Document => {
 				if let Some(bar) = self.document_scrollbar() {
-					self.session.scroll = bar.scroll_for(x, y, drag.grab);
+					self.readers.session.scroll =
+						bar.scroll_for(x, y, drag.grab);
 					self.redraw();
 				}
 			}
 			ScrollbarAxis::Overflow { block, overflow } => {
 				if let Some(bar) = self.overflow_scrollbar(block, overflow) {
-					self.session.horizontal.insert(
+					self.readers.session.horizontal.insert(
 						(block, overflow),
 						bar.scroll_for(x, y, drag.grab),
 					);
@@ -300,15 +320,16 @@ impl App {
 			None
 		};
 		self.interaction
-			.move_selection(position, &self.session.snapshot);
+			.move_selection(position, &self.readers.session.snapshot);
 		if self.interaction.pointer_down.is_some() && self.interaction.dragged {
 			let (_, height, _) = self.dimensions();
 			let can_scroll = (self.interaction.cursor.1 < TOP + 24.0
-				&& self.session.scroll > 0.0)
+				&& self.readers.session.scroll > 0.0)
 				|| (self.interaction.cursor.1 > height - BOTTOM - 24.0
-					&& self.session.scroll
-						< (self.session.snapshot.height - self.viewport())
-							.max(0.0));
+					&& self.readers.session.scroll
+						< (self.readers.session.snapshot.height
+							- self.viewport())
+						.max(0.0));
 			self.interaction.drag_at =
 				can_scroll.then(|| Instant::now() + Duration::from_millis(16));
 			self.redraw();
@@ -319,10 +340,10 @@ impl App {
 		if let Some(selection) = self.interaction.selection
 			&& !selection.is_empty()
 		{
-			let text = self
-				.session
-				.snapshot
-				.extract_text(selection, self.session.accepted_revision);
+			let text = self.readers.session.snapshot.extract_text(
+				selection,
+				self.readers.session.accepted_revision,
+			);
 			if !text.is_empty() {
 				match self.clipboard.write(text) {
 					Ok(()) => {
@@ -339,42 +360,33 @@ impl App {
 		}
 	}
 	pub(super) fn flush_settings(&mut self) {
-		self.save_at = None;
-		match self.settings_store.flush() {
-			Ok(()) => {
-				self.settings_warning = None;
-				if self.args.mode == Mode::Window {
-					self.apply_saved_settings();
-				}
-			}
-			Err(e) => {
-				self.settings_warning =
-					Some(format!("Cannot save settings: {e}"))
-			}
+		if self.preferences.flush() && self.args.mode == Mode::Window {
+			self.apply_saved_settings();
 		}
 	}
 	pub(super) fn apply_saved_settings(&mut self) {
-		let previous = self.settings.clone();
+		let previous = self.preferences.values.clone();
 		let options = self.options();
-		self.settings = self.settings_store.settings();
-		self.settings.stylesheet = previous.stylesheet.clone();
-		if self.settings_store.theme_preference().is_none() {
-			self.settings.theme = self
+		self.preferences.values = self.preferences.stored_settings();
+		self.preferences.values.stylesheet = previous.stylesheet.clone();
+		if self.preferences.theme_preference().is_none() {
+			self.preferences.values.theme = self
 				.window
 				.as_ref()
 				.and_then(|w| system_theme(w))
 				.unwrap_or_default();
 		}
 		for field in &self.args.overrides {
-			self.settings.copy_field(&previous, *field);
+			self.preferences.values.copy_field(&previous, *field);
 		}
 		self.reload_styles();
 		if self.options() != options
-			&& self.session.requested_options.as_ref() != Some(&self.options())
+			&& self.readers.session.requested_options.as_ref()
+				!= Some(&self.options())
 		{
 			self.request(false);
 		}
-		if self.settings != previous {
+		if self.preferences.values != previous {
 			self.redraw();
 		}
 	}

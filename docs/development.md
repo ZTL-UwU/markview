@@ -60,3 +60,50 @@ When a worker or loader changes, test stale-result rejection, replacement of pen
 
 Document guarantees and reasons in architecture pages, procedures and examples in guides, and measured facts in the performance page. Remove a stale statement instead of adding a contradictory exception. Link to the owning page rather than copying the same rule into several documents.
 
+## Refactor with a preserved baseline
+
+Before changing a performance-sensitive path, build the current release and copy
+its binary outside `target/release`. Keep its source revision with it. After the
+change, build the candidate with the same lockfile, toolchain and release profile.
+Run on an idle machine with hardware GPU access:
+
+```sh
+python3 scripts/compare_performance.py \
+  --baseline artifacts/refactor/baseline/markview \
+  --baseline-revision BASELINE_COMMIT \
+  --candidate target/release/markview \
+  --output artifacts/refactor/comparison
+```
+
+The output directory must be new. By default the script alternates baseline and
+candidate order across five groups, using 100 full-layout samples and 100 cached
+samples per process, on all four 10 KiB fixtures and the local image example.
+It preserves individual JSON reports, binary hashes, font inventory hash,
+platform/backend metadata, CPU affinity, and a Markdown/JSON comparison. An incompatible
+adapter, input, viewport or semantic result fails the comparison.
+
+First-open medians come from independent processes; they are not warm-reflow P95s
+and do not flush the OS file cache. The acceptance metrics are first open, full
+and cached P50/P95, post-scroll RSS/peak RSS, and tracked GPU bytes. Each uses the
+median of its per-process measurements; an increase over 5% fails. Initialization
+and individual stage medians remain diagnostic alongside raw samples because
+very small stage durations are sensitive to timer and scheduling noise. Missing
+memory measurements are reported as unavailable, not a pass. Repeat an unstable
+comparison and investigate outliers rather than changing the threshold.
+
+Keep visual checks alongside timing checks. Compare deterministic offscreen
+exports with the preserved binary, then run the ignored GPU tests and native
+window/watch smoke tests. Native Windows/macOS CI checks remain necessary;
+Linux GPU measurements do not establish runtime behavior on those platforms.
+
+When a noisy fixture needs additional groups, retain the original groups and
+merge them with the follow-up instead of selecting the more favorable run:
+
+```sh
+python3 scripts/compare_performance.py \
+  --merge artifacts/refactor/acceptance artifacts/refactor/long-code-followup \
+  --output artifacts/refactor/combined
+```
+
+Merging verifies identical binary hashes, toolchain, fonts, CPU affinity, backend,
+profile and iteration counts; it reports the number of groups for each fixture.

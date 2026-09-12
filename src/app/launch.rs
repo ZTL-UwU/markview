@@ -1,5 +1,17 @@
 //! Window and deterministic diagnostic entry points.
-use super::*;
+use crate::cli::{Mode, arguments};
+use crate::{
+	benchmark, document,
+	file::read_document,
+	layout::LayoutEngine,
+	render::{Renderer, Theme, View},
+};
+use anyhow::{Result, bail};
+use std::collections::HashMap;
+use winit::event_loop::{ControlFlow, EventLoop};
+
+use super::{App, Event};
+
 pub(super) fn run() -> Result<()> {
 	let Some(mut args) = arguments()? else {
 		return Ok(());
@@ -122,7 +134,7 @@ pub(super) fn run() -> Result<()> {
 	let mut app = App::new(args, event_loop.create_proxy());
 	event_loop.run_app(&mut app)?;
 	app.flush_settings();
-	if let Some(warning) = &app.settings_warning {
+	if let Some(warning) = &app.preferences.settings_warning {
 		eprintln!("{warning}");
 	}
 	if let Some(error) = app.fatal {

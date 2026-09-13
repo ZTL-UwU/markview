@@ -1,0 +1,2 @@
+# Keep benchmark fixture byte sizes stable on every platform.
+/tests/fixtures/*.md text eol=lf

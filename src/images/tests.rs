@@ -35,14 +35,30 @@ fn data_uri(mime: &str, bytes: &[u8]) -> String {
 
 #[test]
 fn sources_cover_local_network_and_inline_images() {
-	let document = Path::new("/docs/note.md");
-	let at = |src: &str, offline: bool| source(src, document, offline).unwrap();
-	let file = |p: &str| Source::File(PathBuf::from(p));
-	assert_eq!(at("images/a b.png", false), file("/docs/images/a b.png"));
-	assert_eq!(at("a%20b.png", false), file("/docs/a b.png"));
-	assert_eq!(at("../up.png", false), file("/docs/../up.png"));
-	assert_eq!(at("/tmp/x.png", false), file("/tmp/x.png"));
-	assert_eq!(at("file:///tmp/x.png", false), file("/tmp/x.png"));
+	let dir = tempfile::tempdir().unwrap();
+	let document = dir.path().join("docs/note.md");
+	let document_dir = document.parent().unwrap();
+	let at =
+		|src: &str, offline: bool| source(src, &document, offline).unwrap();
+	assert_eq!(
+		at("images/a b.png", false),
+		Source::File(document_dir.join("images/a b.png"))
+	);
+	assert_eq!(
+		at("a%20b.png", false),
+		Source::File(document_dir.join("a b.png"))
+	);
+	assert_eq!(
+		at("../up.png", false),
+		Source::File(document_dir.join("../up.png"))
+	);
+	let absolute = dir.path().join("absolute/x.png");
+	assert_eq!(
+		at(absolute.to_str().unwrap(), false),
+		Source::File(absolute.clone())
+	);
+	let file_url = url::Url::from_file_path(&absolute).unwrap().to_string();
+	assert_eq!(at(&file_url, false), Source::File(absolute));
 	assert_eq!(
 		at("https://example.com/a.png", false),
 		Source::Http("https://example.com/a.png".into())
@@ -51,10 +67,10 @@ fn sources_cover_local_network_and_inline_images() {
 		at("data:image/png;base64,AA==", false),
 		Source::Data("data:image/png;base64,AA==".into())
 	);
-	assert!(source("", document, false).is_err());
-	assert!(source("ftp://example.com/a.png", document, false).is_err());
-	assert!(source("https://example.com/a.png", document, true).is_err());
-	assert!(source("a%FF.png", document, false).is_err());
+	assert!(source("", &document, false).is_err());
+	assert!(source("ftp://example.com/a.png", &document, false).is_err());
+	assert!(source("https://example.com/a.png", &document, true).is_err());
+	assert!(source("a%FF.png", &document, false).is_err());
 }
 
 #[test]

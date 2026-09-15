@@ -286,6 +286,9 @@ impl App {
 							"v" if !self.interaction.panel_open => {
 								self.paste_markdown()
 							}
+							"w" if !self.panel_has_focus() => self.action(
+								Command::CloseTab(self.readers.active()),
+							),
 							"," => self.action(Command::Settings),
 							"o" if !self.panel_has_focus() => {
 								self.action(Command::Open)

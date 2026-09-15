@@ -253,35 +253,51 @@ font = [{ family = "sans-serif" }, { family = "sans-serif[cjk]" }, { family = "e
 
 [[rule]]
 when = ["scrollbar"]
-track = "#D8DEE3"
-thumb = "#69747E"
-thumb_hover = "#315D86"
-thickness = 6.0
+track = "#00000000"
+thumb = "#383a414c"
+thumb_hover = "#dfdfe0"
+thickness = 4.0
 thickness_hover = 8.0
-overflow_thickness = 6.0
+overflow_thickness = 4.0
 overflow_thickness_hover = 8.0
 gutter = 8.0
 
 [[rule]]
 when = ["ui"]
-color = "#262B30"
-background = "#FAFAF8"
+color = "#242529"
+background = "#ebebec"
 font = [{ family = "sans-serif" }, { family = "sans-serif[cjk]" }, { family = "emoji", weight = 400 }]
-muted = "#69747E"
-accent = "#315D86"
-border_color = "#D8DEE3"
-error = "#A13F3F"
-shadow = "#1019232E"
-scrim = "#1019233D"
+muted = "#58585a"
+accent = "#5c78e2"
+border_color = "#c9c9ca"
+error = "#d36151"
+shadow = "#2425292e"
+scrim = "#24252966"
+
+[[rule]]
+when = ["ui", "toolbar"]
+background = "#ebebec"
+hover_background = "#dfdfe0"
+active_background = "#fafaf8"
+border_color = "#c9c9ca"
+
+[[rule]]
+when = ["ui", "statusbar"]
+background = "#dcdcdd"
+border_color = "#c9c9ca"
+muted = "#58585a"
 
 [[rule]]
 when = ["ui", "panel"]
-background = "#F3F6F9F0"
+background = "#ebebec"
+border_color = "#c9c9ca"
 
 [[rule]]
 when = ["ui", "button"]
-background = "#EFF1F3"
-hover_background = "#E0E7EF"
-active_background = "#D3DDE8"
-disabled_color = "#69747E"
-focus_color = "#315D86"
+background = "#00000000"
+hover_background = "#dfdfe0"
+active_background = "#cacaca"
+disabled_color = "#7e8086"
+focus_color = "#5c78e2"
+border_color = "#5c78e2"
+color = "#242529"

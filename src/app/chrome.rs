@@ -5,7 +5,7 @@ mod footer;
 mod gpu_tests;
 mod styles;
 mod tabs;
-use super::{BOTTOM, Button, TOP};
+use super::{Button, TOP};
 use crate::{
 	layout::{Draw, Paint, Rect, Scrollbar, TextShaper},
 	settings::ReaderSettings,
@@ -81,15 +81,6 @@ impl Chrome<'_> {
 				},
 				Paint::Styled(Condition::Toolbar, C::BorderColor),
 			),
-			Draw::Rect(
-				Rect {
-					x: 0.0,
-					y: height - BOTTOM,
-					w: width,
-					h: BOTTOM,
-				},
-				Paint::Styled(Condition::Toolbar, C::Background),
-			),
 		];
 		out.extend(self.tab_bar().draw_tabs());
 		let warning = if self.error
@@ -137,7 +128,7 @@ impl Chrome<'_> {
 			};
 			out.extend(self.ui.label(
 				title,
-				26.0,
+				18.0,
 				x,
 				y,
 				Paint::Styled(Condition::Ui, C::Color),
@@ -150,9 +141,9 @@ impl Chrome<'_> {
 				} else {
 					"Drop a file here or press Ctrl+O."
 				},
-				15.0,
+				13.0,
 				x,
-				y + 38.0,
+				y + 28.0,
 				Paint::Styled(Condition::Ui, C::Muted),
 			));
 		}

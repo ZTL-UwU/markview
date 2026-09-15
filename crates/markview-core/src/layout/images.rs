@@ -79,6 +79,7 @@ impl BlockContext<'_> {
 			rect,
 			chain: Condition::Image.chain(),
 			condition: Condition::Image,
+			fill: ColorField::Background,
 			radius: 0.,
 			border: self
 				.shaper

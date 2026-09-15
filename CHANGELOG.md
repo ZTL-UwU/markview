@@ -18,6 +18,8 @@ at the same level, without `[brackets]`.
 - The interactive window is a GPUI application. `markview-core` layout is
   unchanged. `--render` and `--bench` still paint through wgpu so offscreen
   metrics stay comparable to earlier baselines.
+- Window chrome follows Zed's One Light / One Dark UI: ghost toolbar
+  buttons, rounded tabs and panels, and matching surface colors.
 
 ## 0.1.0 - 2026-09-16
 

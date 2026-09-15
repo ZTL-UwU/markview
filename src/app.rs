@@ -30,8 +30,8 @@ use gpui::{
 };
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
-const TOP: f32 = 40.0;
-const BOTTOM: f32 = 28.0;
+const TOP: f32 = 36.0;
+const BOTTOM: f32 = 24.0;
 
 pub fn run() -> Result<()> {
 	launch::run()

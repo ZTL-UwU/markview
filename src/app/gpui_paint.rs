@@ -409,6 +409,7 @@ impl GpuiPainter {
 				rect,
 				chain,
 				condition,
+				fill,
 				radius,
 				border,
 				left_only,
@@ -422,7 +423,7 @@ impl GpuiPainter {
 					return;
 				};
 				let background = self.color(
-					Paint::Scoped(*chain, *condition, C::Background),
+					Paint::Scoped(*chain, *condition, *fill),
 					view.theme,
 				);
 				window.with_content_mask(Some(Self::mask(clip)), |window| {

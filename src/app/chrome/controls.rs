@@ -7,6 +7,9 @@ use crate::{
 use markview_core::style::{
 	CjkType, ColorField as C, Condition, TextAppearance,
 };
+pub(in crate::app) const BUTTON_RADIUS: f32 = 4.0;
+pub(in crate::app) const PANEL_RADIUS: f32 = 8.0;
+
 pub(in crate::app) fn panel_rect(width: f32, height: f32) -> Rect {
 	let w = 540.0_f32.min((width - 32.0).max(0.0));
 	let h = 480.0_f32.min((height - 32.0).max(0.0));
@@ -31,7 +34,7 @@ pub(super) fn controls(
 	if panel_open {
 		let rect = panel_rect(width, height);
 		let (top, row) = row_geometry(rect);
-		let close_width = button_width(shaper, "Close", 13.0);
+		let close_width = button_width(shaper, "Close", 12.0);
 		let mut buttons = vec![Button {
 			label: "Close",
 			action: Command::Settings,
@@ -95,8 +98,8 @@ pub(super) fn controls(
 			}
 		}
 		let open_config_width =
-			button_width(shaper, "Open settings.toml", 13.0);
-		let reset_width = button_width(shaper, "Reset defaults", 13.0);
+			button_width(shaper, "Open settings.toml", 12.0);
+		let reset_width = button_width(shaper, "Reset defaults", 12.0);
 		for (label, action, x, w) in [
 			(
 				"Open settings.toml",
@@ -128,7 +131,7 @@ pub(super) fn controls(
 }
 
 fn button_width(shaper: &mut TextShaper, label: &str, size: f32) -> f32 {
-	const HORIZONTAL_PADDING: f32 = 18.0;
+	const HORIZONTAL_PADDING: f32 = 12.0;
 	let old_appearance = shaper.appearance.clone();
 	shaper.appearance = shaper
 		.stylesheet
@@ -142,9 +145,9 @@ pub(super) fn toolbar_controls(
 	shaper: &mut TextShaper,
 	width: f32,
 ) -> Vec<Button> {
-	const TEXT_SIZE: f32 = 13.0;
-	const HORIZONTAL_PADDING: f32 = 18.0;
-	const GAP: f32 = 4.0;
+	const TEXT_SIZE: f32 = 12.0;
+	const HORIZONTAL_PADDING: f32 = 12.0;
+	const GAP: f32 = 2.0;
 	let entries = [("Open", Command::Open), ("Settings", Command::Settings)];
 	let old_appearance = shaper.appearance.clone();
 	shaper.appearance = shaper
@@ -164,7 +167,7 @@ pub(super) fn toolbar_controls(
 		.map(|((label, action), w)| {
 			let rect = Rect {
 				x,
-				y: 6.0,
+				y: 4.0,
 				w,
 				h: 28.0,
 			};
@@ -179,9 +182,9 @@ pub(super) fn toolbar_controls(
 }
 
 pub(super) fn toolbar_right_edge(shaper: &mut TextShaper, width: f32) -> f32 {
-	const TEXT_SIZE: f32 = 13.0;
-	const HORIZONTAL_PADDING: f32 = 18.0;
-	const GAP: f32 = 4.0;
+	const TEXT_SIZE: f32 = 12.0;
+	const HORIZONTAL_PADDING: f32 = 12.0;
+	const GAP: f32 = 2.0;
 	let old_appearance = shaper.appearance.clone();
 	shaper.appearance = shaper
 		.stylesheet
@@ -232,25 +235,17 @@ pub(super) fn draw_controls(
 			rect,
 			chain: Condition::Panel.chain(),
 			condition: Condition::Panel,
-			radius: 0.,
+			fill: C::Background,
+			radius: PANEL_RADIUS,
 			border: 1.,
 			left_only: false,
 		});
-		out.push(Draw::Rect(
-			Rect {
-				x: rect.x,
-				y: rect.y,
-				w: 3.0,
-				h: rect.h,
-			},
-			Paint::Styled(Condition::Panel, C::BorderColor),
-		));
 		let x = rect.x + 20.0;
 		out.extend(shaper.label(
 			"Reading settings",
-			22.0,
+			16.0,
 			x,
-			rect.y + 36.0,
+			rect.y + 32.0,
 			Paint::Styled(Condition::Panel, C::Color),
 		));
 		if rect.h >= 360.0 {
@@ -309,56 +304,59 @@ pub(super) fn draw_controls(
 		toolbar_controls(shaper, width)
 	};
 	for b in buttons {
-		out.push(Draw::Box {
-			rect: b.rect,
-			chain: Condition::Button.chain(),
-			condition: Condition::Button,
-			radius: 0.,
-			border: 1.,
-			left_only: false,
-		});
-		if interaction.focus == Some(b.action) {
-			out.push(Draw::Rect(
-				b.rect,
-				Paint::Styled(Condition::Button, C::FocusColor),
-			));
-			out.push(Draw::Rect(
-				Rect {
-					x: b.rect.x + 1.0,
-					y: b.rect.y + 1.0,
-					w: b.rect.w - 2.0,
-					h: b.rect.h - 2.0,
-				},
-				Paint::Styled(
-					Condition::Button,
-					if interaction.pressed == Some(b.action) {
-						C::ActiveBackground
-					} else {
-						C::Background
-					},
-				),
-			));
-		} else if b.rect.contains(interaction.cursor.0, interaction.cursor.1) {
-			out.push(Draw::Rect(
-				b.rect,
-				Paint::Styled(Condition::Button, C::HoverBackground),
-			));
-		} else if interaction.panel_open {
-			out.push(Draw::Rect(
-				b.rect,
-				Paint::Styled(Condition::Button, C::Background),
-			));
-		}
-		let label_x =
-			b.rect.x + (b.rect.w - shaper.text_width(b.label, 13.0)) / 2.0;
-		out.extend(shaper.label(
-			b.label,
-			13.0,
-			label_x,
-			b.rect.y + b.rect.h / 2.0 + 5.0,
-			Paint::Styled(Condition::Button, C::Color),
+		out.extend(paint_button(
+			shaper,
+			&b,
+			interaction,
+			interaction.panel_open,
+			12.0,
 		));
 	}
+	out
+}
+
+pub(super) fn paint_button(
+	shaper: &mut TextShaper,
+	button: &Button,
+	interaction: &InteractionState,
+	always_fill: bool,
+	size: f32,
+) -> Vec<Draw> {
+	let hovered = button
+		.rect
+		.contains(interaction.cursor.0, interaction.cursor.1);
+	let focused = interaction.focus == Some(button.action);
+	let pressed = interaction.pressed == Some(button.action);
+	let fill = if pressed {
+		Some(C::ActiveBackground)
+	} else if hovered {
+		Some(C::HoverBackground)
+	} else if always_fill {
+		Some(C::Background)
+	} else {
+		None
+	};
+	let mut out = Vec::new();
+	if fill.is_some() || focused {
+		out.push(Draw::Box {
+			rect: button.rect,
+			chain: Condition::Button.chain(),
+			condition: Condition::Button,
+			fill: fill.unwrap_or(C::Background),
+			radius: BUTTON_RADIUS,
+			border: if focused { 1. } else { 0. },
+			left_only: false,
+		});
+	}
+	let label_x = button.rect.x
+		+ (button.rect.w - shaper.text_width(button.label, size)) / 2.0;
+	out.extend(shaper.label(
+		button.label,
+		size,
+		label_x,
+		button.rect.y + button.rect.h / 2.0 + size * 0.38,
+		Paint::Styled(Condition::Button, C::Color),
+	));
 	out
 }
 #[cfg(test)]
@@ -423,8 +421,41 @@ mod tests {
 				toolbar.iter().map(|b| b.action).collect::<Vec<_>>(),
 				vec![Command::Open, Command::Settings]
 			);
-			assert_eq!(toolbar[1].rect.x + toolbar[1].rect.w, width - 16.0);
+			assert!(
+				(toolbar[1].rect.x + toolbar[1].rect.w - (width - 16.0)).abs()
+					< 0.01
+			);
 			assert!(toolbar.iter().all(|b| b.rect.y + b.rect.h < TOP));
 		}
+	}
+	#[test]
+	fn toolbar_buttons_are_ghost_until_hovered() {
+		let mut shaper = TextShaper::new();
+		let buttons = toolbar_controls(&mut shaper, 800.0);
+		let idle = paint_button(
+			&mut shaper,
+			&buttons[0],
+			&InteractionState::default(),
+			false,
+			12.0,
+		);
+		assert!(!idle.iter().any(|d| matches!(d, Draw::Box { .. })));
+		let hovered = paint_button(
+			&mut shaper,
+			&buttons[0],
+			&InteractionState {
+				cursor: (buttons[0].rect.x + 1.0, buttons[0].rect.y + 1.0),
+				..Default::default()
+			},
+			false,
+			12.0,
+		);
+		assert!(hovered.iter().any(|d| matches!(
+			d,
+			Draw::Box {
+				fill: C::HoverBackground,
+				..
+			}
+		)));
 	}
 }

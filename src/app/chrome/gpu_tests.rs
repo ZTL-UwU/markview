@@ -7,6 +7,7 @@ use crate::{
 use anyhow::Result;
 use std::collections::HashMap;
 
+use super::super::BOTTOM;
 use super::*;
 #[test]
 #[ignore = "requires a GPU; writes artifacts/refactor-ui.png"]

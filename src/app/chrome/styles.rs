@@ -167,7 +167,8 @@ pub(super) fn draw_styles(
 			rect: r,
 			chain: Condition::Panel.chain(),
 			condition: Condition::Panel,
-			radius: 0.,
+			fill: C::Background,
+			radius: super::controls::PANEL_RADIUS,
 			border: 1.,
 			left_only: false,
 		},
@@ -214,10 +215,15 @@ pub(super) fn draw_styles(
 				w: 76.,
 				h: 26.,
 			};
-			out.push(Draw::Rect(
+			out.push(Draw::Box {
 				rect,
-				Paint::Styled(Condition::Button, C::Background),
-			));
+				chain: Condition::Button.chain(),
+				condition: Condition::Button,
+				fill: C::HoverBackground,
+				radius: super::controls::BUTTON_RADIUS,
+				border: 0.,
+				left_only: false,
+			});
 			out.extend(shaper.label(
 				"Invalid",
 				12.,
@@ -244,58 +250,12 @@ pub(super) fn draw_styles(
 		));
 	}
 	for b in style_controls(settings, entries, page, width, height) {
-		out.push(Draw::Box {
-			rect: b.rect,
-			chain: Condition::Button.chain(),
-			condition: Condition::Button,
-			radius: 0.,
-			border: 1.,
-			left_only: false,
-		});
-		let hovered =
-			b.rect.contains(interaction.cursor.0, interaction.cursor.1);
-		out.push(Draw::Rect(
-			b.rect,
-			Paint::Styled(
-				Condition::Button,
-				if interaction.pressed == Some(b.action) {
-					C::ActiveBackground
-				} else if hovered {
-					C::HoverBackground
-				} else {
-					C::Background
-				},
-			),
-		));
-		if interaction.focus == Some(b.action) {
-			for rect in [
-				Rect { h: 1., ..b.rect },
-				Rect {
-					y: b.rect.y + b.rect.h - 1.,
-					h: 1.,
-					..b.rect
-				},
-				Rect { w: 1., ..b.rect },
-				Rect {
-					x: b.rect.x + b.rect.w - 1.,
-					w: 1.,
-					..b.rect
-				},
-			] {
-				out.push(Draw::Rect(
-					rect,
-					Paint::Styled(Condition::Button, C::FocusColor),
-				));
-			}
-		}
-		let label_x =
-			b.rect.x + (b.rect.w - shaper.text_width(b.label, 12.)) / 2.0;
-		out.extend(shaper.label(
-			b.label,
+		out.extend(super::controls::paint_button(
+			shaper,
+			&b,
+			interaction,
+			true,
 			12.,
-			label_x,
-			b.rect.y + 18.,
-			Paint::Styled(Condition::Button, C::Color),
 		));
 	}
 	out

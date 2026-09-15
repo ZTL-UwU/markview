@@ -153,6 +153,7 @@ impl BlockContext<'_> {
 					},
 					chain: cell_chain,
 					condition: role,
+					fill: crate::style::ColorField::Background,
 					radius: rule.radius.unwrap_or(0.),
 					border: rule.border_width.unwrap_or(0.),
 					left_only: false,

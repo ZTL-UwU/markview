@@ -18,10 +18,10 @@ impl TabBar<'_> {
 		let right = toolbar_right_edge(self.ui, self.width) - 4.0;
 		TabLayout::new(
 			Rect {
-				x: 10.0,
+				x: 8.0,
 				y: 4.0,
-				w: (right - 10.0).max(0.0),
-				h: 32.0,
+				w: (right - 8.0).max(0.0),
+				h: 28.0,
 			},
 			self.widths,
 			self.strip.scroll,
@@ -53,22 +53,24 @@ impl TabBar<'_> {
 				continue;
 			}
 			let active = index == self.active_tab;
-			out.push(Draw::Box {
-				rect,
-				chain: Condition::Toolbar.chain(),
-				condition: Condition::Toolbar,
-				radius: 0.0,
-				border: 1.0,
-				left_only: false,
-			});
 			let fill = if active {
-				C::ActiveBackground
+				Some(C::ActiveBackground)
 			} else if rect.contains(self.cursor.0, self.cursor.1) {
-				C::HoverBackground
+				Some(C::HoverBackground)
 			} else {
-				C::Background
+				None
 			};
-			out.push(Draw::Rect(rect, Paint::Styled(Condition::Toolbar, fill)));
+			if let Some(fill) = fill {
+				out.push(Draw::Box {
+					rect,
+					chain: Condition::Toolbar.chain(),
+					condition: Condition::Toolbar,
+					fill,
+					radius: super::controls::BUTTON_RADIUS,
+					border: 0.0,
+					left_only: false,
+				});
+			}
 			let name = self.tabs[index]
 				.path
 				.file_name()
@@ -106,7 +108,7 @@ impl TabBar<'_> {
 					x: layout.viewport.x
 						+ (layout.viewport.w - w) * layout.scroll
 							/ layout.max_scroll,
-					y: 37.0,
+					y: 33.0,
 					w,
 					h: 2.0,
 				},

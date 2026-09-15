@@ -46,23 +46,23 @@ pub(super) fn draw_footer(
 			selected.chars, selected.words
 		));
 	}
-	let text = shaper.fit(&text, 11.0, width - 32.0);
-	let used = shaper.text_width(&text, 11.0);
+	let text = shaper.fit(&text, 12.0, width - 32.0);
+	let used = shaper.text_width(&text, 12.0);
 	out.extend(shaper.label(
 		&text,
-		11.0,
+		12.0,
 		16.0,
-		height - 9.0,
+		height - 8.0,
 		Paint::Styled(Condition::Statusbar, C::Muted),
 	));
 	let available = width - used - 56.0;
 	if !secondary.is_empty() && available >= 80.0 {
 		out.extend(shaper.right_label(
 			secondary,
-			11.0,
+			12.0,
 			available,
 			width - 16.0,
-			height - 9.0,
+			height - 8.0,
 			Paint::Styled(Condition::Statusbar, C::Muted),
 		));
 	}
@@ -76,10 +76,10 @@ pub(super) fn draw_footer(
 			},
 			Paint::Styled(Condition::Statusbar, C::Background),
 		));
-		let warning = shaper.fit(warning, 11.0, width - 32.0);
+		let warning = shaper.fit(warning, 12.0, width - 32.0);
 		out.extend(shaper.label(
 			&warning,
-			11.0,
+			12.0,
 			16.0,
 			height - BOTTOM - 8.0,
 			Paint::Styled(Condition::Statusbar, C::Error),

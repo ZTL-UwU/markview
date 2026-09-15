@@ -1,6 +1,50 @@
 use super::*;
 use crate::document;
 use crate::document::{Inline, InlineKind, TextStyle};
+
+#[test]
+fn progressive_prefixes_share_final_geometry_and_can_be_cancelled() {
+	let doc = document::parse(
+		"A paragraph with **bold**, 中文 and $x^2$.\n\n".repeat(40),
+	);
+	let options = LayoutOptions::default();
+	let mut engine = LayoutEngine::new();
+	let mut prefix = None;
+	let final_layout = engine
+		.layout_progressive(&doc, &options, &Default::default(), |p| {
+			if p.blocks.len() == 3 {
+				prefix = Some(p.clone());
+			}
+			true
+		})
+		.unwrap();
+	let prefix = prefix.unwrap();
+	for (a, b) in prefix.blocks.iter().zip(&final_layout.blocks) {
+		assert_eq!(a.y, b.y);
+		assert!(Arc::ptr_eq(&a.layout, &b.layout));
+	}
+	let full = LayoutEngine::new().layout(&doc, &options);
+	assert_eq!(full.height, final_layout.height);
+	assert!(full.same_reading_text(&final_layout));
+	assert_eq!(full.blocks.len(), final_layout.blocks.len());
+	for (a, b) in full.blocks.iter().zip(&final_layout.blocks) {
+		assert_eq!(
+			(a.y, a.layout.height, a.layout.draws.len()),
+			(b.y, b.layout.height, b.layout.draws.len())
+		);
+	}
+	let mut visited = 0;
+	assert!(
+		engine
+			.layout_progressive(&doc, &options, &Default::default(), |p| {
+				visited = p.blocks.len();
+				visited < 3
+			})
+			.is_none()
+	);
+	assert_eq!(visited, 3);
+	assert!(engine.layout(&doc, &options).same_reading_text(&full));
+}
 #[test]
 fn links_are_hit_testable_and_survive_reuse() {
 	let d = document::parse(

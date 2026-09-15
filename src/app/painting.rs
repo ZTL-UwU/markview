@@ -76,7 +76,7 @@ impl App {
 			renderer.resize(size.width, size.height);
 		}
 		if let Some(update) = self.first_frame.take() {
-			renderer.wait(Some(submission))?;
+			renderer.wait(Some(submission.clone()))?;
 			eprintln!(
 				"open→GPU complete: {:.2} ms (read {:.2}, parse {:.2}, layout {:.2}); reused {} blocks; {}",
 				update.requested.elapsed().as_secs_f64() * 1000.0,
@@ -108,8 +108,15 @@ impl App {
 					renderer.wait(Some(s))?;
 					renderer.save_png(&texture, output)?;
 				}
-				event_loop.exit();
 			}
+		}
+		// Exercise completion too, while the diagnostic above records only the
+		// first readable frame (which may contain a prefix of the document).
+		if self.args.mode == Mode::Smoke
+			&& self.readers.session.snapshot_complete
+		{
+			renderer.wait(Some(submission))?;
+			event_loop.exit();
 		}
 		Ok(())
 	}

@@ -5,7 +5,8 @@ This page explains what Markview measures and how to interpret the current basel
 ## What the timings mean
 
 - **Initialization** covers device, pipeline, font, and renderer setup before a document is opened.
-- **First frame** covers reading, parsing, full geometry layout, visible glyph preparation, and GPU completion. It does not include compositor presentation.
+- **Offscreen first frame** covers reading, parsing, full geometry layout, visible glyph preparation, and GPU completion. It does not include compositor presentation.
+- **Window first readable frame** covers initialization and opening through GPU completion of the first visible document prefix. Remaining geometry can finish later; compositor presentation is not measured.
 - **Full reflow** measures rebuilding document geometry after content or layout settings change. The block cache is cleared for this measurement, while font and shaping resources remain warm.
 - **Block refresh** measures reusing unchanged blocks after a localized invalidation, such as an image completing or a file update affecting only part of the document.
 - **RSS** is process resident memory after scrolling through the document. It is not GPU memory.
@@ -79,7 +80,8 @@ text is cached too. Each candidate set retains at most 4096 choices of at most
 choices. This avoids repeated font-list allocation, coverage scans, and face
 cloning during the first document layout. Paragraph measurement and line-boundary
 reshaping remain separate so kerning, ligatures, bidi, and inserted hyphens keep
-their existing behavior. Opening still waits for full document geometry.
+their existing behavior. The font-selection comparison below predates progressive
+window layout and therefore waits for full document geometry.
 
 The same-day optimization comparison preserved release commit
 `3a99ac40ec3266861044ce839843c07093f21587` and alternated it with the candidate
@@ -114,6 +116,48 @@ session first measured ordinary-10k at 42.6 ms on battery with the
 result unchanged, and switching to the `performance` profile restored the
 recorded values, so the difference was the platform power limit and not a
 regression. Check the power profile before interpreting a comparison.
+
+## Progressive window first frame
+
+The window now publishes complete-block prefixes for files of at least 32 KiB,
+starting when the viewport and half a viewport of prefetch are covered. Smaller
+files still publish once. Background completion shares the prefix's geometry;
+the offscreen benchmark continues to measure full layout.
+
+A same-host, power-saver, DPR-2 native comparison against the font-selection
+commit `07fe6bb` used five alternating process pairs per fixture. These are
+process-entry-to-first-readable-GPU-frame medians, including initialization,
+not the offscreen first-open numbers above:
+
+| Fixture | Baseline (ms) | Progressive (ms) |
+| --- | ---: | ---: |
+| ordinary-10k | 144.46 | 148.97 |
+| text-cjk-100k | 265.03 | 138.65 |
+| math-cjk-100k | 262.17 | 142.87 |
+| text-cjk-1000k | 1654.30 | 150.48 |
+
+The 1000 KiB fixture concatenates the 100 KiB text fixture ten times. First-frame
+reading-area PNG crops matched the baseline exactly for all four fixtures;
+chrome differs because the partial snapshot shows loading and no total-height
+scrollbar. The smoke process continues through the final rendered snapshot.
+In a separate native check, replacing the 1000 KiB file immediately after its
+first readable frame produced the replacement's frame in 41.53 ms; only the
+replacement published completion. Worker and session tests also cover target
+changes, cancellation, prefix sharing, selection preservation, and delayed End.
+
+The initial empty-state overlay now distinguishes opening from a confirmed
+empty document. Full parsing, font/renderer initialization, and any single huge
+top-level block still bound latency. This is not arbitrary-position virtual
+layout: distant scrolling waits for preceding geometry. Raw logs, binary hashes,
+screenshots, and scripts are in `artifacts/progressive/` (ignored by Git).
+
+The supplemental offscreen comparison is not an all-metrics acceptance pass.
+After retaining ten process groups for each large fixture (ten full and ten
+cached samples per process), math-cjk-100k cached P50 was 2.512 → 3.124 ms and
+P95 was 4.519 → 6.281 ms, above the 5% threshold. Parse, cached layout, and GPU
+stages all increased in those samples; the cause has not been established.
+The other measured acceptance metrics in `full-combined/comparison.md` passed.
+These measurements remain separate from the native first-readable-frame result.
 
 ## What can change the result
 

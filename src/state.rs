@@ -50,6 +50,11 @@ pub(crate) struct ReaderSession {
 	pub(crate) scroll: f32,
 	pub(crate) horizontal: HashMap<(usize, usize), f32>,
 	pub(crate) follow_update: bool,
+	pub(crate) layout_pending: bool,
+	pub(crate) pending_scroll: Option<f32>,
+	pub(crate) select_all_pending: bool,
+	pub(crate) displayed_version: u64,
+	pub(crate) snapshot_complete: bool,
 }
 
 pub(crate) struct ReaderTab {
@@ -266,9 +271,83 @@ impl InteractionState {
 	}
 }
 impl ReaderSession {
+	pub(crate) fn extends_prefix(
+		&self,
+		reader: &crate::worker::ReaderSnapshot,
+	) -> bool {
+		!self.snapshot_complete
+			&& self.accepted_content_id == reader.document.content_id
+			&& self.snapshot.blocks.len() <= reader.layout.blocks.len()
+			&& self
+				.snapshot
+				.blocks
+				.iter()
+				.zip(&reader.layout.blocks)
+				.all(|(a, b)| a.y == b.y && Arc::ptr_eq(&a.layout, &b.layout))
+	}
+	pub(crate) fn can_display(
+		&self,
+		reader: &crate::worker::ReaderSnapshot,
+		viewport: f32,
+	) -> bool {
+		if reader.complete {
+			return true;
+		}
+		if self.snapshot.blocks.is_empty() {
+			return reader.layout.height >= self.scroll + viewport;
+		}
+		let index = self
+			.snapshot
+			.blocks
+			.partition_point(|b| b.y <= self.scroll)
+			.saturating_sub(1);
+		let anchor = &self.snapshot.blocks[index];
+		let occurrence = self.snapshot.blocks[..index]
+			.iter()
+			.filter(|b| b.id == anchor.id)
+			.count();
+		reader
+			.layout
+			.blocks
+			.iter()
+			.filter(|b| b.id == anchor.id)
+			.nth(occurrence)
+			.is_some_and(|b| {
+				b.y + (self.scroll - anchor.y).min(b.layout.height) + viewport
+					<= reader.layout.height
+			})
+	}
+	pub(crate) fn scroll_by(&mut self, dy: f32, viewport: f32) {
+		if dy == 0. {
+			self.pending_scroll.get_or_insert(self.scroll);
+			self.resolve_scroll(viewport);
+			return;
+		}
+		self.follow_update = false;
+		let base = self
+			.pending_scroll
+			.filter(|v| v.is_finite())
+			.unwrap_or(self.scroll);
+		let target = (base + dy).max(0.0);
+		self.pending_scroll = Some(target);
+		self.resolve_scroll(viewport);
+	}
+	pub(crate) fn resolve_scroll(&mut self, viewport: f32) {
+		if let Some(target) = self.pending_scroll {
+			let max = (self.snapshot.height - viewport).max(0.0);
+			if !self.layout_pending || target <= max {
+				self.scroll = target.min(max);
+				self.pending_scroll = None;
+			}
+		}
+	}
+	pub(crate) fn coverage(&self, viewport: f32) -> f32 {
+		self.pending_scroll.unwrap_or(self.scroll) + viewport * 1.5
+	}
 	pub(crate) fn release_heavy(&mut self) {
 		self.counts = TextCounts::default();
 		self.snapshot = LayoutSnapshot::default();
+		self.snapshot_complete = false;
 		self.document = None;
 		self.requested_options = None;
 	}
@@ -281,7 +360,11 @@ impl ReaderSession {
 		// A metadata-only change re-reads identical bytes; only a real content
 		// change may invalidate reading positions.
 		let changed = reader.document.content_id != self.accepted_content_id;
-		if changed || !self.snapshot.same_reading_text(&reader.layout) {
+		if reader.complete
+			&& (changed
+				|| self.layout_pending
+				|| !self.snapshot.same_reading_text(&reader.layout))
+		{
 			self.counts = reader
 				.layout
 				.select_all(reader.content_version)
@@ -294,7 +377,10 @@ impl ReaderSession {
 				})
 				.unwrap_or_default();
 		}
-		self.scroll = if self.snapshot.blocks.is_empty() {
+		let extending = self.extends_prefix(&reader);
+		self.scroll = if extending {
+			self.scroll
+		} else if self.snapshot.blocks.is_empty() {
 			// A released tab has no old layout to anchor against, but its
 			// scroll position is still user state and should survive reloading.
 			self.scroll
@@ -311,6 +397,9 @@ impl ReaderSession {
 		self.accepted_content_id = reader.document.content_id;
 		self.document = Some(reader.document);
 		self.snapshot = reader.layout;
+		self.layout_pending = !reader.complete;
+		self.snapshot_complete = reader.complete;
+		self.resolve_scroll(viewport);
 		self.accepted_revision = reader.content_version;
 		self.follow_update = false;
 		self.horizontal.retain(|(bi, oi), offset| {

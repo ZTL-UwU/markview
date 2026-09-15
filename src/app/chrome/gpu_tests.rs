@@ -67,7 +67,7 @@ fn settings_and_selection_frame() -> Result<()> {
 		];
 		overlay.extend(draw_footer(
 			&mut TextShaper::new(),
-			counts,
+			Some(counts),
 			Some(counts),
 			None,
 			"",

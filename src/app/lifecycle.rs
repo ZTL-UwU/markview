@@ -95,11 +95,30 @@ impl ApplicationHandler<Event> for App {
 			{
 				match update.result.take() {
 					Some(Ok(reader)) => {
-						let reading_changed = !self
+						if !reader.complete
+							&& self.interaction.selection.is_some_and(|s| {
+								s.anchor.block.max(s.focus.block)
+									>= reader.layout.blocks.len()
+							}) {
+							return;
+						}
+						if !self
 							.readers
 							.session
-							.snapshot
-							.same_reading_text(&reader.layout);
+							.can_display(&reader, self.viewport())
+						{
+							return;
+						}
+						let first = self.readers.session.displayed_version
+							!= update.version;
+						let complete = reader.complete;
+						let reading_changed =
+							!self.readers.session.extends_prefix(&reader)
+								&& !self
+									.readers
+									.session
+									.snapshot
+									.same_reading_text(&reader.layout);
 						let rebased =
 							self.interaction.selection.and_then(|s| {
 								self.readers.session.snapshot.rebase_selection(
@@ -120,16 +139,26 @@ impl ApplicationHandler<Event> for App {
 							self.interaction.selection = rebased;
 						}
 						self.error = false;
+						self.readers.session.displayed_version = update.version;
+						if complete && self.readers.session.select_all_pending {
+							self.interaction.selection =
+								self.readers.session.snapshot.select_all(
+									self.readers.session.accepted_revision,
+								);
+							self.readers.session.select_all_pending = false;
+						}
 						self.refresh_hover();
-						self.status =
-							if self.readers.session.snapshot.math_errors > 0 {
-								format!(
-									"{} formulas shown as source",
-									self.readers.session.snapshot.math_errors
-								)
-							} else {
-								String::new()
-							};
+						self.status = if !complete {
+							"Loading…".into()
+						} else if self.readers.session.snapshot.math_errors > 0
+						{
+							format!(
+								"{} formulas shown as source",
+								self.readers.session.snapshot.math_errors
+							)
+						} else {
+							String::new()
+						};
 						if let Some(w) = &self.window {
 							w.set_title(&format!(
 								"{} — Markview",
@@ -140,9 +169,23 @@ impl ApplicationHandler<Event> for App {
 									.to_string_lossy()
 							));
 						}
-						self.first_frame = Some(*update);
+						if complete {
+							eprintln!(
+								"full layout complete: {:.2} ms; {} blocks",
+								update.requested.elapsed().as_secs_f64()
+									* 1000.,
+								self.readers.session.snapshot.blocks.len()
+							);
+						}
+						if first {
+							self.first_frame = Some(*update);
+						}
 					}
 					Some(Err(error)) => {
+						self.readers.session.layout_pending =
+							!self.readers.session.snapshot_complete;
+						self.readers.session.pending_scroll = None;
+						self.readers.session.select_all_pending = false;
 						self.error = true;
 						self.status = error;
 						if self.args.mode == Mode::Smoke {

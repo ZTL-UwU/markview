@@ -166,6 +166,19 @@ impl LayoutEngine {
 		options: &LayoutOptions,
 		images: &crate::image::ImageSnapshot,
 	) -> LayoutSnapshot {
+		self.layout_progressive(document, options, images, |_| true)
+			.expect("uninterrupted layout")
+	}
+
+	/// Visits each completed prefix. Returning false cancels at a block boundary.
+	/// Prefixes share immutable block geometry with the final snapshot.
+	pub fn layout_progressive(
+		&mut self,
+		document: &Document,
+		options: &LayoutOptions,
+		images: &crate::image::ImageSnapshot,
+		mut progress: impl FnMut(&LayoutSnapshot) -> bool,
+	) -> Option<LayoutSnapshot> {
 		self.shaper.set_stylesheet(options.stylesheet.clone());
 		self.poll_highlights();
 		let mut result = LayoutSnapshot {
@@ -197,8 +210,26 @@ impl LayoutEngine {
 			.map(|_| options.stylesheet.layout_key())
 			.unwrap_or_default();
 		let previous = std::mem::take(&mut self.cache);
+		result.document_box = Some(Draw::Box {
+			rect: Rect {
+				x: 0.,
+				y: 0.,
+				w: options.width,
+				h: result.height,
+			},
+			role: Role::Body,
+			radius: body.radius.unwrap_or(0.),
+			border: body.border_width.unwrap_or(0.),
+			left_only: false,
+		});
 		let mut cached_draws = 0;
 		for block in &document.blocks {
+			if let Some(Draw::Box { rect, .. }) = &mut result.document_box {
+				rect.h = result.height;
+			}
+			if !progress(&result) {
+				return None;
+			}
 			let key = CacheKey {
 				images: image_key(block, images),
 				content: block.content_key,
@@ -265,7 +296,7 @@ impl LayoutEngine {
 			border: body.border_width.unwrap_or(0.),
 			left_only: false,
 		});
-		result
+		Some(result)
 	}
 
 	pub fn poll_highlights(&mut self) -> bool {

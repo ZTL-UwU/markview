@@ -28,7 +28,16 @@ when running `--bench` to add inclusive per-sub-stage layout timings to the
 report under `profile_ms`; leave it unset for production-comparable numbers,
 because the probes add roughly 5 % to layout.
 
-The render and benchmark modes use the GPU offscreen and do not load personal settings. The watch smoke test writes only temporary documents and closes the window it starts. Ignored GPU tests are useful for settings, selection, and image-frame regressions:
+The render and benchmark modes use the GPU offscreen and do not load personal settings. The watch smoke test writes only temporary documents and closes the window it starts.
+
+Window layout publishes a readable prefix before completion. Native `--smoke-test`
+logs `process app entry→readable GPU frame` for that first frame and
+`full layout complete` separately, then waits for the complete snapshot to render
+before exiting. Its PNG captures the first readable frame. Offscreen `--bench`
+and `--render` continue to use complete geometry; their timings must not be
+reported as progressive window first-frame timings.
+
+Ignored GPU tests are useful for settings, selection, and image-frame regressions:
 
 ```sh
 cargo test --workspace --locked settings_and_selection_frame -- --ignored

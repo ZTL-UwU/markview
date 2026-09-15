@@ -17,10 +17,9 @@ impl App {
 		self.interaction.panel_open
 	}
 	pub(super) fn scroll_by(&mut self, dy: f32) {
-		self.readers.session.scroll = (self.readers.session.scroll + dy).clamp(
-			0.0,
-			(self.readers.session.snapshot.height - self.viewport()).max(0.0),
-		);
+		self.readers.session.scroll_by(dy, self.viewport());
+		self.worker
+			.prioritize(self.readers.session.coverage(self.viewport()));
 		self.refresh_hover();
 		self.redraw();
 	}

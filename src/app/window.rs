@@ -25,6 +25,9 @@ impl App {
 					r.resize(width, height);
 				}
 				if width > 0 && height > 0 {
+					self.worker.prioritize(
+						self.readers.session.coverage(self.viewport()),
+					);
 					self.reflow_at =
 						Some(Instant::now() + Duration::from_millis(40));
 					self.redraw();
@@ -98,6 +101,7 @@ impl App {
 				..
 			} => {
 				self.tab_strip.cancel_drag();
+				self.readers.session.select_all_pending = false;
 				// A new press always ends a drag left over from a release the
 				// platform swallowed outside the window.
 				self.interaction.scrollbar = None;
@@ -263,6 +267,13 @@ impl App {
 					if let Key::Character(c) = &event.logical_key {
 						match c.to_lowercase().as_str() {
 							"a" if !self.panel_has_focus() => {
+								if self.readers.session.layout_pending {
+									self.interaction.clear_selection();
+									self.readers.session.select_all_pending =
+										true;
+									self.redraw();
+									return;
+								}
 								self.interaction.selection =
 									self.readers.session.snapshot.select_all(
 										self.readers.session.accepted_revision,
@@ -307,10 +318,11 @@ impl App {
 						Key::Named(NamedKey::PageUp) => {
 							self.scroll_by(-self.viewport() * 0.9)
 						}
-						Key::Named(NamedKey::Home) => self
-							.scroll_by(-self.readers.session.snapshot.height),
+						Key::Named(NamedKey::Home) => {
+							self.scroll_by(f32::NEG_INFINITY)
+						}
 						Key::Named(NamedKey::End) => {
-							self.scroll_by(self.readers.session.snapshot.height)
+							self.scroll_by(f32::INFINITY)
 						}
 						Key::Named(NamedKey::ArrowLeft) => {
 							self.horizontal_by(-42.0)

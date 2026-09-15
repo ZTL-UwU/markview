@@ -3,7 +3,7 @@ use crate::layout::{Draw, Paint, Rect, TextShaper};
 use markview_core::style::{ColorField as C, Role, TextAppearance};
 pub(super) fn draw_footer(
 	shaper: &mut TextShaper,
-	counts: markview_core::text::TextCounts,
+	counts: Option<markview_core::text::TextCounts>,
 	selected: Option<markview_core::text::TextCounts>,
 	warning: Option<&str>,
 	secondary: &str,
@@ -34,7 +34,10 @@ pub(super) fn draw_footer(
 			Paint::Styled(Role::Statusbar, C::BorderColor),
 		),
 	];
-	let mut text = format!("{} chars · {} words", counts.chars, counts.words);
+	let mut text = counts.map_or_else(
+		|| "Loading…".into(),
+		|counts| format!("{} chars · {} words", counts.chars, counts.words),
+	);
 	if let Some(selected) = selected {
 		text.push_str(&format!(
 			"    ·    Selected {} chars · {} words",

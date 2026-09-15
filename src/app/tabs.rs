@@ -132,12 +132,14 @@ impl Tabs {
 		self.session.version = self.request_serial;
 		self.session.follow_update |= follow;
 		self.session.requested_options = Some(options.clone());
+		self.session.layout_pending = true;
 		Some(Request {
 			version: self.session.version,
 			content_version: self.session.content_version,
 			path,
 			options,
 			requested: Instant::now(),
+			coverage: f32::INFINITY,
 		})
 	}
 	pub(super) fn release_inactive(&mut self, now: Instant) {

@@ -39,6 +39,34 @@ The application distinguishes a content version from a request version. A file o
 
 Only the newest request may be accepted. A late result cannot replace a newer layout, while a reload cannot be lost merely because a reflow request occupied the worker's single pending slot. Failed reads keep the last usable snapshot, because a transient editor save should not blank the reader.
 
+For sources of at least 32 KiB, the window worker publishes completed prefixes after they cover the current
+viewport plus half a viewport of prefetch. Parsing still covers the entire source,
+so references and other document-wide semantics are resolved before layout starts.
+Prefixes and the final snapshot share immutable block geometry; publishing does
+not restart layout. Without a new viewport target, subsequent publications need
+both twice as many blocks and at least 32 ms since the previous publication, so
+copying snapshot metadata does not grow quadratically with document length.
+Smaller documents publish once to avoid extra snapshot and redraw overhead;
+they still check cancellation between blocks.
+
+Every prefix carries the same request and content versions as the final result.
+Cancellation is checked between top-level blocks; changing the file or layout
+settings supersedes the old work. The UI checks the version again before accepting
+an event. Reload prefixes replace the old snapshot only when they cover its
+reading anchor and visible area (and any existing selection); otherwise the old
+snapshot remains visible until a sufficient prefix or the final result arrives.
+An appended prefix preserves the active selection gesture and scroll position.
+
+Scroll intent is separate from displayed scroll. Repeated PageDown presses
+accumulate a target even beyond completed geometry; the worker prioritizes
+publishing a prefix that covers that target. The current page stays visible until
+the target is available. PageUp reverses the pending target and Home cancels it;
+End waits for the final height. While geometry is incomplete, the footer shows
+loading, the document scrollbar is hidden, and Select All waits for completion.
+The implementation does not estimate total height or skip preceding blocks.
+One very large top-level paragraph, table, list, or code block can still delay
+publication and cancellation until that block finishes.
+
 Images follow the same model. Loading and decoding happen outside layout. A decoded image changes the version of the affected source, causing only dependent blocks to reflow; the document's semantic reading identity, selection, and reading position remain stable.
 
 ## Why layout is separate from painting

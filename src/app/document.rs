@@ -5,7 +5,19 @@ use std::{path::PathBuf, time::Instant};
 use super::{App, Event};
 impl App {
 	pub(super) fn request(&mut self, follow: bool) {
-		if let Some(request) = self.readers.request(self.options(), follow) {
+		if let Some(mut request) = self.readers.request(self.options(), follow)
+		{
+			request.coverage = if follow
+				&& self.readers.session.scroll
+					>= (self.readers.session.snapshot.height
+						- self.viewport() - 3.)
+						.max(0.)
+			{
+				self.readers.session.pending_scroll = Some(f32::INFINITY);
+				f32::INFINITY
+			} else {
+				self.readers.session.coverage(self.viewport())
+			};
 			self.error = false;
 			self.status_until = None;
 			self.status = "Updating…".into();
@@ -49,10 +61,12 @@ impl App {
 		}
 		self.observe_document();
 		self.interaction.clear_selection();
+		self.worker.cancel();
 		self.error = false;
 		self.status.clear();
 		self.status_until = None;
 		if self.readers.session.document.is_none()
+			|| self.readers.session.layout_pending
 			|| self.readers.session.requested_options.as_ref()
 				!= Some(&self.options())
 		{
@@ -72,6 +86,7 @@ impl App {
 			tabs::Closed::Active => {}
 		}
 		self.watch = None;
+		self.worker.cancel();
 		self.interaction.clear_selection();
 		self.error = false;
 		self.status.clear();
@@ -83,6 +98,7 @@ impl App {
 		} else if self.readers.session.path.is_some() {
 			self.observe_document();
 			if self.readers.session.document.is_none()
+				|| self.readers.session.layout_pending
 				|| self.readers.session.requested_options.as_ref()
 					!= Some(&self.options())
 			{

@@ -103,7 +103,7 @@ impl Chrome<'_> {
 		};
 		out.extend(draw_footer(
 			self.ui,
-			self.session.counts,
+			(!self.session.layout_pending).then_some(self.session.counts),
 			self.interaction.selection_counts.map(|(_, counts)| counts),
 			warning,
 			if self
@@ -128,6 +128,10 @@ impl Chrome<'_> {
 				"Open a Markdown file"
 			} else if self.error {
 				"Unable to read this file"
+			} else if self.session.layout_pending
+				|| self.session.document.is_none()
+			{
+				"Opening document…"
 			} else {
 				"The document is empty"
 			};
@@ -139,7 +143,13 @@ impl Chrome<'_> {
 				Paint::Styled(Role::Ui, C::Color),
 			));
 			out.extend(self.ui.label(
-				"Drop a file here or press Ctrl+O.",
+				if self.session.path.is_some()
+					&& !self.error && self.session.layout_pending
+				{
+					"Preparing the first page…"
+				} else {
+					"Drop a file here or press Ctrl+O."
+				},
 				15.0,
 				x,
 				y + 38.0,

@@ -155,6 +155,7 @@ fn identical_content_with_a_new_version_keeps_the_selection() {
 			document: document.clone(),
 			layout: layout.clone(),
 			content_version: 1,
+			complete: true,
 		},
 		300.0,
 	));
@@ -164,10 +165,128 @@ fn identical_content_with_a_new_version_keeps_the_selection() {
 			document,
 			layout,
 			content_version: 2,
+			complete: true,
 		},
 		300.0,
 	));
 	assert_eq!(session.accepted_revision, 2);
+}
+
+#[test]
+fn pending_pages_accumulate_reverse_and_resolve_without_blank_frames() {
+	let mut session = ReaderSession {
+		layout_pending: true,
+		..Default::default()
+	};
+	session.snapshot.height = 700.;
+	for _ in 0..3 {
+		session.scroll_by(540., 600.);
+	}
+	assert_eq!(session.scroll, 0.);
+	assert_eq!(session.pending_scroll, Some(1620.));
+	session.snapshot.height = 1500.;
+	session.resolve_scroll(600.);
+	assert_eq!(session.scroll, 0.);
+	session.snapshot.height = 2300.;
+	session.resolve_scroll(600.);
+	assert_eq!(session.scroll, 1620.);
+	assert_eq!(session.pending_scroll, None);
+	session.scroll_by(f32::INFINITY, 600.);
+	assert_eq!(session.scroll, 1620.);
+	session.scroll_by(-540., 600.);
+	assert_eq!(session.scroll, 1080.);
+	session.scroll_by(5400., 600.);
+	session.scroll_by(f32::NEG_INFINITY, 600.);
+	assert_eq!(session.scroll, 0.);
+	assert_eq!(session.pending_scroll, None);
+	session.scroll_by(f32::INFINITY, 600.);
+	session.scroll_by(0., 600.);
+	assert_eq!(session.pending_scroll, Some(f32::INFINITY));
+	session.layout_pending = false;
+	session.resolve_scroll(600.);
+	assert_eq!(session.scroll, 1700.);
+}
+
+#[test]
+fn partial_reload_waits_for_anchor_and_keeps_the_old_snapshot() {
+	let mut engine = crate::layout::LayoutEngine::new();
+	let options = LayoutOptions::default();
+	let document = Arc::new(document::parse("Paragraph.\n\n".repeat(100)));
+	let full = engine.layout(&document, &options);
+	let mut session = ReaderSession::default();
+	session.accept(
+		crate::worker::ReaderSnapshot {
+			document: document.clone(),
+			layout: full.clone(),
+			content_version: 1,
+			complete: true,
+		},
+		600.,
+	);
+	session.scroll = 1800.;
+	let mut partial = full.clone();
+	partial.blocks.truncate(5);
+	partial.height = full.blocks[5].y;
+	let reader = crate::worker::ReaderSnapshot {
+		document,
+		layout: partial,
+		content_version: 2,
+		complete: false,
+	};
+	assert!(!session.can_display(&reader, 600.));
+	assert_eq!(session.snapshot.blocks.len(), 100);
+	assert_eq!(session.scroll, 1800.);
+}
+
+#[test]
+fn completing_a_prefix_preserves_scroll_and_selection_and_finishes_counts() {
+	let document = Arc::new(document::parse("Paragraph.\n\n".repeat(100)));
+	let mut engine = crate::layout::LayoutEngine::new();
+	let mut prefix = None;
+	let layout = engine
+		.layout_progressive(
+			&document,
+			&LayoutOptions::default(),
+			&Default::default(),
+			|p| {
+				if p.blocks.len() == 10 {
+					prefix = Some(p.clone());
+				}
+				true
+			},
+		)
+		.unwrap();
+	let mut session = ReaderSession::default();
+	session.accept(
+		crate::worker::ReaderSnapshot {
+			document: document.clone(),
+			layout: prefix.unwrap(),
+			content_version: 1,
+			complete: false,
+		},
+		100.,
+	);
+	session.scroll_by(100., 100.);
+	let selection = session.snapshot.select_all(1).unwrap();
+	let text = session.snapshot.extract_text(selection, 1);
+	let reader = crate::worker::ReaderSnapshot {
+		document,
+		layout,
+		content_version: 1,
+		complete: true,
+	};
+	assert!(session.extends_prefix(&reader));
+	let rebased = session
+		.snapshot
+		.rebase_selection(&reader.layout, selection, 1, 1)
+		.unwrap();
+	assert_eq!(reader.layout.extract_text(rebased, 1), text);
+	assert_eq!(session.counts, TextCounts::default());
+	session.accept(reader, 100.);
+	assert_eq!(session.scroll, 100.);
+	assert!(session.snapshot_complete);
+	assert!(!session.layout_pending);
+	assert!(session.counts.chars > text.len());
 }
 #[test]
 fn text_and_layout_are_accepted_together_and_reflow_is_not_new_content() {
@@ -178,6 +297,7 @@ fn text_and_layout_are_accepted_together_and_reflow_is_not_new_content() {
 		document: document.clone(),
 		layout: engine.layout(&document, &LayoutOptions::default()),
 		content_version: 1,
+		complete: true,
 	};
 	assert!(session.accept(reader.clone(), 300.0));
 	assert_eq!(session.counts, TextCounts { chars: 5, words: 1 });

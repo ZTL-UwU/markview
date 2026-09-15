@@ -64,12 +64,49 @@ offscreen method as the table above. `text-cjk-100k` has no math;
 | text-cjk-100k | 133.3 | 119.7 | 2.4 | 82.4 |
 | math-cjk-100k | 128.0 | 112.0 | 2.6 | 79.7 |
 
-Layout is ~90 % of the first open, and about two thirds of layout is text
+In that diagnostic baseline, layout is ~90 % of the first open, and about two thirds of layout is text
 shaping: the same paragraph is shaped once to measure it (`units`) and again
 per line (`line_clusters`), and `choose_font` re-scans font coverage per
 grapheme cluster. Formula typesetting is negligible for repeated LaTeX. The
 full stage-by-stage breakdown and method notes are in
 `artifacts/performance-large-100k.md`.
+
+Font selection now resolves each appearance's candidate set once per shaping
+call and retains the selected face index for repeated grapheme clusters or
+joining-script words. Coverage still requires the whole cluster/word; unsupported
+text is cached too. Each candidate set retains at most 4096 choices of at most
+128 UTF-8 bytes each, and setting the stylesheet clears all candidate sets and
+choices. This avoids repeated font-list allocation, coverage scans, and face
+cloning during the first document layout. Paragraph measurement and line-boundary
+reshaping remain separate so kerning, ligatures, bidi, and inserted hyphens keep
+their existing behavior. Opening still waits for full document geometry.
+
+The same-day optimization comparison preserved release commit
+`3a99ac40ec3266861044ce839843c07093f21587` and alternated it with the candidate
+on the same Intel Arc/Vulkan host, this time with the existing `power-saver`
+profile left unchanged. Fifteen process groups per large fixture (30 full and
+30 cached samples each) produced these medians; these absolute times are not
+comparable to the performance-profile reference above:
+
+| Fixture | Baseline first open (ms) | Optimized first open (ms) | Change | Full reflow P95 before → after (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| text-cjk-100k | 227.30 | 174.30 | −23.3% | 220.18 → 164.28 |
+| math-cjk-100k | 227.77 | 178.83 | −21.5% | 208.23 → 160.16 |
+
+Both large fixtures' cached timings and RSS stayed within the 5% regression
+threshold; tracked GPU capacities were unchanged. Sixteen baseline/candidate
+PNG pairs were byte-identical across six fixtures and two examples, at the top
+at scale 1 and scrolled 1800 px at scale 2. Workspace tests, the three GPU tests,
+native-window opening, and watch smoke checks passed. Raw measurements, binary
+hashes, environment metadata, and verification notes are under
+`artifacts/open-optimization/` (ignored by Git).
+
+The full comparison is not an all-metrics acceptance pass: after retaining 35
+ordinary-10k process groups, cached-refresh P50 was 1.083 → 1.165 ms (+7.6%)
+and P95 was 1.747 → 2.036 ms (+16.5%). Cached geometry medians were nearly
+unchanged (0.069 → 0.071 ms), while GPU-completion medians increased
+(0.764 → 0.806 ms). This does not establish the cause, and the small-file
+cached-refresh regression remains unresolved under this power profile.
 
 These numbers require the host to be in its normal power state. The same
 session first measured ordinary-10k at 42.6 ms on battery with the

@@ -131,3 +131,124 @@ fn unavailable_variant_weight_and_family_are_skipped() {
 	assert_eq!(face.weight, 400);
 	assert_eq!(face.style, FontStyle::Italic);
 }
+
+#[test]
+fn font_choices_are_scoped_and_invalidated_with_stylesheet() {
+	let mut s = shaper();
+	let appearance = s.stylesheet.inline(
+		&s.appearance,
+		&TextStyle {
+			italic: true,
+			..Default::default()
+		},
+	);
+	assert_eq!(s.choose_font("a", &appearance).unwrap().family, "Primary");
+	let index = s.resolve_fonts(&appearance);
+	assert!(s.font_sets[index].choices.contains_key("a"));
+	let missing = "\u{10ffff}";
+	assert!(s.choose_font(missing, &appearance).is_none());
+	assert_eq!(s.font_sets[index].choices.get(missing), Some(&None));
+	let mut other = appearance.clone();
+	other.font = vec![Font {
+		family: "Fallback".into(),
+		variant: Variant::Normal,
+		weight: None,
+	}];
+	assert_ne!(index, s.resolve_fonts(&other));
+	let mut style = (*s.stylesheet).clone();
+	style.merge(
+		&Stylesheet::parse(
+			"format_version=1\nversion=1\n[[fontdef]]\nid='Primary'\nlookfor=['Missing']",
+		)
+		.unwrap(),
+	);
+	s.set_stylesheet(Arc::new(style));
+	assert!(s.font_sets.is_empty());
+	assert!(s.faces.is_empty());
+	assert_ne!(
+		s.choose_font("a", &appearance).map(|f| f.family),
+		Some("Primary".into())
+	);
+}
+
+#[test]
+fn font_choice_cache_is_bounded() {
+	let mut set = FontSet::default();
+	for i in 0..5000 {
+		assert_eq!(set.choose(&format!("word{i}")), None);
+	}
+	assert_eq!(set.choices.len(), 4096);
+	let mut set = FontSet::default();
+	set.choose(&"a".repeat(129));
+	assert!(set.choices.is_empty());
+}
+
+#[test]
+fn cached_choices_preserve_contextual_shaping() {
+	let mut s = shaper();
+	for text in [
+		"office affine",
+		"a\u{301} a\u{200d}",
+		"中文 English",
+		"مرحبا بالعالم",
+		"אבג abc",
+		"👩‍💻",
+	] {
+		for set in &mut s.font_sets {
+			set.choices.clear();
+		}
+		let spans = [Span {
+			range: 0..text.len(),
+			style: TextStyle {
+				italic: true,
+				..Default::default()
+			},
+		}];
+		let cold = s.shape(text, &spans, 18., false);
+		let warm = s.shape(text, &spans, 18., false);
+		assert_eq!(cold.len(), warm.len());
+		for (a, b) in cold.iter().zip(&warm) {
+			assert_eq!(
+				(
+					&a.range,
+					a.rtl,
+					a.width,
+					a.ascent,
+					a.descent,
+					a.continuation
+				),
+				(
+					&b.range,
+					b.rtl,
+					b.width,
+					b.ascent,
+					b.descent,
+					b.continuation
+				)
+			);
+			assert_eq!(a.glyphs.len(), b.glyphs.len());
+			for (a, b) in a.glyphs.iter().zip(&b.glyphs) {
+				assert_eq!(
+					(
+						a.font.data.id(),
+						a.font.index,
+						a.id,
+						a.size,
+						a.x,
+						a.y,
+						&a.coords
+					),
+					(
+						b.font.data.id(),
+						b.font.index,
+						b.id,
+						b.size,
+						b.x,
+						b.y,
+						&b.coords
+					)
+				);
+			}
+		}
+	}
+}

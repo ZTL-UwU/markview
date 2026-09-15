@@ -18,6 +18,40 @@ struct Face {
 	weight: u16,
 }
 
+#[derive(Default)]
+struct FontSet {
+	faces: Vec<Face>,
+	choices: HashMap<String, Option<usize>>,
+}
+type FaceChoice = Option<(usize, usize)>;
+impl FontSet {
+	fn choose(&mut self, text: &str) -> Option<usize> {
+		if let Some(choice) = self.choices.get(text) {
+			return *choice;
+		}
+		let choice = self.faces.iter().position(|face| {
+			swash::FontRef::from_index(
+				face.font.data.data(),
+				face.font.index as usize,
+			)
+			.is_some_and(|font| {
+				let charmap = font.charmap();
+				text.chars().all(|c| {
+					c.is_control()
+						|| matches!(c as u32,0x200c..=0x200f|0xfe00..=0xfe0f|0xe0100..=0xe01ef)
+						|| charmap.map(c) != 0
+				})
+			})
+		});
+		// Bound retained text even for documents containing unique joining words.
+		// Cache misses (including unsupported clusters) preserve the same scan.
+		if text.len() <= 128 && self.choices.len() < 4096 {
+			self.choices.insert(text.to_owned(), choice);
+		}
+		choice
+	}
+}
+
 #[derive(Clone)]
 pub(crate) struct Span {
 	pub(crate) range: Range<usize>,
@@ -39,7 +73,8 @@ pub struct TextShaper {
 	context: LayoutContext<usize>,
 	pub stylesheet: Arc<Stylesheet>,
 	pub appearance: TextAppearance,
-	faces: HashMap<(Vec<Font>, u16), Vec<Face>>,
+	faces: HashMap<(Vec<Font>, u16), usize>,
+	font_sets: Vec<FontSet>,
 }
 impl Default for TextShaper {
 	fn default() -> Self {
@@ -55,10 +90,12 @@ impl TextShaper {
 			appearance: Stylesheet::bundled(false)
 				.text(&TextAppearance::default(), Role::Body),
 			faces: HashMap::new(),
+			font_sets: Vec::new(),
 		}
 	}
 	pub fn set_stylesheet(&mut self, stylesheet: Arc<Stylesheet>) {
 		self.faces.clear();
+		self.font_sets.clear();
 		self.appearance =
 			stylesheet.text(&TextAppearance::default(), Role::Body);
 		self.stylesheet = stylesheet;
@@ -71,11 +108,17 @@ impl TextShaper {
 		// stylesheet. choose_font skips it and continues with later candidates.
 		Ok(())
 	}
+	#[cfg(test)]
 	fn choose_font(
 		&mut self,
 		text: &str,
 		appearance: &TextAppearance,
 	) -> Option<Face> {
+		let index = self.resolve_fonts(appearance);
+		let set = &mut self.font_sets[index];
+		set.choose(text).map(|i| set.faces[i].clone())
+	}
+	fn resolve_fonts(&mut self, appearance: &TextAppearance) -> usize {
 		let key = (appearance.font.clone(), appearance.weight);
 		if !self.faces.contains_key(&key) {
 			let mut faces = Vec::new();
@@ -182,24 +225,13 @@ impl TextShaper {
 					}
 				}
 			}
-			self.faces.insert(key.clone(), faces);
+			self.faces.insert(key.clone(), self.font_sets.len());
+			self.font_sets.push(FontSet {
+				faces,
+				..Default::default()
+			});
 		}
 		self.faces[&key]
-			.iter()
-			.find(|face| {
-				swash::FontRef::from_index(
-					face.font.data.data(),
-					face.font.index as usize,
-				)
-				.is_some_and(|font| {
-					text.chars().all(|c| {
-						c.is_control()
-							|| matches!(c as u32,0x200c..=0x200f|0xfe00..=0xfe0f|0xe0100..=0xe01ef)
-							|| font.charmap().map(c) != 0
-					})
-				})
-			})
-			.cloned()
 	}
 	pub(crate) fn shape(
 		&mut self,
@@ -216,7 +248,12 @@ impl TextShaper {
 			.iter()
 			.map(|span| self.stylesheet.inline(&base, &span.style))
 			.collect();
-		let mut choices: Vec<(Range<usize>, Option<Face>)> = Vec::new();
+		let base_fonts = self.resolve_fonts(&base);
+		let span_fonts: Vec<_> = appearances
+			.iter()
+			.map(|appearance| self.resolve_fonts(appearance))
+			.collect();
+		let mut choices: Vec<(Range<usize>, FaceChoice)> = Vec::new();
 		crate::profile::span(crate::profile::Stage::FontChoose, || {
 			// Resolve whole joining-script words together; elsewhere resolve grapheme clusters.
 			// All ranges are subsequently shaped in one paragraph, preserving bidi and context.
@@ -239,18 +276,22 @@ impl TextShaper {
 				}
 				for (offset, part) in parts {
 					let pos = start + offset;
-					let appearance = spans
+					let fonts = spans
 						.iter()
 						.position(|s| s.range.contains(&pos))
-						.map(|i| &appearances[i])
-						.unwrap_or(&base);
-					let face = self.choose_font(part, appearance);
+						.map(|i| span_fonts[i])
+						.unwrap_or(base_fonts);
+					let face =
+						self.font_sets[fonts].choose(part).map(|i| (fonts, i));
+					let identity = |choice: FaceChoice| {
+						choice.map(|(set, index)| {
+							let f = &self.font_sets[set].faces[index];
+							(&f.family, f.style, f.weight)
+						})
+					};
 					if let Some((range, previous)) = choices.last_mut()
 						&& range.end == pos
-						&& face.as_ref().map(|f| (&f.family, f.style, f.weight))
-							== previous
-								.as_ref()
-								.map(|f| (&f.family, f.style, f.weight))
+						&& identity(face) == identity(*previous)
 					{
 						range.end = pos + part.len();
 						continue;
@@ -268,7 +309,8 @@ impl TextShaper {
 		builder.push_default(StyleProperty::FontStyle(FontStyle::Normal));
 		builder.push_default(StyleProperty::Brush(usize::MAX));
 		for (range, face) in &choices {
-			if let Some(face) = face {
+			if let Some((set, index)) = face {
+				let face = &self.font_sets[*set].faces[*index];
 				builder.push(
 					StyleProperty::FontFamily(
 						parley::FontFamilyName::Named(

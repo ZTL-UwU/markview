@@ -283,6 +283,9 @@ impl App {
 							"c" if !self.panel_has_focus() => {
 								self.copy_selection()
 							}
+							"v" if !self.interaction.panel_open => {
+								self.paste_markdown()
+							}
 							"," => self.action(Command::Settings),
 							"o" if !self.panel_has_focus() => {
 								self.action(Command::Open)

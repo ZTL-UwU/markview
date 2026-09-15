@@ -7,6 +7,30 @@ use std::time::{Duration, Instant};
 
 use super::{App, BOTTOM, Event, TOP, system_theme};
 
+fn sanitize_filename(title: &str) -> String {
+	let name: String = title
+		.chars()
+		.map(|c| {
+			if c.is_control()
+				|| matches!(
+					c,
+					'/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+				) {
+				' '
+			} else {
+				c
+			}
+		})
+		.collect();
+	let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+	let name: String = name.chars().take(48).collect();
+	if name.trim().is_empty() {
+		"Pasted Markdown".into()
+	} else {
+		name
+	}
+}
+
 impl App {
 	pub(super) fn action(&mut self, action: Command) {
 		match action {
@@ -361,6 +385,36 @@ impl App {
 			}
 		}
 	}
+	pub(super) fn paste_markdown(&mut self) {
+		let text = match self.clipboard.read() {
+			Ok(text) => text,
+			Err(error) => {
+				self.status = format!("Cannot read clipboard: {error}");
+				self.error = true;
+				self.status_until =
+					Some(Instant::now() + Duration::from_secs(3));
+				self.redraw();
+				return;
+			}
+		};
+		if !crate::paste::looks_like_markdown(&text) {
+			return;
+		}
+		let title = crate::paste::title_for(&text);
+		self.paste_serial = self.paste_serial.wrapping_add(1);
+		let filename =
+			format!("{}-{}.md", sanitize_filename(&title), self.paste_serial);
+		let path = self.paste_dir.path().join(filename);
+		if let Err(error) = std::fs::write(&path, text) {
+			self.status = format!("Cannot paste Markdown: {error}");
+			self.error = true;
+			self.status_until = Some(Instant::now() + Duration::from_secs(3));
+			self.redraw();
+			return;
+		}
+		self.open(path);
+	}
+
 	pub(super) fn flush_settings(&mut self) {
 		if self.preferences.flush() && self.args.mode == Mode::Window {
 			self.apply_saved_settings();

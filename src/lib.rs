@@ -6,6 +6,7 @@ mod benchmark;
 mod cli;
 mod file;
 mod images;
+mod paste;
 mod platform;
 mod settings;
 mod state;

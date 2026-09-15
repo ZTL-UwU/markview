@@ -24,6 +24,7 @@ sudo apt-get install libfontconfig1-dev libxkbcommon-dev libwayland-dev fonts-no
 ## Reading
 
 - `Ctrl+O` opens a file; `Ctrl+T` chooses styles; `Ctrl+,` opens settings.
+- `Ctrl+V` opens clipboard text that looks like Markdown in a new tab. The tab title comes from its first heading or sentence.
 - `Ctrl++` / `Ctrl+-` changes the type size. `Ctrl+[` / `Ctrl+]` changes the reading column.
 - Scroll with the wheel, arrow keys, Page Up/Down, Space, Home, End, or the scrollbar.
 - Drag to select and use `Ctrl+C` to copy. `Ctrl+A` selects the document.

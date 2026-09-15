@@ -70,6 +70,8 @@ struct App {
 	ui: TextShaper,
 	preferences: preferences::Preferences,
 	clipboard: crate::platform::Clipboard,
+	paste_dir: tempfile::TempDir,
+	paste_serial: u32,
 	status: String,
 	status_until: Option<Instant>,
 	error: bool,
@@ -119,6 +121,9 @@ impl App {
 			ui,
 			preferences,
 			clipboard: Default::default(),
+			paste_dir: tempfile::tempdir()
+				.expect("create clipboard paste directory"),
+			paste_serial: 0,
 			status: String::new(),
 			status_until: None,
 			error: false,

@@ -54,7 +54,7 @@ fn settings_and_selection_frame() -> Result<()> {
 					w: width,
 					h: TOP,
 				},
-				Paint::Background,
+				Paint::Styled(Condition::Toolbar, C::Background),
 			),
 			Draw::Rect(
 				Rect {
@@ -63,7 +63,7 @@ fn settings_and_selection_frame() -> Result<()> {
 					w: width,
 					h: 1.0,
 				},
-				Paint::Border,
+				Paint::Styled(Condition::Toolbar, C::BorderColor),
 			),
 		];
 		overlay.extend(draw_footer(

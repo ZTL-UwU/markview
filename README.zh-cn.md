@@ -25,6 +25,7 @@ sudo apt-get install libfontconfig1-dev libxkbcommon-dev libwayland-dev fonts-no
 
 - `Ctrl+O` 打开文件；`Ctrl+T` 选择样式；`Ctrl+,` 打开设置。
 - `Ctrl++` / `Ctrl+-` 调整字号；`Ctrl+[` / `Ctrl+]` 调整阅读栏宽度。
+- 段落缩进默认关闭。可在**设置**中选择，或在 `settings.toml` 中设置 `paragraph_indent`；正文段落缩进首行，列表整体缩进（含项目符号和编号），表格单元格和脚注不缩进。
 - 使用滚轮、方向键、Page Up/Down、空格、Home、End 或滚动条滚动。
 - 拖动选择文本，使用 `Ctrl+C` 复制；`Ctrl+A` 全选。
 - 点击链接时，`http`、`https`、`mailto` 与本地文件交给系统默认程序打开；指向其他 `.md` 文件的链接会在新标签页中打开，中键在后台打开而不切换当前标签页。链接中的 `#标题锚点` 会定位到对应标题，无论它在当前文档还是刚打开的 `.md` 文件中。

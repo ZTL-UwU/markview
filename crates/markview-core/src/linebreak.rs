@@ -158,6 +158,7 @@ fn line_score(
 fn optimize(
 	units: &[Unit],
 	target: f32,
+	first_target: f32,
 	justified: bool,
 	emergency: bool,
 	budget: &mut usize,
@@ -187,15 +188,24 @@ fn optimize(
 			}
 			let (range, natural, stretch, shrink) =
 				p.metrics(units, points[i], end);
+			// Only the line opening the paragraph sees the first-line indent.
+			let line_target =
+				if points[i] == 0 { first_target } else { target };
 			let width = natural + if last { 0.0 } else { br.hyphen_width };
-			if width - shrink > target + 0.01 && !range.is_empty() {
+			if width - shrink > line_target + 0.01 && !range.is_empty() {
 				break;
 			}
 			if range.is_empty() && !last {
 				continue;
 			}
 			let Some((_, fitness, cost)) = line_score(
-				width, stretch, shrink, target, last, justified, emergency,
+				width,
+				stretch,
+				shrink,
+				line_target,
+				last,
+				justified,
+				emergency,
 			) else {
 				continue;
 			};
@@ -251,8 +261,15 @@ fn optimize(
 			p.metrics(units, points[i], points[j]);
 		let hyphen = !last && br.hyphen_width > 0.0;
 		let width = width + if hyphen { br.hyphen_width } else { 0.0 };
+		let line_target = if points[i] == 0 { first_target } else { target };
 		let (ratio, _, _) = line_score(
-			width, stretch, shrink, target, last, justified, emergency,
+			width,
+			stretch,
+			shrink,
+			line_target,
+			last,
+			justified,
+			emergency,
 		)?;
 		result.lines.push(Line {
 			units: range,
@@ -269,6 +286,15 @@ fn optimize(
 
 /// Greedy fallback observes legal boundaries; an unbreakable box may overflow.
 pub fn greedy(units: &[Unit], target: f32) -> Solution {
+	greedy_with_first(units, target, target)
+}
+
+/// Greedy fallback whose first line may have a shorter target, for indents.
+pub fn greedy_with_first(
+	units: &[Unit],
+	target: f32,
+	first_target: f32,
+) -> Solution {
 	let p = Prefix::new(units);
 	let mut result = Solution {
 		degraded: true,
@@ -276,6 +302,8 @@ pub fn greedy(units: &[Unit], target: f32) -> Solution {
 	};
 	let mut start = 0;
 	while start < units.len() {
+		let line_target =
+			if start == 0 { first_target } else { target }.max(1.0);
 		let mut best = None;
 		for end in start + 1..=units.len() {
 			let br = units[end - 1]
@@ -287,7 +315,7 @@ pub fn greedy(units: &[Unit], target: f32) -> Solution {
 			let (range, width, _, _) = p.metrics(units, start, end);
 			let last = br.forced || end == units.len();
 			let width = width + if last { 0.0 } else { br.hyphen_width };
-			if width > target && best.is_some() {
+			if width > line_target && best.is_some() {
 				break;
 			}
 			best = Some((
@@ -300,7 +328,7 @@ pub fn greedy(units: &[Unit], target: f32) -> Solution {
 					last,
 				},
 			));
-			if last || width > target {
+			if last || width > line_target {
 				break;
 			}
 		}
@@ -312,20 +340,35 @@ pub fn greedy(units: &[Unit], target: f32) -> Solution {
 }
 
 pub fn break_lines(units: &[Unit], target: f32, justified: bool) -> Solution {
+	break_lines_with_first(units, target, target, justified)
+}
+
+/// Bounded Knuth–Plass where the line opening the paragraph may be indented,
+/// so it is measured and justified against a shorter target than the rest.
+pub fn break_lines_with_first(
+	units: &[Unit],
+	target: f32,
+	first_target: f32,
+	justified: bool,
+) -> Solution {
 	if units.is_empty() {
 		return Solution::default();
 	}
 	let target = target.max(1.0);
+	let first_target = first_target.max(1.0);
 	let mut budget = 0;
-	if let Some(s) = optimize(units, target, justified, false, &mut budget) {
-		return s;
-	}
-	if budget <= BUDGET
-		&& let Some(s) = optimize(units, target, justified, true, &mut budget)
+	if let Some(s) =
+		optimize(units, target, first_target, justified, false, &mut budget)
 	{
 		return s;
 	}
-	let mut s = greedy(units, target);
+	if budget <= BUDGET
+		&& let Some(s) =
+			optimize(units, target, first_target, justified, true, &mut budget)
+	{
+		return s;
+	}
+	let mut s = greedy_with_first(units, target, first_target);
 	s.evaluations = budget;
 	s
 }
@@ -405,5 +448,27 @@ mod tests {
 		assert!(s.degraded);
 		assert_eq!(s.lines[0].units, 0..1);
 		assert_eq!(s.lines[1].units, 2..3);
+	}
+	#[test]
+	fn first_line_target_narrows_only_the_opening_line() {
+		let u = words(&[12.0; 6]);
+		let indented = break_lines_with_first(&u, 40.0, 20.0, false);
+		assert!(!indented.degraded);
+		// The full measure fits two words per line; the indented first line
+		// fits only one, and the remaining lines recover the full measure.
+		assert_eq!(indented.lines[0].units, 0..1);
+		assert_eq!(indented.lines.len(), 4);
+		let equal = break_lines_with_first(&u, 40.0, 40.0, false);
+		let baseline = break_lines(&u, 40.0, false);
+		assert_eq!(equal.lines.len(), baseline.lines.len());
+		assert!(
+			equal
+				.lines
+				.iter()
+				.zip(&baseline.lines)
+				.all(|(a, b)| a.units == b.units)
+		);
+		let greedy = greedy_with_first(&u, 40.0, 20.0);
+		assert_eq!(greedy.lines[0].units, 0..1);
 	}
 }

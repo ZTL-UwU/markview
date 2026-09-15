@@ -71,6 +71,9 @@ pub struct LayoutOptions {
 	pub font_size: f32,
 	pub justify: bool,
 	pub hyphenate: bool,
+	/// Indent in multiples of the text size: the opening line of prose
+	/// paragraphs, and the whole of a list, markers included. Zero disables it.
+	pub paragraph_indent: f32,
 	pub greedy: bool,
 	pub codeblock_theme_override: Option<String>,
 	pub stylesheet: Arc<crate::style::Stylesheet>,
@@ -82,6 +85,7 @@ impl Default for LayoutOptions {
 			font_size: 18.0,
 			justify: true,
 			hyphenate: true,
+			paragraph_indent: 0.0,
 			greedy: false,
 			codeblock_theme_override: None,
 			stylesheet: crate::style::Stylesheet::bundled(false),
@@ -95,9 +99,18 @@ impl PartialEq for LayoutOptions {
 			&& self.font_size == other.font_size
 			&& self.justify == other.justify
 			&& self.hyphenate == other.hyphenate
+			&& self.paragraph_indent == other.paragraph_indent
 			&& self.greedy == other.greedy
 			&& self.codeblock_theme_override == other.codeblock_theme_override
 			&& self.stylesheet.layout_key() == other.stylesheet.layout_key()
+	}
+}
+
+impl LayoutOptions {
+	/// The indent in logical pixels for content set at `size`, capped so a
+	/// character still fits in `width`.
+	pub(crate) fn indent(&self, size: f32, width: f32) -> f32 {
+		(self.paragraph_indent.max(0.0) * size).min((width - size).max(0.0))
 	}
 }
 
@@ -122,6 +135,7 @@ struct CacheKey {
 	size: u32,
 	justify: bool,
 	hyphenate: bool,
+	paragraph_indent: u32,
 	greedy: bool,
 	codeblock_theme_override: Option<String>,
 	codeblock_theme: Option<String>,
@@ -237,6 +251,7 @@ impl LayoutEngine {
 				size: options.font_size.to_bits(),
 				justify: options.justify,
 				hyphenate: options.hyphenate,
+				paragraph_indent: options.paragraph_indent.to_bits(),
 				greedy: options.greedy,
 				codeblock_theme_override: options
 					.codeblock_theme_override

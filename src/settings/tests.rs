@@ -33,6 +33,7 @@ fn invalid_reload_and_deletion_retain_last_good_settings() {
 		"font_size =",
 		"font_size = 99",
 		"width = nan",
+		"paragraph_indent = 5",
 		"theme = 'unknown'",
 		"version = 2",
 	] {
@@ -144,6 +145,37 @@ fn theme_preference_is_optional_and_only_a_choice_pins_it() {
 	let (loaded, _) = SettingsStore::load(Some(path));
 	assert_eq!(loaded.theme_preference(), None);
 }
+#[test]
+fn paragraph_indent_round_trips_layout_and_bounds() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("settings.toml");
+	fs::write(&path, "paragraph_indent = 2.0\n").unwrap();
+	let (mut store, warning) = SettingsStore::load(Some(path.clone()));
+	assert!(warning.is_none());
+	assert_eq!(store.settings().paragraph_indent, 2.0);
+	let mut ui = store.settings();
+	ui.paragraph_indent = 1.5;
+	store.changed(&ui, Some(Setting::ParagraphIndent));
+	store.flush().unwrap();
+	let (loaded, warning) = SettingsStore::load(Some(path));
+	assert!(warning.is_none());
+	assert_eq!(loaded.settings().paragraph_indent, 1.5);
+	assert_eq!(
+		loaded
+			.settings()
+			.layout_options(900.0, false)
+			.paragraph_indent,
+		1.5
+	);
+	for invalid in [-1.0, 4.5, f32::NAN] {
+		let settings = ReaderSettings {
+			paragraph_indent: invalid,
+			..Default::default()
+		};
+		assert!(settings.validate().is_err(), "{invalid}");
+	}
+}
+
 #[test]
 fn corrupt_configuration_is_preserved_and_defaults_recover() {
 	let dir = tempfile::tempdir().unwrap();

@@ -322,6 +322,175 @@ fn overflowing_blocks_reserve_the_configured_scrollbar_gutter() {
 	assert!((delta - (30.0 - bundled)).abs() < 0.01, "{delta}");
 }
 #[test]
+fn indent_applies_to_text_leading_paragraphs_and_whole_lists() {
+	fn first_x(snapshot: &LayoutSnapshot, block: usize, node: usize) -> f32 {
+		snapshot.blocks[block].layout.text[node].clusters[0].rect.x
+	}
+	fn second_line_x(
+		snapshot: &LayoutSnapshot,
+		block: usize,
+		node: usize,
+	) -> f32 {
+		let clusters = &snapshot.blocks[block].layout.text[node].clusters;
+		let first = clusters[0].rect.y;
+		clusters
+			.iter()
+			.find(|c| (c.rect.y - first).abs() > 1.0)
+			.expect("wrapped line")
+			.rect
+			.x
+	}
+	fn image_x(snapshot: &LayoutSnapshot, block: usize) -> f32 {
+		snapshot.blocks[block]
+			.layout
+			.draws
+			.iter()
+			.find_map(|d| match d {
+				Draw::Image { rect, .. } => Some(rect.x),
+				_ => None,
+			})
+			.expect("image draw")
+	}
+	fn math_x(snapshot: &LayoutSnapshot, block: usize) -> f32 {
+		snapshot.blocks[block]
+			.layout
+			.draws
+			.iter()
+			.find_map(|d| match d {
+				Draw::Math { x, .. } => Some(*x),
+				_ => None,
+			})
+			.expect("math draw")
+	}
+	let mut e = LayoutEngine::new();
+	let doc = document::parse(
+		"Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi.\n\n\
+		 ![missing image](absent.png)\n\n\
+		 > Quoted paragraph text.\n\n\
+		 - bullet item text that is long enough to wrap onto a second line\n\n\
+		 1. ordered item text that is long enough to wrap onto a second line\n\n\
+		 $$\\frac{a}{b}$$\n\n\
+		 Reference[^1].\n\n\
+		 [^1]: Footnote body text.\n",
+	);
+	let width = 320.0;
+	let plain = e.layout(
+		&doc,
+		&LayoutOptions {
+			width,
+			..Default::default()
+		},
+	);
+	let one = e.layout(
+		&doc,
+		&LayoutOptions {
+			width,
+			paragraph_indent: 1.0,
+			..Default::default()
+		},
+	);
+	let two = e.layout(
+		&doc,
+		&LayoutOptions {
+			width,
+			paragraph_indent: 2.0,
+			..Default::default()
+		},
+	);
+	let d1 = first_x(&one, 0, 0) - first_x(&plain, 0, 0);
+	let d2 = first_x(&two, 0, 0) - first_x(&plain, 0, 0);
+	assert!(d1 > 1.0, "expected an indent, got {d1}");
+	assert!((d2 - 2.0 * d1).abs() < 0.05, "{d1} {d2}");
+	// Wrapped lines keep the full measure, so the indent only opens the line.
+	assert!((second_line_x(&two, 0, 0) - first_x(&two, 0, 0) + d2).abs() < 0.6);
+	// A leading image or display formula keeps its own margin.
+	assert_eq!(image_x(&plain, 1), image_x(&two, 1));
+	assert_eq!(math_x(&plain, 5), math_x(&two, 5));
+	// A quoted paragraph is still prose and gains the indent.
+	assert!(first_x(&two, 2, 0) > first_x(&plain, 2, 0));
+	// A list indents as a whole: marker and item text move together, and the
+	// item's opening and wrapped lines share one margin.
+	for block in [3, 4] {
+		let marker = |s: &LayoutSnapshot| first_x(s, block, 0);
+		let text = |s: &LayoutSnapshot| first_x(s, block, 1);
+		assert!((marker(&two) - marker(&plain) - d2).abs() < 0.6);
+		assert!((text(&two) - text(&plain) - d2).abs() < 0.6);
+		assert!((second_line_x(&two, block, 1) - text(&two)).abs() < 0.6);
+	}
+	// A footnote stays flush behind its own label.
+	assert_eq!(first_x(&plain, 7, 0), first_x(&two, 7, 0));
+	// The indent is part of the block cache identity.
+	let again = e.layout(
+		&doc,
+		&LayoutOptions {
+			width,
+			paragraph_indent: 2.0,
+			..Default::default()
+		},
+	);
+	assert_eq!(again.reused, doc.blocks.len());
+	let changed = e.layout(
+		&doc,
+		&LayoutOptions {
+			width,
+			paragraph_indent: 3.0,
+			..Default::default()
+		},
+	);
+	assert_eq!(changed.reused, 0);
+}
+
+#[test]
+fn a_theme_can_inset_bullet_and_ordered_lists_separately() {
+	fn markers(
+		sheet: &Arc<crate::style::Stylesheet>,
+		indent: f32,
+	) -> (f32, f32) {
+		let doc = document::parse("- bullet item\n\n1. ordered item\n");
+		let mut e = LayoutEngine::new();
+		let s = e.layout(
+			&doc,
+			&LayoutOptions {
+				width: 400.0,
+				paragraph_indent: indent,
+				stylesheet: sheet.clone(),
+				..Default::default()
+			},
+		);
+		let x =
+			|block: usize| s.blocks[block].layout.text[0].clusters[0].rect.x;
+		(x(0), x(1))
+	}
+	let base = Arc::new(
+		crate::style::Stylesheet::parse("format_version=1\nversion=1").unwrap(),
+	);
+	let theme = Arc::new(
+		crate::style::Stylesheet::parse(
+			"format_version=1\nversion=1\n[list]\nindent=0.5\n[enum]\nindent=1.5",
+		)
+		.unwrap(),
+	);
+	let (flat_bullet, flat_ordered) = markers(&base, 0.0);
+	let (themed_bullet, themed_ordered) = markers(&theme, 0.0);
+	assert!((themed_bullet - flat_bullet - 0.5 * 18.0).abs() < 0.6);
+	assert!((themed_ordered - flat_ordered - 1.5 * 18.0).abs() < 0.6);
+	// The roles are independent: `[list]` alone leaves ordered lists flush.
+	let bullets = Arc::new(
+		crate::style::Stylesheet::parse(
+			"format_version=1\nversion=1\n[list]\nindent=1.0",
+		)
+		.unwrap(),
+	);
+	let (bullets_bullet, bullets_ordered) = markers(&bullets, 0.0);
+	assert!((bullets_bullet - flat_bullet - 18.0).abs() < 0.6);
+	assert!((bullets_ordered - flat_ordered).abs() < 0.6);
+	// The reader's paragraph indent stacks on the theme inset.
+	let (both_bullet, both_ordered) = markers(&theme, 2.0);
+	assert!((both_bullet - flat_bullet - 2.5 * 18.0).abs() < 0.6);
+	assert!((both_ordered - flat_ordered - 3.5 * 18.0).abs() < 0.6);
+}
+
+#[test]
 fn benchmark_corpus_needs_no_emergency_greedy_fallback() {
 	let mut e = LayoutEngine::new();
 	for source in [

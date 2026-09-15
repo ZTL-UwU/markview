@@ -95,6 +95,7 @@ impl Stylesheet {
 				("line_height", rule.line_height, true),
 				("space_before", rule.space_before, false),
 				("space_after", rule.space_after, false),
+				("indent", rule.indent, false),
 				("border_width", rule.border_width, false),
 				("radius", rule.radius, false),
 				("thickness", rule.thickness, true),
@@ -222,6 +223,7 @@ fn validate_field(role: Role, key: &str) -> Result<()> {
 			"size" => role != Body,
 			"background" => true,
 			"line_height" | "space_before" | "space_after" => role.block(),
+			"indent" => matches!(role, List | Enum),
 			"padding" | "border_width" | "radius" => {
 				role.block() && role != CodeLabel
 			}

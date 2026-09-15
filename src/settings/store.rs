@@ -24,6 +24,7 @@ struct Config {
 	width: f32,
 	justify: bool,
 	hyphenate: bool,
+	paragraph_indent: f32,
 	#[serde(rename = "cjk-type")]
 	cjk_type: Option<CjkType>,
 	#[serde(
@@ -44,6 +45,7 @@ impl Default for Config {
 			width: settings.width,
 			justify: settings.justify,
 			hyphenate: settings.hyphenate,
+			paragraph_indent: settings.paragraph_indent,
 			cjk_type: Some(settings.cjk_type),
 			codeblock_theme_override: None,
 		}
@@ -82,6 +84,7 @@ impl Config {
 			width: self.width,
 			justify: self.justify,
 			hyphenate: self.hyphenate,
+			paragraph_indent: self.paragraph_indent,
 			cjk_type: self.cjk_type.unwrap_or_else(default_cjk_type),
 			codeblock_theme_override: self.codeblock_theme_override.clone(),
 			..Default::default()
@@ -271,6 +274,7 @@ impl SettingsStore {
 					Setting::Width,
 					Setting::Justify,
 					Setting::Hyphenate,
+					Setting::ParagraphIndent,
 					Setting::CjkType,
 				];
 				self.saved = effective.clone();
@@ -313,6 +317,7 @@ impl SettingsStore {
 			width: self.saved.width,
 			justify: self.saved.justify,
 			hyphenate: self.saved.hyphenate,
+			paragraph_indent: self.saved.paragraph_indent,
 			cjk_type: Some(self.saved.cjk_type),
 			codeblock_theme_override: self
 				.saved

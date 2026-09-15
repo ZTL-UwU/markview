@@ -204,6 +204,9 @@ impl App {
 				self.preferences.values.hyphenate =
 					!self.preferences.values.hyphenate
 			}
+			Command::Indent(em) => {
+				self.preferences.values.paragraph_indent = f32::from(em)
+			}
 			Command::CjkType(value) => {
 				self.preferences.values.cjk_type = value;
 				self.setting_changed(Some(Setting::CjkType));
@@ -217,6 +220,7 @@ impl App {
 			Command::Narrower | Command::Wider => Some(Setting::Width),
 			Command::Align => Some(Setting::Justify),
 			Command::Hyphens => Some(Setting::Hyphenate),
+			Command::Indent(_) => Some(Setting::ParagraphIndent),
 			Command::CjkType(_) => Some(Setting::CjkType),
 			_ => None,
 		};

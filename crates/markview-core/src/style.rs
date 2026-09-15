@@ -72,6 +72,12 @@ impl Stylesheet {
 			.gutter
 			.unwrap_or(SCROLLBAR_GUTTER)
 	}
+	/// Extra indent the theme adds to a list, in base-size units. Ordered lists
+	/// use the `enum` role, so a theme can inset the two kinds independently.
+	pub fn list_indent(&self, ordered: bool) -> f32 {
+		let role = if ordered { Role::Enum } else { Role::List };
+		self.rule(role).indent.unwrap_or(0.0).max(0.0)
+	}
 	pub fn merge(&mut self, higher: &Self) {
 		for (key, def) in &higher.fontdef_variants {
 			self.fontdef_variants.insert(key.clone(), def.clone());
@@ -254,7 +260,7 @@ impl Stylesheet {
 			let r = self.rule(role);
 			s.push_str(&format!("{:?}{:?}{:?}", r.source, r.align, r.show));
 			s.push_str(&format!(
-				"{role:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
+				"{role:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
 				r.font,
 				r.weight,
 				r.size,
@@ -262,6 +268,7 @@ impl Stylesheet {
 				r.line_height,
 				r.space_before,
 				r.space_after,
+				r.indent,
 				r.padding,
 				r.border_width,
 				r.radius,

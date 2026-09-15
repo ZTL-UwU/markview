@@ -17,6 +17,9 @@ pub struct ReaderSettings {
 	pub width: f32,
 	pub justify: bool,
 	pub hyphenate: bool,
+	/// Indent in multiples of the text size: the opening line of prose
+	/// paragraphs, and the whole of a list, markers included. Zero disables it.
+	pub paragraph_indent: f32,
 	pub cjk_type: CjkType,
 	pub codeblock_theme_override: Option<String>,
 }
@@ -31,6 +34,7 @@ impl Default for ReaderSettings {
 			width: 760.0,
 			justify: true,
 			hyphenate: true,
+			paragraph_indent: 0.0,
 			cjk_type: default_cjk_type(),
 			codeblock_theme_override: None,
 		}
@@ -50,6 +54,7 @@ pub enum Setting {
 	Width,
 	Justify,
 	Hyphenate,
+	ParagraphIndent,
 	CjkType,
 }
 impl ReaderSettings {
@@ -63,6 +68,7 @@ impl ReaderSettings {
 			font_size: self.font_size,
 			justify: self.justify,
 			hyphenate: self.hyphenate,
+			paragraph_indent: self.paragraph_indent,
 			greedy,
 			stylesheet: self.stylesheet.clone(),
 			codeblock_theme_override: self.codeblock_theme_override.clone(),
@@ -78,6 +84,8 @@ impl ReaderSettings {
 			|| !(10.0..=40.0).contains(&self.font_size)
 			|| !self.width.is_finite()
 			|| !(240.0..=1600.0).contains(&self.width)
+			|| !self.paragraph_indent.is_finite()
+			|| !(0.0..=4.0).contains(&self.paragraph_indent)
 		{
 			bail!("Reader settings are out of range");
 		}
@@ -93,6 +101,9 @@ impl ReaderSettings {
 			Setting::Width => self.width = other.width,
 			Setting::Justify => self.justify = other.justify,
 			Setting::Hyphenate => self.hyphenate = other.hyphenate,
+			Setting::ParagraphIndent => {
+				self.paragraph_indent = other.paragraph_indent
+			}
 			Setting::CjkType => self.cjk_type = other.cjk_type,
 		}
 	}

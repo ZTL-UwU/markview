@@ -22,6 +22,7 @@ impl BlockContext<'_> {
 		sans: bool,
 		align: CellAlign,
 		justify: bool,
+		indent: bool,
 		opts: &LayoutOptions,
 		out: &mut BlockLayout,
 	) -> f32 {
@@ -33,15 +34,28 @@ impl BlockContext<'_> {
 		if p.text.is_empty() {
 			return size * self.shaper.appearance.line_height;
 		}
+		// The indent consumes part of the first line's measure, and never enough
+		// to leave the opening line without room for a character.
+		let indent = if indent {
+			opts.indent(size, width)
+		} else {
+			0.0
+		};
+		let first_width = (width - indent).max(1.0);
 		let units = crate::profile::span(crate::profile::Stage::Units, || {
 			self.units(&p, size, sans, opts.hyphenate && !sans, width)
 		});
 		let solution =
 			crate::profile::span(crate::profile::Stage::LineBreak, || {
 				if opts.greedy {
-					linebreak::greedy(&units, width)
+					linebreak::greedy_with_first(&units, width, first_width)
 				} else {
-					linebreak::break_lines(&units, width, justify)
+					linebreak::break_lines_with_first(
+						&units,
+						width,
+						first_width,
+						justify,
+					)
 				}
 			});
 		out.degraded += usize::from(solution.degraded && !opts.greedy);
@@ -63,11 +77,20 @@ impl BlockContext<'_> {
 			align
 		};
 		let mut lines: std::collections::VecDeque<_> = solution.lines.into();
+		let mut first_line = true;
 		while let Some(mut line) = lines.pop_front() {
 			if line.units.is_empty() {
 				y_cursor += size * self.shaper.appearance.line_height;
 				continue;
 			}
+			// Only the line that opens the paragraph is narrowed by the indent;
+			// wrapped lines keep the full measure.
+			let (line_x, line_width) = if first_line {
+				(x + indent, first_width)
+			} else {
+				(x, width)
+			};
+			first_line = false;
 			let range = units[line.units.start].source.start
 				..units[line.units.end - 1].source.end;
 			let mut clusters =
@@ -86,7 +109,7 @@ impl BlockContext<'_> {
 				} else {
 					0.0
 				};
-				if natural - shrink <= width + 0.1 {
+				if natural - shrink <= line_width + 0.1 {
 					break;
 				}
 				let Some(end) = (line.units.start + 1..line.units.end)
@@ -149,12 +172,12 @@ impl BlockContext<'_> {
 				let value = if i + 1 == clusters.len() {
 					0.0
 				} else if text == " " {
-					if natural <= width {
+					if natural <= line_width {
 						c.width * 0.65
 					} else {
 						c.width * 0.3
 					}
-				} else if natural <= width
+				} else if natural <= line_width
 					&& text.chars().next().is_some_and(is_cjk)
 				{
 					size * 0.08
@@ -165,18 +188,18 @@ impl BlockContext<'_> {
 			}
 			let total: f32 = flexibility.iter().sum();
 			let ratio = if justify && !line.last && total > 0.0 {
-				((width - natural) / total).clamp(-1.0, 3.0)
+				((line_width - natural) / total).clamp(-1.0, 3.0)
 			} else {
 				0.0
 			};
 			let actual = natural + ratio * total;
 			let offset = match align {
 				CellAlign::Left => 0.0,
-				CellAlign::Center => ((width - actual) * 0.5).max(0.0),
-				CellAlign::Right => (width - actual).max(0.0),
+				CellAlign::Center => ((line_width - actual) * 0.5).max(0.0),
+				CellAlign::Right => (line_width - actual).max(0.0),
 			};
 			let start_draw = out.draws.len();
-			let mut cursor = x + offset;
+			let mut cursor = line_x + offset;
 			let mut link: Option<(String, f32)> = None;
 			for (c, flex) in clusters.into_iter().zip(flexibility) {
 				let range = p.reading_range(c.range.clone());
@@ -317,13 +340,13 @@ impl BlockContext<'_> {
 					url,
 				});
 			}
-			if actual > width + 0.5 {
+			if actual > line_width + 0.5 {
 				let gutter = opts.stylesheet.scrollbar_gutter();
 				out.overflow.push(Overflow {
 					rect: Rect {
-						x,
+						x: line_x,
 						y: y_cursor,
-						w: width,
+						w: line_width,
 						h: height,
 					},
 					content_width: actual,
@@ -332,7 +355,7 @@ impl BlockContext<'_> {
 				});
 				height += gutter;
 			}
-			out.width = out.width.max(x + actual.min(width));
+			out.width = out.width.max(line_x + actual.min(line_width));
 			y_cursor += height;
 		}
 		if only_images && p.images.len() == 1 {
@@ -357,6 +380,7 @@ impl BlockContext<'_> {
 					caption_size,
 					false,
 					rule.align.map(Into::into).unwrap_or(CellAlign::Center),
+					false,
 					false,
 					opts,
 					&mut decoration,

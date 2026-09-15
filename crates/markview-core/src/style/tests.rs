@@ -151,6 +151,33 @@ fn cascade_arrays_and_font_defaults() {
 	assert_eq!(low.rule(Role::Em).font.as_ref().unwrap().len(), 1);
 }
 #[test]
+fn list_indents_are_theme_controlled_per_list_role() {
+	let sheet = Stylesheet::parse(
+		"format_version=1\nversion=1\n[list]\nindent=0.25\n[enum]\nindent=0.75",
+	)
+	.unwrap();
+	assert_eq!(sheet.list_indent(false), 0.25);
+	assert_eq!(sheet.list_indent(true), 0.75);
+	// The roles are independent: `[list]` alone leaves ordered lists flush.
+	let bullets =
+		Stylesheet::parse("format_version=1\nversion=1\n[list]\nindent=0.25")
+			.unwrap();
+	assert_eq!(bullets.list_indent(false), 0.25);
+	assert_eq!(bullets.list_indent(true), 0.0);
+	let bundled = Stylesheet::bundled(false);
+	assert_eq!(bundled.list_indent(false), 0.5);
+	assert_eq!(bundled.list_indent(true), 0.5);
+	for bad in [
+		"format_version=1\nversion=1\n[list]\nindent=-1.0",
+		"format_version=1\nversion=1\n[enum]\nindent=nan",
+		"format_version=1\nversion=1\n[p]\nindent=1.0",
+		"format_version=1\nversion=1\n[list]\nindentz=1.0",
+		"format_version=1\nversion=1\n[list]\nordered_indent=1.0",
+	] {
+		assert!(Stylesheet::parse(bad).is_err(), "{bad}");
+	}
+}
+#[test]
 fn colors_do_not_change_layout_identity() {
 	let mut s = (*Stylesheet::bundled(false)).clone();
 	let k = s.layout_key();

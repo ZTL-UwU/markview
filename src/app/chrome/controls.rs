@@ -17,7 +17,7 @@ pub(in crate::app) fn panel_rect(width: f32, height: f32) -> Rect {
 }
 fn row_geometry(rect: Rect) -> (f32, f32) {
 	let top = if rect.h < 360.0 { 60.0 } else { 94.0 };
-	(top, (rect.h - top - 48.0) / 6.0)
+	(top, (rect.h - top - 48.0) / 7.0)
 }
 pub(super) fn controls(
 	shaper: &mut TextShaper,
@@ -59,6 +59,12 @@ pub(super) fn controls(
 				if settings.hyphenate { "On" } else { "Off" },
 				Command::Hyphens,
 			)],
+			vec![
+				("Off", Command::Indent(0)),
+				("1 em", Command::Indent(1)),
+				("2 em", Command::Indent(2)),
+				("3 em", Command::Indent(3)),
+			],
 			vec![
 				("SC", Command::CjkType(CjkType::Sc)),
 				("TC", Command::CjkType(CjkType::Tc)),
@@ -266,6 +272,14 @@ pub(super) fn draw_controls(
 			format!("Column width · {:.1} px", settings.width),
 			"Alignment".into(),
 			"English hyphenation".into(),
+			format!(
+				"Paragraph indent · {}",
+				if settings.paragraph_indent > 0.0 {
+					format!("{} em", settings.paragraph_indent)
+				} else {
+					"off".into()
+				}
+			),
 			format!("CJK type · {:?}", settings.cjk_type),
 		]
 		.iter()
@@ -342,6 +356,24 @@ pub(super) fn draw_controls(
 mod tests {
 	use super::*;
 	use crate::app::TOP;
+	#[test]
+	fn panel_exposes_first_line_indent_presets() {
+		let mut shaper = TextShaper::new();
+		let buttons = controls(
+			&mut shaper,
+			&ReaderSettings::default(),
+			true,
+			1200.0,
+			800.0,
+		);
+		for (em, label) in [(0, "Off"), (1, "1 em"), (2, "2 em"), (3, "3 em")] {
+			let button = buttons
+				.iter()
+				.find(|b| b.action == Command::Indent(em))
+				.expect("indent preset");
+			assert_eq!(button.label, label);
+		}
+	}
 	#[test]
 	fn controls_fit_minimum_window_and_panel_focus_has_no_document_actions() {
 		for (width, height) in [(500.0, 300.0), (820.0, 600.0), (1200.0, 800.0)]

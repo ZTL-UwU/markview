@@ -14,6 +14,7 @@ pub enum Role {
 	H6,
 	Blockquote,
 	List,
+	Enum,
 	ListItem,
 	Footnote,
 	Em,
@@ -57,6 +58,7 @@ impl Role {
 		(Self::H6, "h6"),
 		(Self::Blockquote, "blockquote"),
 		(Self::List, "list"),
+		(Self::Enum, "enum"),
 		(Self::ListItem, "list_item"),
 		(Self::Footnote, "footnote"),
 		(Self::Em, "em"),
@@ -112,7 +114,8 @@ impl Role {
 				| Self::H2 | Self::H3
 				| Self::H4 | Self::H5
 				| Self::H6 | Self::Blockquote
-				| Self::List | Self::ListItem
+				| Self::List | Self::Enum
+				| Self::ListItem
 				| Self::Footnote
 				| Self::CodeBlock
 				| Self::CodeLabel
@@ -332,6 +335,8 @@ pub struct Rule {
 	pub line_height: Option<f32>,
 	pub space_before: Option<f32>,
 	pub space_after: Option<f32>,
+	/// Extra indent a theme adds to a list, in base-size units.
+	pub indent: Option<f32>,
 	pub padding: Option<Padding>,
 	pub border_width: Option<f32>,
 	pub radius: Option<f32>,
@@ -371,6 +376,7 @@ impl Rule {
 			line_height,
 			space_before,
 			space_after,
+			indent,
 			padding,
 			border_width,
 			radius,

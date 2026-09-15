@@ -26,6 +26,7 @@ sudo apt-get install libfontconfig1-dev libxkbcommon-dev libwayland-dev fonts-no
 - `Ctrl+O` opens a file; `Ctrl+T` chooses styles; `Ctrl+,` opens settings.
 - `Ctrl+V` opens clipboard text that looks like Markdown in a new tab. The tab title comes from its first heading or sentence.
 - `Ctrl++` / `Ctrl+-` changes the type size. `Ctrl+[` / `Ctrl+]` changes the reading column.
+- Paragraph indent is off by default. Choose it under **Settings**, or set `paragraph_indent` in `settings.toml`; prose paragraphs indent their opening line, while lists indent as a whole, markers included. Table cells and footnotes stay flush.
 - Scroll with the wheel, arrow keys, Page Up/Down, Space, Home, End, or the scrollbar.
 - Drag to select and use `Ctrl+C` to copy. `Ctrl+A` selects the document.
 - Click a link to open web, mail, and local file links with the operating system's default handler. Links to other `.md` files open in a new tab; middle-click opens them in the background without switching away. Repeated middle-clicks reuse the existing tab. A `#heading` fragment moves to that heading, in the current document or in the `.md` file it names.

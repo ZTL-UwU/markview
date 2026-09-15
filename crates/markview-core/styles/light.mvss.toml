@@ -156,6 +156,11 @@ padding = [0.22, 0.22, 0.22, 1.1]
 space_after = 0.8
 
 [list]
+indent = 0.5
+space_after = 0.8
+
+[enum]
+indent = 0.5
 space_after = 0.8
 
 [list.marker]

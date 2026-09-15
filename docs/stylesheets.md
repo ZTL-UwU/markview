@@ -1,6 +1,6 @@
 # Stylesheet guide
 
-Markview stylesheets are UTF-8 TOML files with the `.mvss.toml` suffix. They define portable visual themes. Personal reading preferences—font size, column width, alignment, and hyphenation—belong in `settings.toml`, not in a stylesheet.
+Markview stylesheets are UTF-8 TOML files with the `.mvss.toml` suffix. They define portable visual themes. Personal reading preferences—font size, column width, alignment, hyphenation, and first-line paragraph indent—belong in `settings.toml`, not in a stylesheet.
 
 ## Install and select a style
 
@@ -53,13 +53,13 @@ Roles are semantic names, not CSS selectors. Supported roles are:
 
 | Area | Roles |
 | --- | --- |
-| Blocks | `body`, `p`, `h1`–`h6`, `blockquote`, `list`, `list_item`, `footnote` |
+| Blocks | `body`, `p`, `h1`–`h6`, `blockquote`, `list`, `enum`, `list_item`, `footnote` |
 | Inline content | `em`, `strong`, `strong_em`, `link`, `code`, `del`, `sup` |
 | Code and media | `code_block`, `code_block.label`, `img`, `img.caption`, `img.placeholder` |
 | Tables and marks | `table`, `table.header`, `table.cell`, `list.marker`, `task_marker`, `hr`, `math` |
 | Reader and UI | `selection`, `scrollbar`, `ui`, `ui.toolbar`, `ui.statusbar`, `ui.panel`, `ui.button` |
 
-Text roles accept `color`, `font`, `weight`, `size`, and `decoration`. Block roles additionally accept `line_height`, `space_before`, and `space_after`; block containers accept `padding`, `border_color`, `border_width`, and `radius`. Inline roles do not accept container geometry.
+Text roles accept `color`, `font`, `weight`, `size`, and `decoration`. Block roles additionally accept `line_height`, `space_before`, and `space_after`; block containers accept `padding`, `border_color`, `border_width`, and `radius`. The `list` role styles bullet lists and `enum` styles ordered lists. Both also accept `indent`, the extra inset of the list in base-size units, which adds to the reader's paragraph indent. Inline roles do not accept container geometry.
 
 Special properties include `align` on images, `source` on captions, scrollbar colors and thicknesses, and `shadow`/`scrim` on `ui`. The UI theme controls appearance, not widget layout or dimensions.
 

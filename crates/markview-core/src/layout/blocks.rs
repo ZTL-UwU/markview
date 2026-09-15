@@ -1,10 +1,29 @@
 use super::{BlockContext, LayoutOptions};
 use crate::text::{TextCluster, TextNode};
 use crate::{
-	document::{Block, BlockKind, CellAlign, InlineKind, RichText},
+	document::{Block, BlockKind, CellAlign, Inline, InlineKind, RichText},
 	scene::{BlockLayout, Draw, HeadingAnchor, Paint, Rect},
 	style::{ColorField, Role},
 };
+
+/// A paragraph earns a first-line indent only when its first visible content is
+/// text. A leading image or display formula is a centered figure or block, so
+/// indenting it would shift it away from its own margin.
+fn starts_with_text(rich: &[Inline]) -> bool {
+	for inline in rich {
+		match &inline.kind {
+			InlineKind::Text(text) if text.trim().is_empty() => {}
+			InlineKind::Text(_) | InlineKind::Math { display: false, .. } => {
+				return true;
+			}
+			InlineKind::Image(_) | InlineKind::Math { display: true, .. } => {
+				return false;
+			}
+		}
+	}
+	false
+}
+
 impl BlockContext<'_> {
 	#[expect(
 		clippy::too_many_arguments,
@@ -20,12 +39,14 @@ impl BlockContext<'_> {
 		sans: bool,
 		align: CellAlign,
 		justify: bool,
+		indent: bool,
 		opts: &LayoutOptions,
 		out: &mut BlockLayout,
 	) -> f32 {
 		crate::profile::span(crate::profile::Stage::Rich, || {
 			self.rich_inner(
-				rich, x, y, width, size, sans, align, justify, opts, out,
+				rich, x, y, width, size, sans, align, justify, indent, opts,
+				out,
 			)
 		})
 	}
@@ -44,6 +65,7 @@ impl BlockContext<'_> {
 		sans: bool,
 		align: CellAlign,
 		justify: bool,
+		indent: bool,
 		opts: &LayoutOptions,
 		out: &mut BlockLayout,
 	) -> f32 {
@@ -62,6 +84,7 @@ impl BlockContext<'_> {
 						sans,
 						align,
 						justify,
+						indent && start == 0,
 						opts,
 						out,
 					);
@@ -75,6 +98,7 @@ impl BlockContext<'_> {
 					size,
 					false,
 					CellAlign::Center,
+					false,
 					false,
 					opts,
 					out,
@@ -93,6 +117,7 @@ impl BlockContext<'_> {
 				sans,
 				align,
 				justify,
+				indent && start == 0,
 				opts,
 				out,
 			);
@@ -138,7 +163,13 @@ impl BlockContext<'_> {
 			BlockKind::Heading { level, .. } => Role::heading(*level),
 			BlockKind::Code { .. } => Role::CodeBlock,
 			BlockKind::Quote { .. } => Role::Blockquote,
-			BlockKind::List { .. } => Role::List,
+			BlockKind::List { start, .. } => {
+				if start.is_some() {
+					Role::Enum
+				} else {
+					Role::List
+				}
+			}
 			BlockKind::Table { .. } => Role::Table,
 			BlockKind::Footnote { .. } => Role::Footnote,
 			BlockKind::Rule => Role::Hr,
@@ -222,6 +253,7 @@ impl BlockContext<'_> {
 				false,
 				CellAlign::Left,
 				opts.justify,
+				starts_with_text(text),
 				opts,
 				out,
 			),
@@ -233,6 +265,7 @@ impl BlockContext<'_> {
 				size,
 				true,
 				CellAlign::Left,
+				false,
 				false,
 				opts,
 				out,
@@ -284,6 +317,21 @@ impl BlockContext<'_> {
 				tight: _,
 				items,
 			} => {
+				// A list indents as a whole, markers included, so its items line
+				// up with the indented opening lines of paragraphs. The item
+				// text does not indent again, and nested blocks inherit this
+				// single shift. A theme may inset bullet and ordered lists by
+				// different amounts on top of the reader's paragraph indent.
+				let indent = (opts.indent(size, width)
+					+ opts.stylesheet.list_indent(start.is_some())
+						* opts.font_size)
+					.min((width - size).max(0.0));
+				let x = x + indent;
+				let width = (width - indent).max(1.0);
+				let item_opts = LayoutOptions {
+					paragraph_indent: 0.0,
+					..opts.clone()
+				};
 				let mut top = y;
 				let list_appearance = self.shaper.appearance.clone();
 				let item_rule = opts.stylesheet.rule(Role::ListItem).clone();
@@ -392,7 +440,7 @@ impl BlockContext<'_> {
 							item_x + indent,
 							top,
 							(item_width - indent).max(1.),
-							opts,
+							&item_opts,
 							size * 0.6,
 							out,
 						)
@@ -429,8 +477,9 @@ impl BlockContext<'_> {
 					y + size,
 					Paint::Styled(Role::Footnote, ColorField::Color),
 				));
-				let smaller = LayoutOptions {
-					font_size: opts.font_size,
+				// The label leads the block, so its paragraphs stay flush.
+				let body_opts = LayoutOptions {
+					paragraph_indent: 0.0,
 					..opts.clone()
 				};
 				self.children(
@@ -438,7 +487,7 @@ impl BlockContext<'_> {
 					x + 36.0,
 					y,
 					width - 36.0,
-					&smaller,
+					&body_opts,
 					size * 0.5,
 					out,
 				)

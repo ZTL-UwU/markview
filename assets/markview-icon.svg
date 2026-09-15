@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Markview</title>
+  <desc id="desc">A black angular open book forming an M with squared gear teeth on a transparent background.</desc>
+  <g fill="#000000">
+    <path id="left-page" d="M108 88 246 194 108 130Z"/>
+    <use href="#left-page" transform="translate(512 0) scale(-1 1)"/>
+    <path id="left-body" d="M58 132H80L250 210V374L142 302V412H80V338H58V274H80V200H58Z"/>
+    <use href="#left-body" transform="translate(512 0) scale(-1 1)"/>
+  </g>
+</svg>

@@ -59,18 +59,24 @@ offscreen method as the table above. `text-cjk-100k` has no math;
 
 | Fixture | First open (ms) | Full reflow P95 (ms) | Cached P50 (ms) | RSS (MiB) |
 | --- | ---: | ---: | ---: | ---: |
-| ordinary-10k (same session) | 42.6 | 24.6 | 1.2 | 45.7 |
-| math-10k (same session) | 44.5 | 26.5 | 1.0 | 47.4 |
-| text-cjk-100k | 230.0 | 204.8 | 3.6 | 81.5 |
-| math-cjk-100k | 223.7 | 216.3 | 3.9 | 78.7 |
+| ordinary-10k (same session) | 24.9 | 13.3 | 0.8 | 45.5 |
+| math-10k (same session) | 26.8 | 13.4 | 0.6 | 47.8 |
+| text-cjk-100k | 133.3 | 119.7 | 2.4 | 82.4 |
+| math-cjk-100k | 128.0 | 112.0 | 2.6 | 79.7 |
 
-Layout is ~91 % of the first open, and roughly 70 % of layout is text shaping:
-the same paragraph is shaped once to measure it (`units`) and again per line
-(`line_clusters`), and `choose_font` re-scans font coverage per grapheme
-cluster. Formula typesetting is negligible for repeated LaTeX. The full
-stage-by-stage breakdown and method notes are in
-`artifacts/performance-large-100k.md`. These numbers are a same-session
-comparison only; do not read them as a revision of the 2026-09-12 baseline.
+Layout is ~90 % of the first open, and about two thirds of layout is text
+shaping: the same paragraph is shaped once to measure it (`units`) and again
+per line (`line_clusters`), and `choose_font` re-scans font coverage per
+grapheme cluster. Formula typesetting is negligible for repeated LaTeX. The
+full stage-by-stage breakdown and method notes are in
+`artifacts/performance-large-100k.md`.
+
+These numbers require the host to be in its normal power state. The same
+session first measured ordinary-10k at 42.6 ms on battery with the
+`power-saver` profile: the preserved 2026-09-12 binary reproduced that slow
+result unchanged, and switching to the `performance` profile restored the
+recorded values, so the difference was the platform power limit and not a
+regression. Check the power profile before interpreting a comparison.
 
 ## What can change the result
 

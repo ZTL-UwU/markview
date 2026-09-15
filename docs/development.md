@@ -72,7 +72,10 @@ Document guarantees and reasons in architecture pages, procedures and examples i
 Before changing a performance-sensitive path, build the current release and copy
 its binary outside `target/release`. Keep its source revision with it. After the
 change, build the candidate with the same lockfile, toolchain and release profile.
-Run on an idle machine with hardware GPU access:
+Run on an idle machine with hardware GPU access, on AC power with the
+`performance` power profile: on `power-saver` this host ran 1.6–2× slower in
+every stage, and the preserved binary reproduced the slowdown, so a power-limited
+run looks exactly like a regression without being one.
 
 ```sh
 python3 scripts/compare_performance.py \

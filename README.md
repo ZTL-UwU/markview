@@ -42,7 +42,7 @@ Launching without a file opens an empty window. You can also drop a Markdown fil
 On Debian or Ubuntu, the native build commonly needs:
 
 ```sh
-sudo apt-get install libfontconfig1-dev libxkbcommon-dev libwayland-dev fonts-noto-core fonts-noto-cjk
+sudo apt-get install g++ libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev fonts-noto-core fonts-noto-cjk
 ```
 
 ## Reading

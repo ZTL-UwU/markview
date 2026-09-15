@@ -12,18 +12,18 @@ Markdown / assets
         ▼
 markview-core: semantic document → immutable layout snapshot
         │
-        ├── markview-render: snapshot → GPU frame
+        ├── markview-render: snapshot → wgpu GPU frame
         │
-        └── markview application: files, settings, input, and lifecycle
+        └── markview application: GPUI window, files, settings, input, and lifecycle
 ```
 
 `markview-core` is window- and GPU-independent. It parses Markdown and the supported raw HTML subset, represents semantic blocks and inline content, shapes text, lays out paragraphs, measures math and images, and exposes reading text, selection geometry, links, and draw instructions.
 
-`markview-render` consumes those instructions. It owns the wgpu device and surface, glyph and image resources, clipping, colors that can be changed without reflow, and headless output. It does not contain a second document layout engine.
+`markview-render` consumes those instructions for headless work. It owns the wgpu device, glyph and image resources, clipping, colors that can be changed without reflow, and offscreen `--render` / `--bench` output. It does not contain a second document layout engine.
 
-The root package owns effects that must touch the operating system: launching, file and settings I/O, file watching, image loading, clipboard access, platform link opening, window events, and background work. The UI translates gestures into commands; it does not define document semantics.
+The root package owns the interactive window and every effect that must touch the operating system: GPUI lifecycle, painting `Draw` commands through GPUI primitives, file and settings I/O, file watching, image loading, clipboard access, platform link opening, and background work. The UI translates gestures into commands; it does not define document semantics.
 
-The separation matters because the same core layout is used by the interactive window, the renderer tests, and the offscreen render and benchmark modes.
+The interactive window paints through GPUI because GPUI owns the GPU (Blade on Linux). The same core layout snapshot is used by that window, the wgpu renderer tests, and the offscreen render and benchmark modes, so `--bench` timings stay comparable across window backends.
 
 ## Semantic identity and immutable snapshots
 
@@ -102,7 +102,8 @@ components; helpers receive borrowed inputs instead of an application-wide conte
 | Component | Owns | Boundary |
 | --- | --- | --- |
 | Application `Tabs` | Active session, inactive tabs, request serial | Tab transitions return to the window adapter for watching, redraws and requests. |
-| Application `Preferences` | Effective settings, persistence store, stylesheet catalog, save deadline | Stylesheet validation finishes before the effective sheet and UI appearance change. The application applies successful changes to the renderer. |
+| Application `Preferences` | Effective settings, persistence store, stylesheet catalog, save deadline | Stylesheet validation finishes before the effective sheet and UI appearance change. The application applies successful changes to the GPUI painter and the offscreen renderer. |
+| Application `GpuiPainter` | Outline, color-glyph, math, and image caches for GPUI | Projects an already-laid-out snapshot and chrome overlay; does not reshape text. |
 | Application tab strip | Scroll offset, drag gesture and cached filename widths | Pure strip geometry drives both painting and hit testing. Reordering moves sessions without submitting layout requests; clipped draw groups contain overflow. |
 | Application chrome | Borrowed display state | Controls, footer, tabs and styles produce geometry without window, worker or configuration I/O access. Selection-count caching remains in the application adapter. |
 | Image scheduler | Versioned entries, jobs and published snapshot | Source reads, bounded decoding and allocation-aware pixel eviction are separate modules. |

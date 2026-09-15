@@ -1,67 +1,14 @@
 use crate::cli::Mode;
-use anyhow::Result;
-use std::{
-	sync::Arc,
-	time::{Duration, Instant},
-};
-use winit::{
-	application::ApplicationHandler,
-	dpi::LogicalSize,
-	event::WindowEvent,
-	event_loop::{ActiveEventLoop, ControlFlow},
-	window::{Window, WindowId},
-};
+use std::time::{Duration, Instant};
 
-use super::{App, Event, TOP, system_theme};
-impl ApplicationHandler<Event> for App {
-	fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-		if self.window.is_some() {
-			return;
-		}
-		let result = (|| -> Result<()> {
-			let mut attributes = Window::default_attributes()
-				.with_title("Markview")
-				.with_inner_size(LogicalSize::new(
-					self.args.width,
-					self.args.height,
-				))
-				.with_min_inner_size(LogicalSize::new(500, 300));
-			if let Some(icon) = super::icon::window_icon() {
-				attributes = attributes.with_window_icon(Some(icon));
-			}
-			let window = Arc::new(event_loop.create_window(attributes)?);
-			if self.args.mode == Mode::Window
-				&& self.args.theme.is_none()
-				&& self.args.style.is_none()
-				&& self.preferences.theme_preference().is_none()
-				&& let Some(theme) = system_theme(&window)
-			{
-				self.preferences.values.theme = theme;
-			}
-			let size = window.inner_size();
-			let scale = window.scale_factor();
-			eprintln!(
-				"Display scale (DPR): {scale:.3}; framebuffer: {}×{} physical px; window: {:.1}×{:.1} logical px",
-				size.width,
-				size.height,
-				size.width as f64 / scale,
-				size.height as f64 / scale,
-			);
-			self.window = Some(window);
-			self.reload_styles();
-			self.gpu()?;
-			if let Some(path) = self.args.path.clone() {
-				self.open(path);
-			}
-			self.redraw();
-			Ok(())
-		})();
-		if let Err(e) = result {
-			self.fatal = Some(format!("{e:#}"));
-			event_loop.exit();
-		}
-	}
-	fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Event) {
+use super::{App, Event};
+
+impl App {
+	pub(super) fn handle_event(
+		&mut self,
+		event: Event,
+		cx: &mut gpui::Context<Self>,
+	) {
 		match event {
 			Event::StylesChanged => {
 				self.preferences.style_entries = crate::stylesheet::scan(
@@ -72,7 +19,7 @@ impl ApplicationHandler<Event> for App {
 			}
 			Event::SettingsChanged => {
 				if self.preferences.reload() {
-					self.apply_saved_settings();
+					self.apply_saved_settings(None);
 				}
 				self.redraw();
 			}
@@ -100,6 +47,7 @@ impl ApplicationHandler<Event> for App {
 								s.anchor.block.max(s.focus.block)
 									>= reader.layout.blocks.len()
 							}) {
+							self.commit(cx);
 							return;
 						}
 						if !self
@@ -107,6 +55,7 @@ impl ApplicationHandler<Event> for App {
 							.session
 							.can_display(&reader, self.viewport())
 						{
+							self.commit(cx);
 							return;
 						}
 						let first = self.readers.session.displayed_version
@@ -160,16 +109,14 @@ impl ApplicationHandler<Event> for App {
 							String::new()
 						};
 						self.apply_anchor();
-						if let Some(w) = &self.window {
-							w.set_title(&format!(
-								"{} — Markview",
-								update
-									.path
-									.file_name()
-									.unwrap_or_default()
-									.to_string_lossy()
-							));
-						}
+						self.title = format!(
+							"{} — Markview",
+							update
+								.path
+								.file_name()
+								.unwrap_or_default()
+								.to_string_lossy()
+						);
 						if complete {
 							eprintln!(
 								"full layout complete: {:.2} ms; {} blocks",
@@ -191,34 +138,20 @@ impl ApplicationHandler<Event> for App {
 						self.error = true;
 						self.status = error;
 						if self.args.mode == Mode::Smoke {
-							self.fatal = Some(self.status.clone());
-							event_loop.exit();
+							self.fail(self.status.clone(), cx);
+							return;
 						}
 					}
 					None => {}
 				}
 				self.redraw();
 			}
-			Event::DeviceLost => {
-				if let Err(e) = self.gpu() {
-					self.fatal = Some(format!("GPU recovery failed: {e:#}"));
-					event_loop.exit();
-				} else {
-					self.redraw();
-				}
-			}
 			_ => {}
 		}
+		self.commit(cx);
 	}
-	fn window_event(
-		&mut self,
-		event_loop: &ActiveEventLoop,
-		window: WindowId,
-		event: WindowEvent,
-	) {
-		self.handle_window_event(event_loop, window, event);
-	}
-	fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+
+	pub(super) fn tick(&mut self, cx: &mut gpui::Context<Self>) {
 		let now = Instant::now();
 		self.auto_scroll_tabs(now);
 		self.readers.release_inactive(now);
@@ -235,11 +168,13 @@ impl ApplicationHandler<Event> for App {
 		if self.interaction.drag_at.is_some_and(|d| d <= now) {
 			self.interaction.drag_at = None;
 			if self.interaction.pointer_down.is_some() {
-				self.scroll_by(if self.interaction.cursor.1 < TOP + 24.0 {
-					-14.0
-				} else {
-					14.0
-				});
+				self.scroll_by(
+					if self.interaction.cursor.1 < super::TOP + 24.0 {
+						-14.0
+					} else {
+						14.0
+					},
+				);
 				self.update_drag();
 			}
 		}
@@ -252,21 +187,21 @@ impl ApplicationHandler<Event> for App {
 			}
 			self.scroll_by(0.0);
 		}
-		if self.retry_at.is_some_and(|d| d <= now) {
-			self.retry_at = None;
-			self.redraw();
-		}
 		if self.args.mode == Mode::Smoke
 			&& self.started.elapsed() > Duration::from_secs(30)
 		{
-			self.fatal = Some("Native window smoke test timed out".into());
-			event_loop.exit();
+			self.fail("Native window smoke test timed out".into(), cx);
 			return;
 		}
+		self.commit(cx);
+	}
+
+	pub(super) fn schedule_tick(&mut self, cx: &mut gpui::Context<Self>) {
+		self.timer_gen += 1;
+		let generation = self.timer_gen;
 		let deadline = self
 			.reflow_at
 			.into_iter()
-			.chain(self.retry_at)
 			.chain(self.status_until)
 			.chain(self.preferences.save_deadline())
 			.chain(self.interaction.drag_at)
@@ -277,8 +212,19 @@ impl ApplicationHandler<Event> for App {
 					.then_some(self.started + Duration::from_secs(30)),
 			)
 			.min();
-		event_loop.set_control_flow(
-			deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil),
-		);
+		let Some(deadline) = deadline else {
+			return;
+		};
+		let wait = deadline.saturating_duration_since(Instant::now());
+		cx.spawn(async move |this, cx| {
+			gpui::Timer::after(wait).await;
+			this.update(cx, |app, cx| {
+				if app.timer_gen == generation {
+					app.tick(cx);
+				}
+			})
+			.ok();
+		})
+		.detach();
 	}
 }

@@ -122,16 +122,17 @@ AppImage need `dpkg-deb` and `appimagetool`, which is why CI owns them.
 
 The Linux artifacts rely on host components on purpose: bundling glibc is the
 usual source of AppImage breakage, and the Vulkan driver and system fonts
-cannot be shipped meaningfully.
+cannot be shipped meaningfully. The interactive window uses GPUI (Blade/Vulkan
+on Linux); `--render` and `--bench` still use wgpu.
 
 | Platform | Required |
 | --- | --- |
-| Linux | glibc 2.35+, `libfontconfig1`, `libvulkan1` (loader plus any working Vulkan driver), X11 or Wayland client libraries, `xdg-desktop-portal` with a backend, and system fonts |
+| Linux | glibc 2.35+, `libfontconfig1`, `libvulkan1` (loader plus any working Vulkan driver), `libstdc++6`, X11 or Wayland client libraries including `libxkbcommon-x11-0`, `xdg-desktop-portal` with a backend, and system fonts |
 | Windows | Windows 10 or newer with a Direct3D 12 driver; the MSVC runtime is linked statically |
 | macOS | macOS 11 or newer on Apple Silicon |
 
 The Debian package declares these as `Depends`, so `apt` resolves them. The
-AppImage declares nothing and shows a wgpu backend error when no Vulkan driver
+AppImage declares nothing and fails to open a window when no Vulkan driver
 is present. `fonts-noto-cjk` is a recommendation rather than a requirement,
 because Markview falls back to whatever CJK faces the system provides.
 

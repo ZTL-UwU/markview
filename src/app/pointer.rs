@@ -3,7 +3,6 @@ use std::{
 	path::PathBuf,
 	time::{Duration, Instant},
 };
-use winit::window::CursorIcon;
 
 use super::{App, anchor, chrome};
 impl App {
@@ -67,26 +66,6 @@ impl App {
 		} else {
 			None
 		};
-		let cursor = if self.tab_strip.drag.is_some_and(|d| d.moving) {
-			CursorIcon::Grabbing
-		} else if self.interaction.scrollbar.is_some() {
-			CursorIcon::Default
-		} else if self.interaction.pointer_down.is_some() {
-			if self.text_under_cursor() {
-				CursorIcon::Text
-			} else {
-				CursorIcon::Default
-			}
-		} else if self.button_at_cursor()
-			|| self.tab_at_cursor().is_some()
-			|| hover.is_some()
-		{
-			CursorIcon::Pointer
-		} else if !self.interaction.panel_open && self.text_under_cursor() {
-			CursorIcon::Text
-		} else {
-			CursorIcon::Default
-		};
 		let hover_changed = hover != self.interaction.hover
 			|| hover_overflow != self.interaction.hover_overflow;
 		let geometry = self.view_geometry();
@@ -112,9 +91,6 @@ impl App {
 		self.interaction.hover_image = hover_image;
 		self.interaction.hover = hover;
 		self.interaction.hover_overflow = hover_overflow;
-		if let Some(w) = &self.window {
-			w.set_cursor(cursor);
-		}
 		if hover_changed {
 			self.redraw();
 		}

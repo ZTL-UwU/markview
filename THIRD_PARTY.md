@@ -5,7 +5,8 @@ source and original license texts are available in Cargo's registry packages.
 
 | Component | Role | License |
 | --- | --- | --- |
-| winit, wgpu | Native windows and GPU rendering | Apache-2.0 OR MIT |
+| GPUI | Interactive window, events, and on-screen painting | Apache-2.0 OR MIT |
+| winit, wgpu | Offscreen `--render` / `--bench` GPU output | Apache-2.0 OR MIT |
 | Comrak | CommonMark and GFM parser | BSD-2-Clause |
 | Parley / Fontique | Shaping, font matching and Unicode analysis | Apache-2.0 OR MIT |
 | ICU4X | Unicode segmentation | Unicode-3.0 |

@@ -7,8 +7,10 @@ use crate::{
 	render::{Renderer, Theme, View},
 };
 use anyhow::{Result, bail};
-use std::collections::HashMap;
-use winit::event_loop::{ControlFlow, EventLoop};
+use gpui::{
+	AppContext, Application, Bounds, WindowBounds, WindowOptions, px, size,
+};
+use std::{collections::HashMap, sync::Arc};
 
 use super::{App, Event};
 
@@ -129,15 +131,47 @@ pub(super) fn run() -> Result<()> {
 		);
 		return Ok(());
 	}
-	let event_loop = EventLoop::<Event>::with_user_event().build()?;
-	event_loop.set_control_flow(ControlFlow::Wait);
-	let mut app = App::new(args, event_loop.create_proxy());
-	event_loop.run_app(&mut app)?;
-	app.flush_settings();
-	if let Some(warning) = &app.preferences.settings_warning {
-		eprintln!("{warning}");
-	}
-	if let Some(error) = app.fatal {
+	let fatal = Arc::new(std::sync::Mutex::new(None));
+	let report = fatal.clone();
+	let (tx, rx) = async_channel::unbounded::<Event>();
+	let width = args.width as f32;
+	let height = args.height as f32;
+	Application::new().run({
+		let report = report.clone();
+		move |cx| {
+			let bounds =
+				Bounds::centered(None, size(px(width), px(height)), cx);
+			let opened = cx.open_window(
+				WindowOptions {
+					window_bounds: Some(WindowBounds::Windowed(bounds)),
+					window_min_size: Some(size(px(500.), px(300.))),
+					app_id: Some("markview".into()),
+					titlebar: Some(gpui::TitlebarOptions {
+						title: Some("Markview".into()),
+						..Default::default()
+					}),
+					..Default::default()
+				},
+				{
+					let tx = tx.clone();
+					let fatal = fatal.clone();
+					move |window, cx| {
+						let view =
+							cx.new(|cx| App::new(args, tx, fatal, window, cx));
+						view.update(cx, |app, cx| app.bind(rx, window, cx));
+						view
+					}
+				},
+			);
+			if let Err(error) = opened {
+				*report.lock().unwrap() = Some(format!("{error:#}"));
+				cx.quit();
+			} else {
+				cx.activate(true);
+			}
+		}
+	});
+	if let Some(error) = report.lock().unwrap().clone() {
 		bail!("{error}");
 	}
 	Ok(())

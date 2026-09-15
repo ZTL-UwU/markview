@@ -13,6 +13,12 @@ at the same level, without `[brackets]`.
 
 ## Unreleased
 
+### Changed
+
+- The interactive window is a GPUI application. `markview-core` layout is
+  unchanged. `--render` and `--bench` still paint through wgpu so offscreen
+  metrics stay comparable to earlier baselines.
+
 ## 0.1.0 - 2026-09-16
 
 An early development release. Expect breaking changes.

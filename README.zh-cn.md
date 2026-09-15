@@ -37,7 +37,7 @@ cargo run --release -- /path/to/document.md
 Debian/Ubuntu 通常需要：
 
 ```sh
-sudo apt-get install libfontconfig1-dev libxkbcommon-dev libwayland-dev fonts-noto-core fonts-noto-cjk
+sudo apt-get install g++ libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev fonts-noto-core fonts-noto-cjk
 ```
 
 ## 阅读操作

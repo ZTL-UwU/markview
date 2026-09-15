@@ -61,9 +61,10 @@ or an Emoji candidate inheriting weight 700; verify repeated reflows stay quiet.
 The render and benchmark modes use the GPU offscreen and do not load personal settings. The watch smoke test writes only temporary documents and closes the window it starts.
 
 Window layout publishes a readable prefix before completion. Native `--smoke-test`
-logs `process app entry→readable GPU frame` for that first frame and
+logs `process app entry→readable GPU frame` for the first GPUI paint and
 `full layout complete` separately, then waits for the complete snapshot to render
-before exiting. Its PNG captures the first readable frame. Offscreen `--bench`
+before exiting. `--output` still writes that first readable frame through the
+wgpu offscreen path, not GPUI framebuffer pixels. Offscreen `--bench`
 and `--render` continue to use complete geometry; their timings must not be
 reported as progressive window first-frame timings.
 
@@ -79,8 +80,8 @@ cargo test --workspace --locked color_glyphs_preserve_rgb_and_share_paint_order 
 ## Choose the layer
 
 1. Put Markdown meaning, reading text, geometry, hit testing, and selection mapping in `crates/markview-core`.
-2. Put GPU resources, clipping, rasterization, and frame assembly in `crates/markview-render`.
-3. Put files, settings, watching, image I/O, platform effects, commands, and window interaction in the root crate.
+2. Put offscreen GPU resources, clipping, rasterization, and frame assembly in `crates/markview-render`.
+3. Put the GPUI window, files, settings, watching, image I/O, platform effects, commands, and interaction in the root crate.
 
 Keep core free of window, GPU, clipboard, filesystem, and configuration dependencies. Prefer immutable snapshots and explicit version tags at asynchronous boundaries. Reuse the retained `Document` when only layout settings change.
 

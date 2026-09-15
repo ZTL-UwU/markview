@@ -2,25 +2,14 @@
 //!
 //! Every platform embeds the same committed byte assets, so the reader never
 //! depends on a system theme to find its own icon.
-use std::sync::OnceLock;
-use winit::window::Icon;
 
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 const WINDOWS_ICON: &[u8] = include_bytes!("../../assets/icons/markview.ico");
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 const LINUX_ICON: &[u8] = include_bytes!("../../assets/icons/markview-128.png");
-
-/// Returns the window icon, decoding the embedded bytes at most once.
-///
-/// winit wants an owned [`Icon`], so the decoded RGBA buffer is cached and a
-/// fresh icon is built from it.
-pub(super) fn window_icon() -> Option<Icon> {
-	type Pixels = (u32, u32, Vec<u8>);
-	static PIXELS: OnceLock<Option<Pixels>> = OnceLock::new();
-	let (width, height, data) = PIXELS.get_or_init(decode).as_ref()?;
-	Icon::from_rgba(data.clone(), *width, *height).ok()
-}
 
 #[cfg(target_os = "windows")]
 fn decode() -> Option<(u32, u32, Vec<u8>)> {
@@ -31,6 +20,7 @@ fn decode() -> Option<(u32, u32, Vec<u8>)> {
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 fn decode() -> Option<(u32, u32, Vec<u8>)> {
 	let image = image::load_from_memory(LINUX_ICON).ok()?.into_rgba8();
 	let (width, height) = image.dimensions();
@@ -49,6 +39,5 @@ mod tests {
 		assert_eq!(width, height);
 		assert!(width >= 32);
 		assert_eq!(data.len(), (width * height * 4) as usize);
-		assert!(window_icon().is_some());
 	}
 }

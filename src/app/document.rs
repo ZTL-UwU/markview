@@ -27,10 +27,10 @@ impl App {
 	}
 	pub(super) fn observe_document(&mut self) {
 		self.watch = self.readers.session.path.clone().map(|path| {
-			let proxy = self.proxy.clone();
+			let events = self.events.clone();
 			let observed = path.clone();
 			FileWatch::new(path, move || {
-				let _ = proxy.send_event(Event::Changed(observed.clone()));
+				let _ = events.send_blocking(Event::Changed(observed.clone()));
 			})
 		});
 	}
@@ -94,9 +94,7 @@ impl App {
 		self.status.clear();
 		self.status_until = None;
 		if self.readers.entries().is_empty() {
-			if let Some(window) = &self.window {
-				window.set_title("Markview");
-			}
+			self.title = "Markview".into();
 		} else if self.readers.session.path.is_some() {
 			self.observe_document();
 			if self.readers.session.document.is_none()

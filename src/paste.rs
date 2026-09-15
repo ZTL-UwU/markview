@@ -40,7 +40,7 @@ pub(crate) fn title_for(text: &str) -> String {
 					.find(|(_, c)| {
 						matches!(c, '.' | '!' | '?' | '。' | '！' | '？')
 					})
-					.map_or(line.len(), |(i, _)| i + 1);
+					.map_or(line.len(), |(i, c)| i + c.len_utf8());
 				line[..end].to_string()
 			})
 	});
@@ -95,5 +95,7 @@ mod tests {
 			title_for("A short sentence. More details follow."),
 			"A short sentence."
 		);
+		assert_eq!(title_for("这是一个句子。后面还有内容。"), "这是一个句子。");
+		assert_eq!(title_for("問題ですか？続きがあります。"), "問題ですか？");
 	}
 }

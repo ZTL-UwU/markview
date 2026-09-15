@@ -1,0 +1,85 @@
+name: Packaging
+
+# Runs inside Release, before any assets are published.
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+
+  linux-extra:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v8
+        with:
+          name: artifacts-build-local-x86_64-unknown-linux-gnu
+          path: dist
+      - name: Extract and validate the archive
+        run: |
+          tar -xzf dist/markview-x86_64-unknown-linux-gnu.tar.gz -C dist --strip-components=1
+          ./dist/markview --help
+      - name: Generate third-party notices
+        run: |
+          cargo install cargo-about --version 0.9.2 --locked --features cli
+          cargo-about generate packaging/about.hbs -o third-party-notices.html
+      - name: Build and verify the packages
+        env:
+          MARKVIEW_NOTICES: ${{ github.workspace }}/third-party-notices.html
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          scripts/package_deb.sh ./dist/markview "$version" amd64 out
+          scripts/package_appimage.sh ./dist/markview "$version" out
+          scripts/verify_linux_packages.sh out
+          cp third-party-notices.html out/
+          (cd out && sha256sum ./* >markview-linux-SHA256SUMS)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: artifacts-extra-linux
+          path: out/*
+          if-no-files-found: error
+
+  macos-app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: artifacts-build-local-aarch64-apple-darwin
+          path: dist
+      - name: Build and verify the application bundle
+        run: |
+          tar -xzf dist/markview-aarch64-apple-darwin.tar.gz -C dist --strip-components=1
+          ./dist/markview --help
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          scripts/package_macos_app.sh ./dist "$version" out
+          scripts/verify_macos_package.sh out
+          (cd out && shasum -a 256 ./* >markview-macos-SHA256SUMS)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: artifacts-extra-macos
+          path: out/*
+          if-no-files-found: error
+
+
+  windows-installers:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          name: artifacts-build-local-x86_64-pc-windows-msvc
+          path: dist
+      - name: Verify the MSI and portable archive
+        shell: pwsh
+        run: ./scripts/verify_windows_packages.ps1 dist

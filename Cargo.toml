@@ -4,7 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 description = "A native, read-only Markdown reader with optimized paragraph layout"
+authors.workspace = true
 license.workspace = true
+readme.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
@@ -14,6 +16,16 @@ publish = false
 
 [lints]
 workspace = true
+
+# `publish = false` is about crates.io; dist still ships this binary.
+[package.metadata.dist]
+dist = true
+
+[package.metadata.wix]
+upgrade-guid = "1094AD43-1728-41AA-A880-31382AA58F5B"
+path-guid = "18EF2595-9338-4B1D-9262-A0D6438FF0F8"
+license = false
+eula = false
 
 [workspace]
 members = [
@@ -28,6 +40,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
+readme = "README.md"
+authors = ["szdytom"]
 repository = "https://github.com/szdytom/markview"
 homepage = "https://github.com/szdytom/markview"
 documentation = "https://github.com/szdytom/markview/tree/main/docs"
@@ -105,7 +119,10 @@ wgpu = { workspace = true, features = ["metal"] }
 [profile.release]
 lto = "thin"
 codegen-units = 1
-strip = "debuginfo"
+strip = true
+
+[profile.dist]
+inherits = "release"
 
 [[bin]]
 name = "markview"

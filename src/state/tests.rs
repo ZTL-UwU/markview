@@ -204,7 +204,29 @@ fn pending_pages_accumulate_reverse_and_resolve_without_blank_frames() {
 	assert_eq!(session.pending_scroll, Some(f32::INFINITY));
 	session.layout_pending = false;
 	session.resolve_scroll(600.);
-	assert_eq!(session.scroll, 1700.);
+	// The document ends two thirds of a page above the viewport bottom.
+	assert_eq!(session.scroll, 2300. - 200.);
+}
+
+#[test]
+fn scrolling_past_the_end_keeps_two_thirds_of_a_page_blank() {
+	let page = 600.;
+	let mut session = ReaderSession::default();
+	session.snapshot.height = 2000.;
+	session.scroll_by(f32::INFINITY, page);
+	assert_eq!(session.scroll, 2000. - page / 3.);
+	// Scrolling further only repeats the limit.
+	session.scroll_by(400., page);
+	assert_eq!(session.scroll, 1800.);
+	// A document shorter than the page still lifts its end off the bottom.
+	session.snapshot.height = 500.;
+	session.scroll_by(f32::INFINITY, page);
+	assert_eq!(session.scroll, 500. - page / 3.);
+	// An end already inside the top third has nowhere to go.
+	session.snapshot.height = 150.;
+	session.scroll_by(f32::INFINITY, page);
+	assert_eq!(session.scroll, 0.);
+	assert_eq!(session.pending_scroll, None);
 }
 
 #[test]

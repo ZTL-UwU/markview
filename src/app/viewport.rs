@@ -1,5 +1,6 @@
 use super::{App, BOTTOM, TOP};
 use crate::layout::{Rect, Scrollbar};
+use crate::state::scroll_limit;
 impl App {
 	/// The document scrollbar while it is visible. Drawing and pointer
 	/// handling share this geometry, so the thumb always agrees with what a
@@ -17,11 +18,17 @@ impl App {
 			w: band,
 			h: (height - TOP - BOTTOM).max(0.0),
 		};
+		let viewport = self.viewport();
+		// The bar spans the scrollable range, including the blank kept below
+		// the document, so its thumb and the scroll clamp agree.
+		let content =
+			scroll_limit(self.readers.session.snapshot.height, viewport)
+				+ viewport;
 		Scrollbar::vertical(
 			track,
 			self.readers.session.scroll,
-			self.readers.session.snapshot.height,
-			self.viewport(),
+			content,
+			viewport,
 			metrics,
 		)
 	}

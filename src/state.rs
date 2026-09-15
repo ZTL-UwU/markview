@@ -274,6 +274,14 @@ impl InteractionState {
 		self.scrollbar = None;
 	}
 }
+
+/// The furthest a document of `height` scrolls in `viewport`: its last line
+/// can be lifted to one third of a page below the top, leaving the other two
+/// thirds blank, and a document that already ends higher does not scroll.
+pub(crate) fn scroll_limit(height: f32, viewport: f32) -> f32 {
+	(height - viewport / 3.0).max(0.0)
+}
+
 impl ReaderSession {
 	pub(crate) fn extends_prefix(
 		&self,
@@ -343,7 +351,8 @@ impl ReaderSession {
 		if let Some(target) = self.pending_scroll {
 			let max = (self.snapshot.height - viewport).max(0.0);
 			if !self.layout_pending || target <= max {
-				self.scroll = target.min(max);
+				self.scroll =
+					target.min(scroll_limit(self.snapshot.height, viewport));
 				self.pending_scroll = None;
 			}
 		}
@@ -416,8 +425,14 @@ impl ReaderSession {
 		} else if self.snapshot.blocks.is_empty() {
 			// A released tab has no old layout to anchor against, but its
 			// scroll position is still user state and should survive reloading.
-			self.scroll
-				.clamp(0.0, (reader.layout.height - viewport).max(0.0))
+			// A prefix keeps the content limit, because a position inside the
+			// blank would exceed what `can_display` accepts.
+			let limit = if reader.complete {
+				scroll_limit(reader.layout.height, viewport)
+			} else {
+				(reader.layout.height - viewport).max(0.0)
+			};
+			self.scroll.clamp(0.0, limit)
 		} else {
 			crate::layout::anchored_scroll(
 				&self.snapshot,

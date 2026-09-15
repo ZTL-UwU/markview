@@ -61,8 +61,11 @@ Scroll intent is separate from displayed scroll. Repeated PageDown presses
 accumulate a target even beyond completed geometry; the worker prioritizes
 publishing a prefix that covers that target. The current page stays visible until
 the target is available. PageUp reverses the pending target and Home cancels it;
-End waits for the final height. While geometry is incomplete, the footer shows
-loading, the document scrollbar is hidden, and Select All waits for completion.
+End waits for the final height. The document scrolls until its last line can
+sit one third of a page below the top, leaving the rest blank; an end already
+higher than that does not scroll. While geometry is incomplete, the footer
+shows loading, the document scrollbar is hidden, and Select All waits for
+completion.
 The implementation does not estimate total height or skip preceding blocks.
 One very large top-level paragraph, table, list, or code block can still delay
 publication and cancellation until that block finishes.

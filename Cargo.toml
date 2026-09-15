@@ -16,7 +16,11 @@ publish = false
 workspace = true
 
 [workspace]
-members = ["crates/markview-core", "crates/markview-render"]
+members = [
+	"crates/markview-core",
+	"crates/markview-render",
+	"xtask",
+]
 resolver = "3"
 
 [workspace.package]
@@ -86,6 +90,10 @@ tempfile.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 wgpu = { workspace = true, features = ["dx12"] }
+ico = "0.5"
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource = { version = "0.1", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 wgpu = { workspace = true, features = ["vulkan"] }

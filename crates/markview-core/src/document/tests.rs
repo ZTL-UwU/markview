@@ -121,6 +121,22 @@ fn incomplete_fence_and_math_do_not_drop_text() {
 	);
 }
 #[test]
+fn cjk_friendly_emphasis_closes_next_to_cjk_text() {
+	let d = parse("**この文は重要です。**但这句话并不重要。\n");
+	let BlockKind::Paragraph(p) = &d.blocks[0].kind else {
+		panic!()
+	};
+	assert_eq!(
+		plain_text(p),
+		"この文は重要です。但这句话并不重要。",
+		"the closing run must not leak into the text"
+	);
+	assert!(p.iter().any(|s| s.style.bold
+		&& matches!(&s.kind, InlineKind::Text(t) if t == "この文は重要です。")));
+	assert!(p.iter().any(|s| !s.style.bold
+		&& matches!(&s.kind, InlineKind::Text(t) if t == "但这句话并不重要。")));
+}
+#[test]
 fn resolved_references_invalidate_semantics_and_footnotes_use_numbers() {
 	let a = parse("A [link][id].\n\n[id]: https://one.example\n");
 	let b = parse("A [link][id].\n\n[id]: https://two.example\n");

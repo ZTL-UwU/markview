@@ -36,7 +36,7 @@ macOS uses Command in place of Ctrl. The default reading column is 760 logical p
 
 ## Supported content
 
-Markview supports CommonMark headings, paragraphs, quotes, lists, emphasis, code blocks, GFM tables and task lists, footnotes, GitHub-style alerts, links, raw HTML equivalents, inline and display math, and local or remote images. Images can be PNG, JPEG, GIF, WebP, BMP, ICO, or SVG; animated images show their first frame.
+Markview supports CommonMark headings, paragraphs, quotes, lists, emphasis (including CJK-friendly emphasis that closes next to CJK text), code blocks, GFM tables and task lists, footnotes, GitHub-style alerts, links, raw HTML equivalents, inline and display math, and local or remote images. Images can be PNG, JPEG, GIF, WebP, BMP, ICO, or SVG; animated images show their first frame.
 
 The reader is intentionally read-only. It does not edit or save Markdown, provide a table of contents or search, follow anchors, print, or provide a multi-document workspace beyond tabs opened from Markdown links. See the [documentation map](docs/README.md) for behavior and implementation boundaries.
 

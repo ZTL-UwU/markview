@@ -292,6 +292,9 @@ pub fn parse(source: impl Into<Arc<str>>) -> Document {
 	options.extension.alerts = true;
 	options.extension.math_dollars = true;
 	options.extension.math_code = true;
+	// CommonMark's flanking rules miss emphasis that ends next to CJK text,
+	// as in `**重要です。**但`, where the closing run follows punctuation.
+	options.extension.cjk_friendly_emphasis = true;
 	let arena = Arena::new();
 	let root = parse_document(&arena, &source, &options);
 	let mut lines = vec![0];

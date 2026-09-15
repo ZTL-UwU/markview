@@ -1,3 +1,4 @@
+mod anchor;
 mod chrome;
 mod document;
 mod interaction;

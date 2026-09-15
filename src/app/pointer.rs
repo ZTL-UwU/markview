@@ -5,7 +5,7 @@ use std::{
 };
 use winit::window::CursorIcon;
 
-use super::{App, chrome};
+use super::{App, anchor, chrome};
 impl App {
 	pub(super) fn pointer_in_panel(&self) -> bool {
 		let (width, height, _) = self.dimensions();
@@ -120,6 +120,14 @@ impl App {
 		}
 	}
 	pub(super) fn open_link(&mut self, url: &str, background: bool) {
+		let fragment = anchor::link_fragment(url);
+		if anchor::link_target(url).is_empty() {
+			// A bare fragment addresses the current document.
+			if let Some(fragment) = fragment {
+				self.goto_anchor(fragment);
+			}
+			return;
+		}
 		if document::openable_link(url) {
 			self.error = false;
 			self.status = match open::that_detached(url) {
@@ -136,11 +144,20 @@ impl App {
 				.is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
 			{
 				if background {
-					if self.readers.open_background(path) {
+					if let Some(index) = self.readers.find(&path) {
+						self.readers.queue_anchor(index, fragment);
+						if index == self.readers.active() {
+							self.apply_anchor();
+						}
+						self.redraw();
+					} else if self.readers.open_background(path, fragment) {
 						self.redraw();
 					}
 				} else {
 					self.open(path);
+					if let Some(fragment) = fragment {
+						self.goto_anchor(fragment);
+					}
 				}
 				return;
 			}

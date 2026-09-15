@@ -13,10 +13,10 @@ mod table;
 #[cfg(test)]
 mod tests;
 pub use crate::scene::{
-	BlockLayout, Draw, Glyph, LayoutSnapshot, LinkRect, Overflow, Paint,
-	PlacedBlock, Rect, SCROLLBAR_GUTTER, SCROLLBAR_HOVER_THICKNESS,
-	SCROLLBAR_MIN_THUMB, SCROLLBAR_THICKNESS, Scrollbar, ScrollbarMetrics,
-	Viewport,
+	BlockLayout, Draw, Glyph, HeadingAnchor, LayoutSnapshot, LinkRect,
+	Overflow, Paint, PlacedBlock, Rect, SCROLLBAR_GUTTER,
+	SCROLLBAR_HOVER_THICKNESS, SCROLLBAR_MIN_THUMB, SCROLLBAR_THICKNESS,
+	Scrollbar, ScrollbarMetrics, Viewport,
 };
 pub use crate::shaping::TextShaper;
 use crate::{

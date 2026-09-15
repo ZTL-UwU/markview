@@ -68,18 +68,36 @@ impl Tabs {
 		self.session.path = Some(path);
 		self.session.content_version += 1;
 		self.session.scroll = 0.0;
+		self.session.pending_anchor = None;
 		self.session.horizontal.clear();
 	}
 	/// Queue a tab for first use without disturbing the active reader or worker.
-	pub(super) fn open_background(&mut self, path: PathBuf) -> bool {
+	pub(super) fn open_background(
+		&mut self,
+		path: PathBuf,
+		anchor: Option<String>,
+	) -> bool {
 		if self.session.path.is_none() || self.find(&path).is_some() {
 			return false;
 		}
 		let mut tab = ReaderTab::new(path.clone());
 		tab.session.path = Some(path);
 		tab.session.content_version = 1;
+		tab.session.pending_anchor = anchor;
 		self.entries.push(tab);
 		true
+	}
+	/// Replace the heading anchor a tab will apply when it is next displayed.
+	pub(super) fn queue_anchor(
+		&mut self,
+		index: usize,
+		anchor: Option<String>,
+	) {
+		if index == self.active {
+			self.session.pending_anchor = anchor;
+		} else if let Some(tab) = self.entries.get_mut(index) {
+			tab.session.pending_anchor = anchor;
+		}
 	}
 	pub(super) fn select(&mut self, index: usize, now: Instant) -> bool {
 		if index >= self.entries.len() || index == self.active {

@@ -54,7 +54,7 @@ fn html_blocks_become_rule_heading_and_paragraph() {
 		"<h2>Title <em>here</em></h2>\n\n<hr>\n\n<p>Body</p>\n\n<!-- gone -->\n",
 	);
 	assert_eq!(doc.blocks.len(), 3);
-	let BlockKind::Heading { level, text } = &doc.blocks[0].kind else {
+	let BlockKind::Heading { level, text, .. } = &doc.blocks[0].kind else {
 		panic!()
 	};
 	assert_eq!(*level, 2);
@@ -90,6 +90,43 @@ fn only_safe_link_schemes_are_openable() {
 	assert!(!openable_link("//example.com"));
 	assert!(!openable_link("#section"));
 }
+#[test]
+fn heading_slugs_follow_the_github_rules() {
+	assert_eq!(heading_slug("Getting Started"), "getting-started");
+	assert_eq!(heading_slug("Hello, World!"), "hello-world");
+	assert_eq!(heading_slug("C++ & Rust"), "c--rust");
+	assert_eq!(heading_slug("  spaced  out  "), "--spaced--out--");
+	assert_eq!(heading_slug("snake_case-name"), "snake_case-name");
+	assert_eq!(heading_slug("中文标题"), "中文标题");
+	assert_eq!(heading_slug("Привет 你好"), "привет-你好");
+	assert_eq!(heading_slug("😄 emoji"), "-emoji");
+}
+
+#[test]
+fn headings_carry_anchors_and_repeats_get_suffixes() {
+	let doc = parse(
+		"# Getting Started\n\n## Getting Started\n\n### 中文 标题\n\n> ## Nested Heading\n",
+	);
+	let anchors: Vec<&str> = doc.blocks[..3]
+		.iter()
+		.map(|b| match &b.kind {
+			BlockKind::Heading { anchor, .. } => anchor.as_str(),
+			_ => panic!("expected a top-level heading"),
+		})
+		.collect();
+	assert_eq!(
+		anchors,
+		["getting-started", "getting-started-1", "中文-标题"]
+	);
+	let BlockKind::Quote { blocks, .. } = &doc.blocks[3].kind else {
+		panic!()
+	};
+	let BlockKind::Heading { anchor, .. } = &blocks[0].kind else {
+		panic!()
+	};
+	assert_eq!(anchor, "nested-heading");
+}
+
 #[test]
 fn content_id_tracks_semantics_not_source_spelling() {
 	assert_eq!(

@@ -159,6 +159,7 @@ impl ApplicationHandler<Event> for App {
 						} else {
 							String::new()
 						};
+						self.apply_anchor();
 						if let Some(w) = &self.window {
 							w.set_title(&format!(
 								"{} — Markview",
@@ -185,6 +186,7 @@ impl ApplicationHandler<Event> for App {
 						self.readers.session.layout_pending =
 							!self.readers.session.snapshot_complete;
 						self.readers.session.pending_scroll = None;
+						self.readers.session.pending_anchor = None;
 						self.readers.session.select_all_pending = false;
 						self.error = true;
 						self.status = error;

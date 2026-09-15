@@ -1,5 +1,8 @@
 //! Semantic Markdown nodes and stable reading identities.
+mod heading;
 mod parse;
+pub(crate) use heading::Anchors;
+pub use heading::heading_slug;
 pub use parse::parse;
 use std::{
 	collections::hash_map::DefaultHasher,
@@ -55,6 +58,8 @@ pub enum BlockKind {
 	Heading {
 		level: u8,
 		text: RichText,
+		/// The GitHub-style fragment that addresses this heading.
+		anchor: String,
 	},
 	Code {
 		language: String,
@@ -176,9 +181,11 @@ fn semantic_key(kind: &BlockKind) -> u64 {
 		|b: &[Block]| b.iter().map(|b| b.content_key).collect::<Vec<_>>();
 	match kind {
 		BlockKind::Paragraph(t) => rich(t).hash(&mut hash),
-		BlockKind::Heading { level, text } => {
-			(level, rich(text)).hash(&mut hash)
-		}
+		BlockKind::Heading {
+			level,
+			text,
+			anchor,
+		} => (level, rich(text), anchor).hash(&mut hash),
 		BlockKind::Code { language, text } => (language, text).hash(&mut hash),
 		BlockKind::Quote { label: _, blocks }
 		| BlockKind::Footnote { label: _, blocks } => {

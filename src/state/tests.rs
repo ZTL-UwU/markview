@@ -208,6 +208,55 @@ fn pending_pages_accumulate_reverse_and_resolve_without_blank_frames() {
 }
 
 #[test]
+fn heading_anchors_queue_until_their_heading_is_laid_out() {
+	let mut engine = crate::layout::LayoutEngine::new();
+	let options = LayoutOptions::default();
+	let document = Arc::new(document::parse(
+		"# Intro\n\nParagraph.\n\n# Details\n\nMore.\n",
+	));
+	let layout = engine.layout(&document, &options);
+	let details = layout.anchor_y("details").unwrap();
+	let mut session = ReaderSession::default();
+	session.accept(
+		crate::worker::ReaderSnapshot {
+			document: document.clone(),
+			layout: layout.clone(),
+			content_version: 1,
+			complete: true,
+		},
+		300.,
+	);
+	session.pending_anchor = Some("details".into());
+	assert_eq!(session.resolve_anchor(300.), Some(Ok(())));
+	assert_eq!(session.pending_anchor, None);
+	let max = (layout.height - 300.).max(0.);
+	assert_eq!(session.scroll, details.clamp(0., max));
+	// A heading the finished document lacks is reported once.
+	session.pending_anchor = Some("missing".into());
+	assert_eq!(session.resolve_anchor(300.), Some(Err("missing".into())));
+	assert_eq!(session.pending_anchor, None);
+	// An unfinished prefix keeps the anchor queued.
+	let mut prefix = layout.clone();
+	prefix.blocks.truncate(1);
+	prefix.height = layout.blocks[1].y;
+	session.accept(
+		crate::worker::ReaderSnapshot {
+			document,
+			layout: prefix,
+			content_version: 2,
+			complete: false,
+		},
+		300.,
+	);
+	session.pending_anchor = Some("details".into());
+	assert_eq!(session.resolve_anchor(300.), None);
+	assert_eq!(session.pending_anchor.as_deref(), Some("details"));
+	// A deliberate scroll abandons the queued anchor.
+	session.scroll_by(40., 300.);
+	assert_eq!(session.pending_anchor, None);
+}
+
+#[test]
 fn partial_reload_waits_for_anchor_and_keeps_the_old_snapshot() {
 	let mut engine = crate::layout::LayoutEngine::new();
 	let options = LayoutOptions::default();

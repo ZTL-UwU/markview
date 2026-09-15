@@ -2,7 +2,7 @@ use super::{BlockContext, LayoutOptions};
 use crate::text::{TextCluster, TextNode};
 use crate::{
 	document::{Block, BlockKind, CellAlign, InlineKind, RichText},
-	scene::{BlockLayout, Draw, Paint, Rect},
+	scene::{BlockLayout, Draw, HeadingAnchor, Paint, Rect},
 	style::{ColorField, Role},
 };
 impl BlockContext<'_> {
@@ -188,6 +188,13 @@ impl BlockContext<'_> {
 			},
 			left_only: role == Role::Blockquote,
 		};
+		if let BlockKind::Heading { anchor, .. } = &block.kind {
+			// A link to this heading lands on the top of its box.
+			out.anchors.push(HeadingAnchor {
+				anchor: anchor.clone(),
+				y: y + before,
+			});
+		}
 		self.shaper.appearance = previous;
 		let total = before + box_height + after;
 		out.height = out.height.max(y + total);

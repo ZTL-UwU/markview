@@ -52,6 +52,8 @@ pub(crate) struct ReaderSession {
 	pub(crate) follow_update: bool,
 	pub(crate) layout_pending: bool,
 	pub(crate) pending_scroll: Option<f32>,
+	/// A heading anchor waiting for its heading to be laid out.
+	pub(crate) pending_anchor: Option<String>,
 	pub(crate) select_all_pending: bool,
 	pub(crate) displayed_version: u64,
 	pub(crate) snapshot_complete: bool,
@@ -323,6 +325,9 @@ impl ReaderSession {
 			self.resolve_scroll(viewport);
 			return;
 		}
+		// A deliberate scroll abandons an anchor that was still waiting for
+		// its heading to be laid out.
+		self.pending_anchor = None;
 		self.follow_update = false;
 		let base = self
 			.pending_scroll
@@ -350,6 +355,32 @@ impl ReaderSession {
 		self.snapshot_complete = false;
 		self.document = None;
 		self.requested_options = None;
+		self.pending_anchor = None;
+	}
+
+	/// Scrolls to a queued heading anchor against the current snapshot.
+	///
+	/// `None` means the heading has not been laid out yet and the anchor stays
+	/// queued; `Some(Ok(()))` means the scroll offset moved; `Some(Err(anchor))`
+	/// means the complete layout has no such heading.
+	pub(crate) fn resolve_anchor(
+		&mut self,
+		viewport: f32,
+	) -> Option<Result<(), String>> {
+		let anchor = self.pending_anchor.clone()?;
+		if let Some(y) = self.snapshot.anchor_y(&anchor) {
+			self.pending_anchor = None;
+			self.pending_scroll = None;
+			self.follow_update = false;
+			self.scroll =
+				y.clamp(0.0, (self.snapshot.height - viewport).max(0.0));
+			return Some(Ok(()));
+		}
+		if self.snapshot_complete {
+			self.pending_anchor = None;
+			return Some(Err(anchor));
+		}
+		None
 	}
 
 	pub(crate) fn accept(

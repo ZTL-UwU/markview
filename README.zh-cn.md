@@ -27,7 +27,7 @@ sudo apt-get install libfontconfig1-dev libxkbcommon-dev libwayland-dev fonts-no
 - `Ctrl++` / `Ctrl+-` 调整字号；`Ctrl+[` / `Ctrl+]` 调整阅读栏宽度。
 - 使用滚轮、方向键、Page Up/Down、空格、Home、End 或滚动条滚动。
 - 拖动选择文本，使用 `Ctrl+C` 复制；`Ctrl+A` 全选。
-- 点击链接可在系统浏览器中打开 `http`、`https` 或 `mailto` 链接。
+- 点击链接时，`http`、`https`、`mailto` 与本地文件交给系统默认程序打开；指向其他 `.md` 文件的链接会在新标签页中打开，中键在后台打开而不切换当前标签页。链接中的 `#标题锚点` 会定位到对应标题，无论它在当前文档还是刚打开的 `.md` 文件中。
 - 将光标移到宽代码块、表格或公式上，可横向滚动。
 
 macOS 使用 Command 代替 Ctrl。默认阅读栏宽度为 760 逻辑像素，默认字号为 18 逻辑像素。
@@ -36,7 +36,7 @@ macOS 使用 Command 代替 Ctrl。默认阅读栏宽度为 760 逻辑像素，�
 
 支持 CommonMark 标题、段落、引用、列表、强调（包括紧邻中日韩文字也能正确闭合的 CJK 友好强调）、代码块，GFM 表格和任务列表，脚注、GitHub 风格提示块、链接、受支持的原始 HTML、行内和块级数学公式，以及本地或远程图片。图片支持 PNG、JPEG、GIF、WebP、BMP、ICO 和 SVG；动图只显示第一帧。
 
-阅读器有意保持只读：不能编辑或保存 Markdown，不提供目录或搜索，不跟随相对链接和锚点，不支持打印或多文档工作区。完整边界见[文档地图](docs/README.md)。
+阅读器有意保持只读：不能编辑或保存 Markdown，不提供目录或搜索，不支持打印或多文档工作区。标题锚点使用 GitHub 的 slug 规则；原始 HTML 的 `id` 属性不会被解析，因此不能作为链接目标。完整边界见[文档地图](docs/README.md)。
 
 ## 自定义样式
 

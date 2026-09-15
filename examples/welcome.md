@@ -1,5 +1,10 @@
 # A quieter place to read
 
+- [让文字与公式，自然地排在一起](#让文字与公式自然地排在一起)
+- [Structured reading](#structured-reading)
+- [A few mathematical shapes](#a-few-mathematical-shapes)
+- [HTML that reads like Markdown](#html-that-reads-like-markdown)
+
 ## 让文字与公式，自然地排在一起
 
 Markview 是一个只读的原生 Markdown 阅读器。让编辑器负责写作，让阅读器专注于文字的呈现：合适的行宽、克制的颜色，以及不会打断阅读的实时更新。
@@ -77,3 +82,5 @@ Simple HTML shares Markdown semantics: <strong>bold</strong>, <em>italic</em>, <
 ```text
 Wide content can be scrolled locally with Shift+wheel: 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789 0123456789
 ```
+
+回到[结构化阅读](#structured-reading)，或查看[架构中的三层流水线](../docs/architecture.md#the-three-layer-pipeline)。标题锚点使用 GitHub 的 slug 规则，因此这些链接在 Markview 与其他 Markdown 阅读器中指向同一个标题。

@@ -157,6 +157,13 @@ pub struct LinkRect {
 	pub url: String,
 }
 
+/// A heading's anchor and the block-local y a link to it should scroll to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeadingAnchor {
+	pub anchor: String,
+	pub y: f32,
+}
+
 #[derive(Debug, Default)]
 pub struct BlockLayout {
 	pub text: Vec<TextNode>,
@@ -165,6 +172,8 @@ pub struct BlockLayout {
 	pub width: f32,
 	pub overflow: Vec<Overflow>,
 	pub links: Vec<LinkRect>,
+	/// Headings laid out inside this block, in reading order.
+	pub anchors: Vec<HeadingAnchor>,
 	pub degraded: usize,
 	pub math_errors: usize,
 }
@@ -190,6 +199,19 @@ pub struct LayoutSnapshot {
 }
 
 impl LayoutSnapshot {
+	/// The document y a link to a heading anchor should scroll to, once that
+	/// heading has been laid out. A prefix snapshot only answers for the
+	/// headings it already contains.
+	pub fn anchor_y(&self, anchor: &str) -> Option<f32> {
+		self.blocks.iter().find_map(|block| {
+			block
+				.layout
+				.anchors
+				.iter()
+				.find(|a| a.anchor == anchor)
+				.map(|a| block.y + a.y)
+		})
+	}
 	pub fn image_title_at(
 		&self,
 		x: f32,

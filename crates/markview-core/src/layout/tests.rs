@@ -76,6 +76,27 @@ fn links_are_hit_testable_and_survive_reuse() {
 	assert_eq!(again.blocks[0].layout.links.len(), 2);
 }
 #[test]
+fn heading_anchors_resolve_to_layout_positions() {
+	let mut engine = LayoutEngine::new();
+	let opts = LayoutOptions::default();
+	let doc =
+		document::parse("# First\n\nParagraph.\n\n> ## Nested\n\n# First\n");
+	let snapshot = engine.layout(&doc, &opts);
+	let first = snapshot.anchor_y("first").unwrap();
+	let nested = snapshot.anchor_y("nested").unwrap();
+	let repeat = snapshot.anchor_y("first-1").unwrap();
+	assert!(first < nested && nested < repeat);
+	assert!(snapshot.anchor_y("missing").is_none());
+	// The nested heading's anchor belongs to the quote that contains it.
+	let quote = &snapshot.blocks[2];
+	assert!((quote.y..quote.y + quote.layout.height).contains(&nested));
+	assert!(quote.layout.anchors.iter().any(|a| a.anchor == "nested"));
+	// Reused geometry keeps its anchors.
+	let again = engine.layout(&doc, &opts);
+	assert_eq!(again.reused, snapshot.blocks.len());
+	assert_eq!(again.anchor_y("nested"), Some(nested));
+}
+#[test]
 fn wrapped_links_produce_one_rect_per_line() {
 	let d = document::parse(
 		"[an intentionally long linked phrase that wraps](https://example.com)\n",

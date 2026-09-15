@@ -13,13 +13,15 @@ use std::{
 };
 
 use super::{
-	Block, BlockKind, CellAlign, Document, Inline, InlineKind, ListItem,
-	RichText, TextStyle, fingerprint, plain_text, semantic_key,
+	Anchors, Block, BlockKind, CellAlign, Document, Inline, InlineKind,
+	ListItem, RichText, TextStyle, fingerprint, plain_text, semantic_key,
 };
 struct Reader<'s> {
 	source: &'s str,
 	lines: Vec<usize>,
 	footnotes: HashMap<String, u32>,
+	/// Heading anchors already used by this document, in reading order.
+	anchors: Anchors,
 }
 
 impl Reader<'_> {
@@ -155,7 +157,11 @@ impl Reader<'_> {
 		merge_text(text)
 	}
 
-	fn blocks<'a>(&self, node: &'a AstNode<'a>, depth: usize) -> Vec<Block> {
+	fn blocks<'a>(
+		&mut self,
+		node: &'a AstNode<'a>,
+		depth: usize,
+	) -> Vec<Block> {
 		let mut blocks = Vec::new();
 		for child in node.children() {
 			let source = self.range(child);
@@ -170,10 +176,15 @@ impl Reader<'_> {
 					NodeValue::Paragraph => {
 						BlockKind::Paragraph(self.rich(child))
 					}
-					NodeValue::Heading(h) => BlockKind::Heading {
-						level: h.level,
-						text: self.rich(child),
-					},
+					NodeValue::Heading(h) => {
+						let text = self.rich(child);
+						let anchor = self.anchors.unique(&plain_text(&text));
+						BlockKind::Heading {
+							level: h.level,
+							text,
+							anchor,
+						}
+					}
 					NodeValue::CodeBlock(c) if c.info.trim() == "math" => {
 						BlockKind::Paragraph(vec![Inline {
 							kind: InlineKind::Math {
@@ -196,9 +207,13 @@ impl Reader<'_> {
 						html::Block::Empty => continue,
 						html::Block::Rule => BlockKind::Rule,
 						html::Block::Heading { level, text } => {
+							let text = html_rich(text, &source);
+							let anchor =
+								self.anchors.unique(&plain_text(&text));
 							BlockKind::Heading {
 								level,
-								text: html_rich(text, &source),
+								text,
+								anchor,
 							}
 						}
 						html::Block::Paragraph(text) => {
@@ -299,7 +314,7 @@ pub fn parse(source: impl Into<Arc<str>>) -> Document {
 	let root = parse_document(&arena, &source, &options);
 	let mut lines = vec![0];
 	lines.extend(source.match_indices('\n').map(|(i, _)| i + 1));
-	let reader = Reader {
+	let mut reader = Reader {
 		source: &source,
 		lines,
 		footnotes: root
@@ -309,6 +324,7 @@ pub fn parse(source: impl Into<Arc<str>>) -> Document {
 				_ => None,
 			})
 			.collect(),
+		anchors: Anchors::default(),
 	};
 	let blocks = reader.blocks(root, 0);
 	let mut hasher = DefaultHasher::new();

@@ -110,10 +110,10 @@ fn background_open_preserves_active_reading_and_deduplicates_tabs() {
 	tabs.session.scroll = 123.0;
 	tabs.session.horizontal.insert((0, 0), 42.0);
 	let request = tabs.request(LayoutOptions::default(), true).unwrap();
-	assert!(tabs.open_background(PathBuf::from("b.md")));
-	assert!(tabs.open_background(PathBuf::from("c.md")));
-	assert!(!tabs.open_background(PathBuf::from("b.md")));
-	assert!(!tabs.open_background(PathBuf::from("a.md")));
+	assert!(tabs.open_background(PathBuf::from("b.md"), Some("intro".into())));
+	assert!(tabs.open_background(PathBuf::from("c.md"), None));
+	assert!(!tabs.open_background(PathBuf::from("b.md"), None));
+	assert!(!tabs.open_background(PathBuf::from("a.md"), None));
 	assert_eq!(tabs.entries().len(), 3);
 	assert_eq!(tabs.active(), 0);
 	assert_eq!(tabs.session.path, Some(PathBuf::from("a.md")));
@@ -128,6 +128,7 @@ fn background_open_preserves_active_reading_and_deduplicates_tabs() {
 	assert!(tabs.select(1, now));
 	assert_eq!(tabs.session.path, Some(PathBuf::from("b.md")));
 	assert!(tabs.session.document.is_none());
+	assert_eq!(tabs.session.pending_anchor.as_deref(), Some("intro"));
 	let next = tabs.request(LayoutOptions::default(), false).unwrap();
 	assert_eq!(next.version, request.version + 1);
 	assert_eq!(next.path, PathBuf::from("b.md"));
@@ -140,8 +141,8 @@ fn background_tabs_can_be_reordered_closed_or_activated_by_closing_current() {
 	let mut tabs = Tabs::default();
 	let now = Instant::now();
 	tabs.open(PathBuf::from("a.md"), now);
-	assert!(tabs.open_background(PathBuf::from("b.md")));
-	assert!(tabs.open_background(PathBuf::from("c.md")));
+	assert!(tabs.open_background(PathBuf::from("b.md"), None));
+	assert!(tabs.open_background(PathBuf::from("c.md"), None));
 	assert!(tabs.move_tab(2, 1));
 	assert!(matches!(tabs.close(2, now), super::Closed::Inactive));
 	assert_eq!(tabs.session.path, Some(PathBuf::from("a.md")));

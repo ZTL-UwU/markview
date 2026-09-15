@@ -56,6 +56,7 @@ impl App {
 		self.tab_strip.cancel_drag();
 		self.tab_strip.reveal_active = true;
 		if !self.readers.select(index, Instant::now()) {
+			self.apply_anchor();
 			self.redraw();
 			return;
 		}
@@ -72,6 +73,7 @@ impl App {
 		{
 			self.request(false);
 		}
+		self.apply_anchor();
 		self.redraw();
 	}
 	pub(super) fn close_tab(&mut self, index: usize) {

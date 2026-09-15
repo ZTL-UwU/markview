@@ -8,6 +8,8 @@ use swash::{
 	zeno::{Format, Vector},
 };
 pub(super) const ATLAS_SIZE: u32 = 2048;
+mod color;
+pub(super) const COLOR_ATLAS_SIZE: u32 = color::SIZE;
 
 /// Keep layout advances fractional, but bake horizontal subpixel coverage into
 /// the raster itself. Atlas texels must land on physical pixels one-to-one:
@@ -53,6 +55,7 @@ enum RasterKey {
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct Entry {
+	pub(super) color: bool,
 	pub(super) x: u32,
 	pub(super) y: u32,
 	pub(super) w: u32,
@@ -69,6 +72,7 @@ pub(super) struct RasterCache {
 	scaler: ScaleContext,
 	math_fonts: HashMap<String, FontData>,
 	atlas_full: bool,
+	color_atlas: Option<color::ColorAtlas>,
 }
 impl RasterCache {
 	pub(super) fn new(
@@ -121,6 +125,7 @@ impl RasterCache {
 			scaler: ScaleContext::new(),
 			math_fonts: HashMap::new(),
 			atlas_full: false,
+			color_atlas: None,
 		};
 		cache.reset_atlas(queue);
 		cache
@@ -131,10 +136,27 @@ impl RasterCache {
 	pub(super) fn bind_group(&self) -> &wgpu::BindGroup {
 		&self.bind_group
 	}
+	pub(super) fn color_bind_group(&self) -> &wgpu::BindGroup {
+		&self
+			.color_atlas
+			.as_ref()
+			.expect("prepared color glyph atlas")
+			.bind_group
+	}
+	pub(super) fn color_bytes(&self) -> u64 {
+		if self.color_atlas.is_some() {
+			u64::from(COLOR_ATLAS_SIZE).pow(2) * 4
+		} else {
+			0
+		}
+	}
 	pub(super) fn reset_atlas(&mut self, queue: &wgpu::Queue) {
 		self.cache.clear();
 		self.shelf = (2, 0, 2);
 		self.atlas_full = false;
+		if let Some(atlas) = &mut self.color_atlas {
+			atlas.reset();
+		}
 		self.upload(queue, 0, 0, 1, 1, &[255]);
 	}
 	fn upload(
@@ -208,6 +230,8 @@ impl RasterCache {
 
 	pub(super) fn glyph(
 		&mut self,
+		device: &wgpu::Device,
+		color_pipeline: &wgpu::RenderPipeline,
 		queue: &wgpu::Queue,
 		g: &Glyph,
 		scale: f32,
@@ -242,15 +266,34 @@ impl RasterCache {
 		.format(Format::Alpha)
 		.offset(Vector::new(phase as f32 / 4.0, 0.0))
 		.render(&mut scaler, g.id);
-		let Some(image) = image else {
+		let Some(mut image) = image else {
 			let e = Entry::default();
 			self.cache.insert(key, e);
 			return Some(e);
 		};
+		let entry = Entry {
+			w: image.placement.width,
+			h: image.placement.height,
+			left: image.placement.left as f32,
+			top: -image.placement.top as f32,
+			..Default::default()
+		};
 		let data = match image.content {
 			swash::scale::image::Content::Mask => image.data,
 			swash::scale::image::Content::Color => {
-				image.data.as_chunks::<4>().0.iter().map(|p| p[3]).collect()
+				if matches!(image.source, Source::ColorOutline(_)) {
+					color::unpremultiply(&mut image.data);
+				}
+				let atlas = self.color_atlas.get_or_insert_with(|| {
+					color::ColorAtlas::new(device, color_pipeline)
+				});
+				let Some(entry) = atlas.insert(queue, entry, &image.data)
+				else {
+					self.atlas_full = true;
+					return None;
+				};
+				self.cache.insert(key, entry);
+				return Some(entry);
 			}
 			swash::scale::image::Content::SubpixelMask => image
 				.data
@@ -260,18 +303,7 @@ impl RasterCache {
 				.map(|p| p[0].max(p[1]).max(p[2]))
 				.collect(),
 		};
-		self.insert(
-			queue,
-			key,
-			Entry {
-				w: image.placement.width,
-				h: image.placement.height,
-				left: image.placement.left as f32,
-				top: -image.placement.top as f32,
-				..Default::default()
-			},
-			&data,
-		)
+		self.insert(queue, key, entry, &data)
 	}
 
 	pub(super) fn math_font(&mut self, name: &str) -> Option<FontData> {

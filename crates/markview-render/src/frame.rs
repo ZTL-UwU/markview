@@ -197,7 +197,7 @@ impl Renderer {
 			self.prepare(snapshot, view, overlay);
 			if self.raster.full() {
 				bail!(
-					"Visible content exceeds the 4 MiB glyph atlas; reduce zoom"
+					"Visible content exceeds the glyph atlases (4 MiB masks / 1 MiB color); reduce zoom"
 				);
 			}
 		}
@@ -243,7 +243,14 @@ impl Renderer {
 				pass.set_bind_group(0, self.raster.bind_group(), &[]);
 				pass.draw(cursor..range.start, 0..1);
 				pass.set_pipeline(&self.images.pipeline);
-				pass.set_bind_group(0, self.images.bind_group(key), &[]);
+				pass.set_bind_group(
+					0,
+					match key {
+						Some(key) => self.images.bind_group(key),
+						None => self.raster.color_bind_group(),
+					},
+					&[],
+				);
 				pass.draw(range.clone(), 0..1);
 				cursor = range.end;
 			}

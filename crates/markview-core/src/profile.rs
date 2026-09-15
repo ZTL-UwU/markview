@@ -21,6 +21,8 @@ pub enum Stage {
 	Blocks,
 	Rich,
 	FontChoose,
+	FontResolve,
+	ShapeBuild,
 	Prepare,
 	Units,
 	ShapeClusters,
@@ -39,6 +41,8 @@ impl Stage {
 			Self::Blocks => "layout.blocks_ms",
 			Self::Rich => "layout.rich_ms",
 			Self::FontChoose => "layout.font_choose_ms",
+			Self::FontResolve => "layout.font_resolve_ms",
+			Self::ShapeBuild => "layout.shape_build_ms",
 			Self::Prepare => "layout.prepare_ms",
 			Self::Units => "layout.units_ms",
 			Self::ShapeClusters => "layout.shape_clusters_ms",
@@ -49,11 +53,13 @@ impl Stage {
 	}
 }
 
-const LABELS: [Stage; 10] = [
+const LABELS: [Stage; 12] = [
 	Stage::Highlights,
 	Stage::Blocks,
 	Stage::Rich,
 	Stage::FontChoose,
+	Stage::FontResolve,
+	Stage::ShapeBuild,
 	Stage::Prepare,
 	Stage::Units,
 	Stage::ShapeClusters,

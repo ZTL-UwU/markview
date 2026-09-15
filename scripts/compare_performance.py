@@ -17,7 +17,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = [f"tests/fixtures/{name}-10k.md" for name in
-            ("ordinary", "math", "code", "long-code")] + ["examples/images.md"]
+            ("ordinary", "math", "code", "long-code")] + [
+                "examples/images.md", "tests/fixtures/emoji-fallback.md"]
 METRICS = {
     "first_open_ms": ("first_open", "total_ms"),
     "full_p50_ms": ("full_layout_reopens", "p50_ms"),

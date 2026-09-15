@@ -1,5 +1,49 @@
 use super::*;
 #[test]
+fn bundled_emoji_keeps_regular_face_in_headings_and_emphasis() {
+	for dark in [false, true] {
+		let sheet = Stylesheet::bundled(dark);
+		let body = sheet.text(&TextAppearance::default(), Role::Body);
+		for &(role, _) in Role::ALL {
+			let parent = sheet.text(&body, role);
+			for (bold, italic) in
+				[(false, false), (true, false), (false, true), (true, true)]
+			{
+				let appearance = sheet.inline(
+					&parent,
+					&crate::document::TextStyle {
+						bold,
+						italic,
+						..Default::default()
+					},
+				);
+				for font in
+					appearance.font.iter().filter(|f| f.family == "emoji")
+				{
+					assert_eq!(
+						font.weight,
+						Some(400),
+						"dark={dark} role={role:?}"
+					);
+					assert_eq!(font.variant, Variant::Normal);
+				}
+			}
+		}
+		assert_eq!(
+			sheet
+				.inline(
+					&body,
+					&crate::document::TextStyle {
+						bold: true,
+						..Default::default()
+					}
+				)
+				.weight,
+			700
+		);
+	}
+}
+#[test]
 fn strict_schema() {
 	for bad in [
 		"[body]\ncolor='#ffffff'",

@@ -9,7 +9,8 @@ pub(super) type ImageKey = (String, u64);
 pub(super) struct ImageTextures {
 	pub(super) pipeline: wgpu::RenderPipeline,
 	cache: HashMap<ImageKey, (wgpu::BindGroup, u64)>,
-	runs: Vec<(Range<u32>, ImageKey)>,
+	// None selects the shared color glyph atlas, in document paint order.
+	runs: Vec<(Range<u32>, Option<ImageKey>)>,
 	demand: HashMap<String, ImageDemand>,
 	images: ImageSnapshot,
 }
@@ -45,14 +46,23 @@ impl ImageTextures {
 	pub(super) fn bytes(&self) -> u64 {
 		self.cache.values().map(|(_, bytes)| bytes).sum()
 	}
-	pub(super) fn runs(&self) -> &[(Range<u32>, ImageKey)] {
+	pub(super) fn runs(&self) -> &[(Range<u32>, Option<ImageKey>)] {
 		&self.runs
 	}
 	pub(super) fn bind_group(&self, key: &ImageKey) -> &wgpu::BindGroup {
 		&self.cache[key].0
 	}
 	pub(super) fn record(&mut self, range: Range<u32>, key: ImageKey) {
-		self.runs.push((range, key));
+		self.runs.push((range, Some(key)));
+	}
+	pub(super) fn record_color_glyph(&mut self, range: Range<u32>) {
+		if let Some((previous, None)) = self.runs.last_mut()
+			&& previous.end == range.start
+		{
+			previous.end = range.end;
+			return;
+		}
+		self.runs.push((range, None));
 	}
 	pub(super) fn prepare(
 		&mut self,
@@ -88,7 +98,7 @@ impl ImageTextures {
 				> 256 * 1024 * 1024
 			{
 				self.cache.retain(|key, _| {
-					self.runs.iter().any(|(_, used)| used == key)
+					self.runs.iter().any(|(_, used)| used.as_ref() == Some(key))
 				});
 			}
 			if self.cache.values().map(|(_, b)| b).sum::<u64>() + bytes

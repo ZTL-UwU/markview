@@ -8,7 +8,12 @@ use anyhow::Result;
 use parley::{
 	FontContext, FontStyle, FontWeight, LayoutContext, StyleProperty,
 };
-use std::{collections::HashMap, ops::Range, sync::Arc};
+use std::{
+	collections::{HashMap, HashSet},
+	io::Write,
+	ops::Range,
+	sync::Arc,
+};
 use unicode_segmentation::UnicodeSegmentation;
 #[derive(Clone)]
 struct Face {
@@ -22,6 +27,9 @@ struct Face {
 struct FontSet {
 	faces: Vec<Face>,
 	choices: HashMap<String, Option<usize>>,
+	diagnostic_key: u64,
+	diagnostic_fonts: Vec<Font>,
+	diagnostic_weight: u16,
 }
 type FaceChoice = Option<(usize, usize)>;
 impl FontSet {
@@ -75,6 +83,8 @@ pub struct TextShaper {
 	pub appearance: TextAppearance,
 	faces: HashMap<(Vec<Font>, u16), usize>,
 	font_sets: Vec<FontSet>,
+	// Retained across reflows and stylesheet resets; no document text is stored.
+	warned_fallbacks: HashSet<u64>,
 }
 impl Default for TextShaper {
 	fn default() -> Self {
@@ -91,6 +101,7 @@ impl TextShaper {
 				.text(&TextAppearance::default(), Role::Body),
 			faces: HashMap::new(),
 			font_sets: Vec::new(),
+			warned_fallbacks: HashSet::new(),
 		}
 	}
 	pub fn set_stylesheet(&mut self, stylesheet: Arc<Stylesheet>) {
@@ -227,11 +238,63 @@ impl TextShaper {
 			}
 			self.faces.insert(key.clone(), self.font_sets.len());
 			self.font_sets.push(FontSet {
+				diagnostic_key: crate::document::fingerprint(&key),
+				diagnostic_fonts: appearance.font.clone(),
+				diagnostic_weight: appearance.weight,
 				faces,
 				..Default::default()
 			});
 		}
 		self.faces[&key]
+	}
+	fn fallback_warning(&mut self, fonts: usize, text: &str) -> Option<String> {
+		const LIMIT: usize = 64;
+		// Inline images/math use an object replacement character for layout,
+		// not a visible glyph. Do not report it as a missing user font.
+		if text.chars().all(|c| c == '\u{fffc}' || c.is_control()) {
+			return None;
+		}
+		let set = &self.font_sets[fonts];
+		if self.warned_fallbacks.len() >= LIMIT
+			|| !self.warned_fallbacks.insert(set.diagnostic_key)
+		{
+			return None;
+		}
+		let codes = text
+			.chars()
+			.take(8)
+			.map(|c| format!("U+{:04X}", c as u32))
+			.collect::<Vec<_>>()
+			.join(" ");
+		let resolved = set
+			.faces
+			.iter()
+			.map(|f| format!("{:?} (weight {})", f.family, f.weight))
+			.collect::<Vec<_>>()
+			.join(", ");
+		let requested = set
+			.diagnostic_fonts
+			.iter()
+			.map(|f| {
+				format!(
+					"{:?} ({:?}, weight {})",
+					f.family,
+					f.variant,
+					f.weight.unwrap_or(set.diagnostic_weight)
+				)
+			})
+			.collect::<Vec<_>>()
+			.join(", ");
+		Some(format!(
+			"markview: warning: font fallback to Parley/system for [{codes}]: no configured face covers the entire cluster/word. Requested: [{}]. Available exact faces: [{}]. Check installed fonts and candidate weight/variant (Emoji fonts commonly require weight = 400).{}",
+			requested,
+			resolved,
+			if self.warned_fallbacks.len() == LIMIT {
+				" Further font fallback warnings suppressed for this text shaper."
+			} else {
+				" Repeated warnings for this candidate set are suppressed."
+			}
+		))
 	}
 	pub(crate) fn shape(
 		&mut self,
@@ -248,11 +311,15 @@ impl TextShaper {
 			.iter()
 			.map(|span| self.stylesheet.inline(&base, &span.style))
 			.collect();
-		let base_fonts = self.resolve_fonts(&base);
-		let span_fonts: Vec<_> = appearances
-			.iter()
-			.map(|appearance| self.resolve_fonts(appearance))
-			.collect();
+		let (base_fonts, span_fonts) =
+			crate::profile::span(crate::profile::Stage::FontResolve, || {
+				let base_fonts = self.resolve_fonts(&base);
+				let span_fonts: Vec<_> = appearances
+					.iter()
+					.map(|appearance| self.resolve_fonts(appearance))
+					.collect();
+				(base_fonts, span_fonts)
+			});
 		let mut choices: Vec<(Range<usize>, FaceChoice)> = Vec::new();
 		crate::profile::span(crate::profile::Stage::FontChoose, || {
 			// Resolve whole joining-script words together; elsewhere resolve grapheme clusters.
@@ -283,6 +350,12 @@ impl TextShaper {
 						.unwrap_or(base_fonts);
 					let face =
 						self.font_sets[fonts].choose(part).map(|i| (fonts, i));
+					if face.is_none()
+						&& let Some(warning) =
+							self.fallback_warning(fonts, part)
+					{
+						let _ = writeln!(std::io::stderr().lock(), "{warning}");
+					}
 					let identity = |choice: FaceChoice| {
 						choice.map(|(set, index)| {
 							let f = &self.font_sets[set].faces[index];
@@ -337,7 +410,10 @@ impl TextShaper {
 				span.range.clone(),
 			);
 		}
-		let mut layout = builder.build(text);
+		let mut layout =
+			crate::profile::span(crate::profile::Stage::ShapeBuild, || {
+				builder.build(text)
+			});
 		layout.break_all_lines(None);
 		let mut clusters = Vec::new();
 		for line in layout.lines() {

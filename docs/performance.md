@@ -119,9 +119,14 @@ regression. Check the power profile before interpreting a comparison.
 
 ## Progressive window first frame
 
-The window now publishes complete-block prefixes for files of at least 32 KiB,
+The window publishes complete-block prefixes for files of at least 32 KiB,
 starting when the viewport and half a viewport of prefetch are covered. Smaller
-files still publish once. Background completion shares the prefix's geometry;
+files normally publish once, but after 32 ms of layout they may publish their
+first nonempty prefix even if it does not yet cover the viewport. Subsequent
+prefixes retain the coverage, geometric batching and 32 ms throttling rules;
+changed viewport demand can bypass batching once covered. Checks occur only at
+block boundaries, so a single expensive block still bounds first-frame latency.
+Background completion shares the prefix's geometry;
 the offscreen benchmark continues to measure full layout.
 
 A same-host, power-saver, DPR-2 native comparison against the font-selection
@@ -159,7 +164,62 @@ stages all increased in those samples; the cause has not been established.
 The other measured acceptance metrics in `full-combined/comparison.md` passed.
 These measurements remain separate from the native first-readable-frame result.
 
+## Small documents with bold Emoji
+
+The 3691-byte local `artifacts/test.md` exposed a cold font fallback cost:
+the default Emoji candidate inherited weight 700 inside strong text, while
+Noto Color Emoji only provided a regular face. Exact-face selection rejected
+it, leaving Parley to find another font. Even `**✅ test**` reproduced the
+delay. Bundled Emoji candidates now explicitly request weight 400, including
+inside headings and emphasis. The deterministic font tests use registered
+fixture fonts; `tests/fixtures/emoji-fallback.md` adds a portable manual and
+performance regression input without depending on that local document.
+
+On the same Intel Arc/Vulkan host in power-saver mode, five alternating release
+process pairs against `1611936`, with 30 full and 30 cached iterations each,
+gave these medians (offscreen full geometry plus completed first-viewport GPU
+work, excluding initialization):
+
+| Fixture | First open before → after | Full pipeline P95 before → after |
+| --- | ---: | ---: |
+| local test.md | 232.45 → 38.81 ms | 15.12 → 12.26 ms |
+| emoji-fallback | 229.04 → 27.64 ms | 3.80 → 2.99 ms |
+| ordinary-10k | 35.61 → 35.16 ms | 20.91 → 19.60 ms |
+
+The local document's cold geometry median was 211.70 → 14.78 ms. A separate
+single native DPR-2 pair measured process-entry-to-first-readable-GPU-frame at
+342.68 → 146.41 ms; this is a smoke result, not a distribution. Screenshots
+exposed an existing alpha-only color-glyph path that lost Emoji interior
+details; the new color atlas preserves those pixels in both themes.
+
+These first-open improvements are not an all-metrics acceptance pass. In the
+five-group run, the local document's cached P50 was 0.984 → 1.251 ms and P95
+1.559 → 1.660 ms; ordinary cached P50 was 1.147 → 1.256 ms. The image example's
+first open and full P95 also exceeded the 5% threshold. Color-bearing fixtures
+intentionally use one additional 1 MiB GPU atlas; ordinary, math, code and
+image-only fixtures retained their tracked GPU capacities. Raw reports and
+binary/environment metadata are in `artifacts/emoji-fix-final/`; the earlier
+`emoji-fix-comparison/` reports predate correct color rendering and must not be
+pooled with the final binary.
+
+A supplemental five-pair run with 100 full/cached iterations per process is
+retained separately in `artifacts/emoji-fix-followup/` (the iteration counts
+differ, so the comparison tool does not merge them). Local first open was
+244.37 → 36.79 ms, and cached P50 remained higher at 1.149 → 1.285 ms. Its
+cached geometry medians were 0.0646 → 0.0727 ms while GPU-completion medians
+were 0.8318 → 1.0127 ms. Ordinary passed all thresholds in this follow-up;
+image first-open/full-layout thresholds passed, but image cached P95 was
+1.306 → 1.599 ms. The inconsistent image/ordinary tail results do not establish
+a cause; they remain recorded rather than treated as an all-metrics pass.
+
 ## What can change the result
+
+Color Emoji preserve their RGBA pixels through the image pipeline. The renderer
+allocates a separate 512 × 512 sRGB atlas (1 MiB) only when a visible color glyph
+is encountered; ordinary text continues to use the 4 MiB mask atlas. Both atlases
+are bounded and reset together before rebuilding a frame when full. Tracked GPU
+resource totals include the color atlas. This avoids losing interior details
+(such as a white check on a green square) by reducing a color glyph to alpha only.
 
 Font discovery and glyph coverage, language shaping, DPI, GPU backend, driver state, image dimensions, long unbreakable runs, and table or formula complexity all affect memory and time. The ordinary-document memory target is an optimization target, not a hard limit for arbitrary input.
 

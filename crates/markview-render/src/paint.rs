@@ -1,6 +1,6 @@
 use crate::{
 	Renderer, Theme, View, intersect,
-	raster::{ATLAS_SIZE, GlyphOrigin},
+	raster::{ATLAS_SIZE, COLOR_ATLAS_SIZE, GlyphOrigin},
 };
 use markview_core::{
 	scene::{Draw, Glyph, Paint, Rect},
@@ -32,12 +32,22 @@ impl Renderer {
 			return;
 		}
 		let origin = GlyphOrigin::new(g.x + x, g.y + y, view.scale);
-		if let Some(e) =
-			self.raster
-				.glyph(&self.gpu.queue, g, view.scale, origin.phase)
-			&& e.w > 0
+		if let Some(e) = self.raster.glyph(
+			&self.gpu.device,
+			&self.images.pipeline,
+			&self.gpu.queue,
+			g,
+			view.scale,
+			origin.phase,
+		) && e.w > 0
 			&& e.h > 0
 		{
+			let start = self.geometry.len();
+			let uv_scale = if e.color {
+				ATLAS_SIZE as f32 / COLOR_ATLAS_SIZE as f32
+			} else {
+				1.
+			};
 			self.geometry.quad(
 				Rect {
 					x: (origin.x + e.left) / view.scale,
@@ -46,15 +56,18 @@ impl Renderer {
 					h: e.h as f32 / view.scale,
 				},
 				Rect {
-					x: e.x as f32,
-					y: e.y as f32,
-					w: e.w as f32,
-					h: e.h as f32,
+					x: e.x as f32 * uv_scale,
+					y: e.y as f32 * uv_scale,
+					w: e.w as f32 * uv_scale,
+					h: e.h as f32 * uv_scale,
 				},
 				color,
 				clip,
 				view,
 			);
+			if e.color {
+				self.images.record_color_glyph(start..self.geometry.len());
+			}
 		}
 	}
 

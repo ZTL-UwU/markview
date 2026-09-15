@@ -11,7 +11,7 @@ use std::{
 		atomic::{AtomicU32, AtomicU64, Ordering},
 	},
 	thread,
-	time::Instant,
+	time::{Duration, Instant},
 };
 /// Text and geometry are accepted together by the UI.
 #[derive(Clone, Debug)]
@@ -46,6 +46,50 @@ struct Inbox {
 	pending: Option<Request>,
 	stopped: bool,
 }
+
+/// Publication decisions use elapsed layout time, so small but expensive
+/// documents can show completed blocks without waiting for a full viewport.
+struct PrefixPublication {
+	large: bool,
+	blocks: usize,
+	target: f32,
+	at: Duration,
+}
+impl PrefixPublication {
+	fn new(bytes: usize) -> Self {
+		Self {
+			large: bytes >= 32 * 1024,
+			blocks: 0,
+			target: -1.,
+			at: Duration::ZERO,
+		}
+	}
+	fn publish(
+		&mut self,
+		blocks: usize,
+		height: f32,
+		target: f32,
+		elapsed: Duration,
+	) -> bool {
+		let overdue = elapsed >= Duration::from_millis(32);
+		if blocks == 0 || (!self.large && !overdue) {
+			return false;
+		}
+		let ready =
+			height >= target || (!self.large && overdue && self.blocks == 0);
+		let demand = target != self.target;
+		let batch = blocks >= (self.blocks * 2).max(1)
+			&& elapsed.saturating_sub(self.at) >= Duration::from_millis(32);
+		if !ready || !(demand || batch) {
+			return false;
+		}
+		self.blocks = blocks;
+		self.target = target;
+		self.at = elapsed;
+		true
+	}
+}
+
 pub struct Worker {
 	inbox: Arc<(Mutex<Inbox>, Condvar)>,
 	version: Arc<AtomicU64>,
@@ -167,13 +211,8 @@ impl Worker {
 								&request.path,
 								request.content_version,
 							);
-							let mut published_blocks = 0;
-							// Small documents finish within a few frames; avoid extra
-							// snapshots and redraws when there is little work to hide.
-							let progressive =
-								document.source.len() >= 32 * 1024;
-							let mut published_target = -1.0;
-							let mut published_at = Instant::now();
+							let mut publication =
+								PrefixPublication::new(document.source.len());
 							let layout = engine
 								.layout_progressive(
 									&document,
@@ -188,20 +227,13 @@ impl Worker {
 										let wanted = f32::from_bits(
 											target.load(Ordering::Relaxed),
 										);
-										let ready = prefix.height >= wanted
-											&& !prefix.blocks.is_empty();
-										let demand = wanted != published_target;
-										// Geometric batching bounds prefix-copy work on very long files.
-										let batch = prefix.blocks.len()
-											>= (published_blocks * 2).max(1)
-											&& published_at
-												.elapsed()
-												.as_millis() >= 32;
-										if progressive
-											&& request.version
-												!= completed_version && ready
-											&& (demand || batch)
-										{
+										if request.version != completed_version
+											&& publication.publish(
+												prefix.blocks.len(),
+												prefix.height,
+												wanted,
+												start.elapsed(),
+											) {
 											let mut partial = update.clone();
 											partial.layout_ms =
 												start.elapsed().as_secs_f64()
@@ -215,10 +247,6 @@ impl Worker {
 													complete: false,
 												}));
 											done(partial);
-											published_blocks =
-												prefix.blocks.len();
-											published_target = wanted;
-											published_at = Instant::now();
 										}
 										true
 									},
@@ -282,6 +310,29 @@ impl Drop for Worker {
 mod tests {
 	use super::*;
 	use std::{fs, sync::mpsc, time::Duration};
+	#[test]
+	fn small_document_publication_uses_time_and_preserves_batching() {
+		let mut p = PrefixPublication::new(3691);
+		assert!(!p.publish(1, 900., 600., Duration::from_millis(31)));
+		assert!(!p.publish(0, 0., 600., Duration::from_millis(32)));
+		// An expensive first block can publish even below viewport coverage.
+		assert!(p.publish(1, 80., 600., Duration::from_millis(32)));
+		assert!(!p.publish(2, 900., 600., Duration::from_millis(33)));
+		assert!(p.publish(2, 900., 600., Duration::from_millis(64)));
+		assert!(!p.publish(3, 1000., 600., Duration::from_millis(96)));
+		// A changed viewport target bypasses the batch gate once covered.
+		assert!(p.publish(3, 1000., 950., Duration::from_millis(97)));
+		assert!(!p.publish(4, 1100., 1800., Duration::from_millis(130)));
+		assert!(p.publish(5, 1900., 1800., Duration::from_millis(131)));
+	}
+	#[test]
+	fn large_document_publication_keeps_viewport_coverage() {
+		let mut p = PrefixPublication::new(32 * 1024);
+		assert!(!p.publish(1, 80., 600., Duration::from_millis(40)));
+		assert!(p.publish(2, 900., 600., Duration::from_millis(41)));
+		let mut fast = PrefixPublication::new(32 * 1024);
+		assert!(fast.publish(2, 900., 600., Duration::from_millis(1)));
+	}
 	#[test]
 	fn progressive_worker_chases_target_and_cancels_changed_file() {
 		let dir = tempfile::tempdir().unwrap();

@@ -28,6 +28,29 @@ when running `--bench` to add inclusive per-sub-stage layout timings to the
 report under `profile_ms`; leave it unset for production-comparable numbers,
 because the probes add roughly 5 % to layout.
 
+`tests/fixtures/emoji-fallback.md` exercises bold check/cross Emoji, keycaps,
+headings, emphasis and mixed scripts. Include it in cold-process comparisons:
+warm reflows alone hide font fallback initialization costs. For a stage breakdown:
+
+```sh
+MARKVIEW_PROFILE=1 target/release/markview --bench tests/fixtures/emoji-fallback.md --iterations 3 --output artifacts/emoji-profile.json
+```
+
+`layout.font_resolve_ms` measures configured candidate resolution/loading;
+`layout.font_choose_ms` measures cluster coverage selection and fallback warnings;
+`layout.shape_build_ms` measures Parley's build, including its own font fallback
+and shaping. These are inclusive diagnostic spans, not additive pipeline stages.
+Render this fixture in both themes as well as measuring it. Default Emoji
+candidates explicitly use weight 400 because many Emoji fonts have no bold face.
+
+When no configured face covers a cluster/word, stderr reports its Unicode codes,
+requested candidates and available exact faces before handing it to Parley.
+Normal selection of a later configured candidate is silent. Warnings are limited
+to one per candidate set (including requested weight), at most 64 per text shaper,
+and survive reflow/stylesheet resets. Internal object placeholders are excluded.
+To exercise warnings, use a temporary custom style with unavailable font families
+or an Emoji candidate inheriting weight 700; verify repeated reflows stay quiet.
+
 The render and benchmark modes use the GPU offscreen and do not load personal settings. The watch smoke test writes only temporary documents and closes the window it starts.
 
 Window layout publishes a readable prefix before completion. Native `--smoke-test`
@@ -43,6 +66,7 @@ Ignored GPU tests are useful for settings, selection, and image-frame regression
 cargo test --workspace --locked settings_and_selection_frame -- --ignored
 cargo test --workspace --locked tab_strip_frames_clip_overflow_at_fractional_dpi -- --ignored
 cargo test --workspace --locked gpu_frame_draws_decoded_images -- --ignored
+cargo test --workspace --locked color_glyphs_preserve_rgb_and_share_paint_order -- --ignored
 ```
 
 ## Choose the layer
@@ -96,7 +120,8 @@ python3 scripts/compare_performance.py \
 
 The output directory must be new. By default the script alternates baseline and
 candidate order across five groups, using 100 full-layout samples and 100 cached
-samples per process, on all four 10 KiB fixtures and the local image example.
+samples per process, on all four 10 KiB fixtures, the local image example and
+the small Emoji fallback fixture.
 It preserves individual JSON reports, binary hashes, font inventory hash,
 platform/backend metadata, CPU affinity, and a Markdown/JSON comparison. An incompatible
 adapter, input, viewport or semantic result fails the comparison.

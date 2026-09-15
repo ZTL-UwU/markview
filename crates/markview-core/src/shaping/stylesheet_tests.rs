@@ -252,3 +252,85 @@ fn cached_choices_preserve_contextual_shaping() {
 		}
 	}
 }
+
+#[test]
+fn explicit_regular_fallback_survives_bold_and_missing_primary() {
+	let mut s = shaper();
+	let mut appearance = TextAppearance {
+		weight: 700,
+		font: vec![
+			Font {
+				family: "Missing".into(),
+				variant: Variant::Normal,
+				weight: None,
+			},
+			Font {
+				family: "Fallback".into(),
+				variant: Variant::Normal,
+				weight: None,
+			},
+		],
+		..Default::default()
+	};
+	assert!(s.choose_font("A", &appearance).is_none());
+	let unavailable = s.resolve_fonts(&appearance);
+	assert!(s.fallback_warning(unavailable, "\u{fffc}").is_none());
+	assert!(s.fallback_warning(unavailable, "\n").is_none());
+	let warning = s.fallback_warning(unavailable, "A\u{1b}").unwrap();
+	assert!(warning.contains("U+0041 U+001B"));
+	assert!(!warning.contains('\u{1b}'));
+	assert!(warning.contains("weight 700"));
+	assert!(warning.contains("Available exact faces: []"));
+	assert!(s.fallback_warning(unavailable, "B").is_none());
+	// Reflows reset choices, but must not repeat terminal warnings.
+	s.set_stylesheet(s.stylesheet.clone());
+	let unavailable = s.resolve_fonts(&appearance);
+	assert!(s.fallback_warning(unavailable, "A").is_none());
+	appearance.font[1].weight = Some(400);
+	let face = s.choose_font("A", &appearance).unwrap();
+	assert_eq!(face.family, "Fallback");
+	assert_eq!(face.weight, 400);
+	assert_eq!(s.warned_fallbacks.len(), 1);
+}
+
+#[test]
+fn fallback_warnings_are_bounded_and_allow_new_candidate_sets() {
+	let mut s = shaper();
+	for i in 0..80 {
+		let appearance = TextAppearance {
+			font: vec![Font {
+				family: format!("Missing{i}"),
+				variant: Variant::Normal,
+				weight: None,
+			}],
+			..Default::default()
+		};
+		let fonts = s.resolve_fonts(&appearance);
+		let warning = s.fallback_warning(fonts, "\u{10ffff}");
+		assert_eq!(warning.is_some(), i < 64);
+		if i == 63 {
+			assert!(
+				warning
+					.unwrap()
+					.contains("Further font fallback warnings suppressed")
+			);
+		}
+	}
+	assert_eq!(s.warned_fallbacks.len(), 64);
+}
+
+#[test]
+fn shaping_warns_only_when_configured_candidates_are_exhausted() {
+	let mut s = shaper();
+	s.appearance.font = vec![Font {
+		family: "Fallback".into(),
+		variant: Variant::Normal,
+		weight: Some(400),
+	}];
+	s.shape("A", &[], 18., false);
+	assert!(s.warned_fallbacks.is_empty());
+	s.shape("\u{10ffff}", &[], 18., false);
+	assert_eq!(s.warned_fallbacks.len(), 1);
+	s.shape("\u{10ffff}", &[], 18., false);
+	assert_eq!(s.warned_fallbacks.len(), 1);
+}

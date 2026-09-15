@@ -22,6 +22,12 @@ target/release/markview --bench tests/fixtures/ordinary-10k.md --output artifact
 python3 scripts/smoke_watch.py target/release/markview
 ```
 
+`scripts/generate_large_fixture.py` writes 100 KiB `math-cjk-100k.md` and
+`text-cjk-100k.md` fixtures for large-document timing. Set `MARKVIEW_PROFILE=1`
+when running `--bench` to add inclusive per-sub-stage layout timings to the
+report under `profile_ms`; leave it unset for production-comparable numbers,
+because the probes add roughly 5 % to layout.
+
 The render and benchmark modes use the GPU offscreen and do not load personal settings. The watch smoke test writes only temporary documents and closes the window it starts. Ignored GPU tests are useful for settings, selection, and image-frame regressions:
 
 ```sh

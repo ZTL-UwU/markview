@@ -217,46 +217,48 @@ impl TextShaper {
 			.map(|span| self.stylesheet.inline(&base, &span.style))
 			.collect();
 		let mut choices: Vec<(Range<usize>, Option<Face>)> = Vec::new();
-		// Resolve whole joining-script words together; elsewhere resolve grapheme clusters.
-		// All ranges are subsequently shaped in one paragraph, preserving bidi and context.
-		for (start, word) in text.split_word_bound_indices() {
-			let joining = word.chars().any(
-				|c| matches!(c as u32,0x600..=0x1cff|0xa800..=0xabff|0x11000..=0x11fff),
-			);
-			let mut parts: Vec<(usize, &str)> = Vec::new();
-			for (offset, cluster) in word.grapheme_indices(true) {
-				let span_at =
-					|pos| spans.iter().position(|s| s.range.contains(&pos));
-				if joining
-					&& let Some((previous, part)) = parts.last_mut()
-					&& span_at(start + *previous) == span_at(start + offset)
-				{
-					*part = &word[*previous..offset + cluster.len()];
-				} else {
-					parts.push((offset, cluster));
+		crate::profile::span(crate::profile::Stage::FontChoose, || {
+			// Resolve whole joining-script words together; elsewhere resolve grapheme clusters.
+			// All ranges are subsequently shaped in one paragraph, preserving bidi and context.
+			for (start, word) in text.split_word_bound_indices() {
+				let joining = word.chars().any(
+					|c| matches!(c as u32,0x600..=0x1cff|0xa800..=0xabff|0x11000..=0x11fff),
+				);
+				let mut parts: Vec<(usize, &str)> = Vec::new();
+				for (offset, cluster) in word.grapheme_indices(true) {
+					let span_at =
+						|pos| spans.iter().position(|s| s.range.contains(&pos));
+					if joining
+						&& let Some((previous, part)) = parts.last_mut()
+						&& span_at(start + *previous) == span_at(start + offset)
+					{
+						*part = &word[*previous..offset + cluster.len()];
+					} else {
+						parts.push((offset, cluster));
+					}
+				}
+				for (offset, part) in parts {
+					let pos = start + offset;
+					let appearance = spans
+						.iter()
+						.position(|s| s.range.contains(&pos))
+						.map(|i| &appearances[i])
+						.unwrap_or(&base);
+					let face = self.choose_font(part, appearance);
+					if let Some((range, previous)) = choices.last_mut()
+						&& range.end == pos
+						&& face.as_ref().map(|f| (&f.family, f.style, f.weight))
+							== previous
+								.as_ref()
+								.map(|f| (&f.family, f.style, f.weight))
+					{
+						range.end = pos + part.len();
+						continue;
+					}
+					choices.push((pos..pos + part.len(), face));
 				}
 			}
-			for (offset, part) in parts {
-				let pos = start + offset;
-				let appearance = spans
-					.iter()
-					.position(|s| s.range.contains(&pos))
-					.map(|i| &appearances[i])
-					.unwrap_or(&base);
-				let face = self.choose_font(part, appearance);
-				if let Some((range, previous)) = choices.last_mut()
-					&& range.end == pos
-					&& face.as_ref().map(|f| (&f.family, f.style, f.weight))
-						== previous
-							.as_ref()
-							.map(|f| (&f.family, f.style, f.weight))
-				{
-					range.end = pos + part.len();
-					continue;
-				}
-				choices.push((pos..pos + part.len(), face));
-			}
-		}
+		});
 		let mut builder =
 			self.context
 				.ranged_builder(&mut self.fonts, text, 1.0, false);

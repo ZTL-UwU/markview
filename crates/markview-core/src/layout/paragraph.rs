@@ -25,18 +25,25 @@ impl BlockContext<'_> {
 		opts: &LayoutOptions,
 		out: &mut BlockLayout,
 	) -> f32 {
-		let p = self.prepare(rich, size, out);
+		let p = crate::profile::span(crate::profile::Stage::Prepare, || {
+			self.prepare(rich, size, out)
+		});
 		let node = out.text.len();
 		out.text.push(TextNode::new(p.reading.clone(), ""));
 		if p.text.is_empty() {
 			return size * self.shaper.appearance.line_height;
 		}
-		let units = self.units(&p, size, sans, opts.hyphenate && !sans, width);
-		let solution = if opts.greedy {
-			linebreak::greedy(&units, width)
-		} else {
-			linebreak::break_lines(&units, width, justify)
-		};
+		let units = crate::profile::span(crate::profile::Stage::Units, || {
+			self.units(&p, size, sans, opts.hyphenate && !sans, width)
+		});
+		let solution =
+			crate::profile::span(crate::profile::Stage::LineBreak, || {
+				if opts.greedy {
+					linebreak::greedy(&units, width)
+				} else {
+					linebreak::break_lines(&units, width, justify)
+				}
+			});
 		out.degraded += usize::from(solution.degraded && !opts.greedy);
 		let mut y_cursor = y;
 		// An image alone in its block is a centered figure; mixed with text it

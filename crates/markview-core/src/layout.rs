@@ -180,7 +180,9 @@ impl LayoutEngine {
 			.map(|p| p.sides().map(|v| v * options.font_size))
 			.unwrap_or([0.; 4]);
 		let content_width = (options.width - padding[1] - padding[3]).max(1.);
-		self.highlights.prepare(&document.blocks, options);
+		crate::profile::span(crate::profile::Stage::Highlights, || {
+			self.highlights.prepare(&document.blocks, options)
+		});
 		let codeblock_theme = options
 			.codeblock_theme_override
 			.clone()
@@ -216,22 +218,24 @@ impl LayoutEngine {
 				result.reused += 1;
 				cached.clone()
 			} else {
-				let mut out = BlockLayout::default();
-				BlockContext {
-					shaper: &mut self.shaper,
-					math: &mut self.math,
-					images,
-					highlight_cache: self.highlights.results(),
-				}
-				.block(
-					block,
-					padding[3],
-					0.0,
-					content_width,
-					options,
-					&mut out,
-				);
-				Arc::new(out)
+				crate::profile::measure(crate::profile::Stage::Blocks, || {
+					let mut out = BlockLayout::default();
+					BlockContext {
+						shaper: &mut self.shaper,
+						math: &mut self.math,
+						images,
+						highlight_cache: self.highlights.results(),
+					}
+					.block(
+						block,
+						padding[3],
+						0.0,
+						content_width,
+						options,
+						&mut out,
+					);
+					Arc::new(out)
+				})
 			};
 			result.blocks.push(PlacedBlock {
 				id: block.id,

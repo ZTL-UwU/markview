@@ -23,6 +23,30 @@ impl BlockContext<'_> {
 		opts: &LayoutOptions,
 		out: &mut BlockLayout,
 	) -> f32 {
+		crate::profile::span(crate::profile::Stage::Rich, || {
+			self.rich_inner(
+				rich, x, y, width, size, sans, align, justify, opts, out,
+			)
+		})
+	}
+
+	#[expect(
+		clippy::too_many_arguments,
+		reason = "Text style and block geometry are independent layout inputs"
+	)]
+	fn rich_inner(
+		&mut self,
+		rich: &RichText,
+		x: f32,
+		y: f32,
+		width: f32,
+		size: f32,
+		sans: bool,
+		align: CellAlign,
+		justify: bool,
+		opts: &LayoutOptions,
+		out: &mut BlockLayout,
+	) -> f32 {
 		let first_node = out.text.len();
 		let mut start = 0;
 		let mut cursor = y;

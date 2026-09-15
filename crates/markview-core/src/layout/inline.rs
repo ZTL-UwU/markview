@@ -43,16 +43,22 @@ impl BlockContext<'_> {
 				}
 				InlineKind::Text(t) => p.text.push_str(t),
 				InlineKind::Math { latex, display } => {
-					match self.math.layout(
-						latex,
-						*display,
-						size * self
-							.shaper
-							.stylesheet
-							.rule(Role::Math)
-							.size
-							.unwrap_or(1.),
-					) {
+					let laid_out = crate::profile::span(
+						crate::profile::Stage::Math,
+						|| {
+							self.math.layout(
+								latex,
+								*display,
+								size * self
+									.shaper
+									.stylesheet
+									.rule(Role::Math)
+									.size
+									.unwrap_or(1.),
+							)
+						},
+					);
+					match laid_out {
 						Ok(m) => {
 							p.math.insert(start, m);
 							p.text.push('\u{fffc}');
@@ -102,7 +108,10 @@ impl BlockContext<'_> {
 		hyphenate: bool,
 		available: f32,
 	) -> Vec<Unit> {
-		let mut clusters = self.shaper.shape(&p.text, &p.spans, size, sans);
+		let mut clusters =
+			crate::profile::span(crate::profile::Stage::ShapeClusters, || {
+				self.shaper.shape(&p.text, &p.spans, size, sans)
+			});
 		clusters.sort_by_key(|c| c.range.start);
 		let segmenter =
 			icu_segmenter::LineSegmenter::new_auto(Default::default());
@@ -207,6 +216,20 @@ impl BlockContext<'_> {
 		sans: bool,
 		available: f32,
 	) -> Vec<Cluster> {
+		crate::profile::span(crate::profile::Stage::LineClusters, || {
+			self.line_clusters_inner(p, range, hyphen, size, sans, available)
+		})
+	}
+
+	fn line_clusters_inner(
+		&mut self,
+		p: &Prepared,
+		range: Range<usize>,
+		hyphen: bool,
+		size: f32,
+		sans: bool,
+		available: f32,
+	) -> Vec<Cluster> {
 		let mut text = p.text[range.clone()].to_string();
 		if hyphen {
 			text.push('-');
@@ -226,7 +249,10 @@ impl BlockContext<'_> {
 		if hyphen && let Some(s) = spans.last_mut() {
 			s.range.end = text.len();
 		}
-		let mut clusters = self.shaper.shape(&text, &spans, size, sans);
+		let mut clusters =
+			crate::profile::span(crate::profile::Stage::ShapeClusters, || {
+				self.shaper.shape(&text, &spans, size, sans)
+			});
 		for c in &mut clusters {
 			c.range = (c.range.start + range.start).min(range.end)
 				..(c.range.end + range.start).min(range.end);

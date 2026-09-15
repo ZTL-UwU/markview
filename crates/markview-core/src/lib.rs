@@ -6,6 +6,7 @@ pub mod image;
 pub mod layout;
 pub mod linebreak;
 pub mod math;
+pub mod profile;
 pub mod scene;
 pub mod shaping;
 pub mod style;

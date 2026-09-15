@@ -79,6 +79,9 @@ struct Report {
 	reading_text_index_bytes: usize,
 	degraded_paragraphs: usize,
 	formula_errors: usize,
+	/// Inclusive layout sub-stage totals for the cold first open; populated
+	/// only when `MARKVIEW_PROFILE=1` is set.
+	profile_ms: Option<HashMap<&'static str, f64>>,
 }
 
 #[expect(clippy::too_many_arguments, reason = "CLI benchmark parameters")]
@@ -165,7 +168,13 @@ pub fn run(
 			total_ms: start.elapsed().as_secs_f64() * 1000.0,
 		})
 	};
+	let profiling = markview_core::profile::requested();
+	if profiling {
+		markview_core::profile::enable();
+		markview_core::profile::reset();
+	}
 	let first_open = sample(false)?;
+	let profile_ms = profiling.then(markview_core::profile::totals);
 	let full_layout_samples = (0..iterations)
 		.map(|_| sample(false))
 		.collect::<Result<Vec<_>>>()?;
@@ -202,6 +211,7 @@ pub fn run(
 			+ (width as u64 * height as u64 * 4),
 		degraded_paragraphs: latest.degraded,
 		formula_errors: latest.math_errors,
+		profile_ms,
 	};
 	let json = serde_json::to_string_pretty(&report)?;
 	if let Some(path) = output {

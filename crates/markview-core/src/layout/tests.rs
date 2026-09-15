@@ -172,7 +172,7 @@ fn math_errors_are_visible_and_copyable_when_enabled() {
 	let mut stylesheet = (*crate::style::Stylesheet::bundled(false)).clone();
 	stylesheet.merge(
 		&crate::style::Stylesheet::parse(
-			"format_version=1\nversion=1\n[math.error]\nshow=false",
+			"format_version=2\nversion=1\n[[rule]]\nwhen=['error']\nshow=false",
 		)
 		.unwrap(),
 	);
@@ -305,7 +305,7 @@ fn overflowing_blocks_reserve_the_configured_scrollbar_gutter() {
 	let mut sheet = (*crate::style::Stylesheet::bundled(false)).clone();
 	sheet.merge(
 		&crate::style::Stylesheet::parse(
-			"format_version=1\nversion=1\n[scrollbar]\ngutter=30.0",
+			"format_version=2\nversion=1\n[[rule]]\nwhen=['scrollbar']\ngutter=30.0",
 		)
 		.unwrap(),
 	);
@@ -462,11 +462,11 @@ fn a_theme_can_inset_bullet_and_ordered_lists_separately() {
 		(x(0), x(1))
 	}
 	let base = Arc::new(
-		crate::style::Stylesheet::parse("format_version=1\nversion=1").unwrap(),
+		crate::style::Stylesheet::parse("format_version=2\nversion=1").unwrap(),
 	);
 	let theme = Arc::new(
 		crate::style::Stylesheet::parse(
-			"format_version=1\nversion=1\n[list]\nindent=0.5\n[enum]\nindent=1.5",
+			"format_version=2\nversion=1\n[[rule]]\nwhen=['list']\nindent=0.5\n[[rule]]\nwhen=['enum']\nindent=1.5",
 		)
 		.unwrap(),
 	);
@@ -477,7 +477,7 @@ fn a_theme_can_inset_bullet_and_ordered_lists_separately() {
 	// The roles are independent: `[list]` alone leaves ordered lists flush.
 	let bullets = Arc::new(
 		crate::style::Stylesheet::parse(
-			"format_version=1\nversion=1\n[list]\nindent=1.0",
+			"format_version=2\nversion=1\n[[rule]]\nwhen=['list']\nindent=1.0",
 		)
 		.unwrap(),
 	);
@@ -510,6 +510,48 @@ fn benchmark_corpus_needs_no_emergency_greedy_fallback() {
 			assert_eq!(s.math_errors, 0);
 			assert_eq!(s.degraded, 0);
 			assert!(s.blocks.iter().all(|b| b.layout.overflow.is_empty()));
+		}
+	}
+}
+
+#[test]
+fn inline_code_chip_covers_justified_spaces() {
+	// A stretched space inside inline code must not leave a hole in its chip.
+	let doc = document::parse(
+		"如果你在推送前执行了 **`git fetch`**，你的检查就会通过。\n",
+	);
+	for width in [430.0, 450.0, 470.0] {
+		let opts = LayoutOptions {
+			width,
+			..Default::default()
+		};
+		let snapshot = LayoutEngine::new().layout(&doc, &opts);
+		let mut chips: Vec<(f32, f32, f32)> = snapshot.blocks[0]
+			.layout
+			.draws
+			.iter()
+			.filter_map(|d| match d {
+				crate::scene::Draw::Rect(
+					rect,
+					crate::scene::Paint::Cascade(
+						_,
+						crate::style::ColorField::Background,
+					),
+				) => Some((rect.y, rect.x, rect.w)),
+				_ => None,
+			})
+			.collect();
+		assert!(chips.len() >= 9, "width={width}: {chips:?}");
+		chips.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+		for pair in chips.windows(2) {
+			let (y0, x0, w0) = pair[0];
+			let (y1, x1, _) = pair[1];
+			if (y0 - y1).abs() < 0.01 {
+				assert!(
+					(x1 - (x0 + w0)).abs() < 0.01,
+					"width={width}: chip seam at {x0}+{w0}"
+				);
+			}
 		}
 	}
 }

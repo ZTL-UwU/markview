@@ -92,7 +92,7 @@ Two properties make this worse than an ordinary bug.
 - The stack overflow is a `SIGSEGV` and an abort, so the `catch_unwind` guards that exist elsewhere to keep a malformed file from taking the reader down do not apply.
 - Opening is not the only path. `--watch` re-parses on change, and following a link parses another document in the same process.
 
-The same defect class exists wherever a budget was invented locally rather than taken from a shared limit: `visit` in `crates/markview-core/src/style/parse.rs` recurses over nested tables, and the greedy fallback in `crates/markview-core/src/linebreak.rs` has no evaluation budget at all while the optimal pass does.
+The same defect class exists wherever a budget was invented locally rather than taken from a shared limit: the greedy fallback in `crates/markview-core/src/linebreak.rs` has no evaluation budget at all while the optimal pass does.
 
 ### T2: hang or CPU exhaustion
 

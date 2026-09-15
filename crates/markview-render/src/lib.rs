@@ -101,27 +101,16 @@ impl Renderer {
 			.as_ref()
 			.map_or_else(|| theme.color(paint), |s| s.paint(paint))
 	}
+	/// Hovering adds a condition to the chain, so `["link", "hover"]` can
+	/// override every link rule while leaving the rest of the chain intact.
 	fn hover_paint(paint: Paint) -> Paint {
-		use markview_core::style::Role;
+		use markview_core::style::{Condition, chain_push};
 		match paint {
-			Paint::Styled(Role::Link, field) => {
-				Paint::Styled(Role::LinkHover, field)
+			Paint::Styled(Condition::Link, field) => {
+				Paint::Styled(Condition::Hover, field)
 			}
-			Paint::Cascade(mut chain, field) => {
-				let mut out = 0u128;
-				let mut shift = 0;
-				while chain != 0 {
-					let id = chain & 63;
-					chain >>= 6;
-					let id = if id == Role::Link as u128 + 1 {
-						Role::LinkHover as u128 + 1
-					} else {
-						id
-					};
-					out |= id << shift;
-					shift += 6;
-				}
-				Paint::Cascade(out, field)
+			Paint::Cascade(chain, field) => {
+				Paint::Cascade(chain_push(chain, Condition::Hover), field)
 			}
 			paint => paint,
 		}

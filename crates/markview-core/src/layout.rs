@@ -22,7 +22,7 @@ pub use crate::shaping::TextShaper;
 use crate::{
 	document::{Block, Document},
 	math::MathEngine,
-	style::Role,
+	style::Condition,
 };
 pub use anchor::anchored_scroll;
 use mapping::{Prepared, expand_tabs_mapped};
@@ -200,7 +200,7 @@ impl LayoutEngine {
 			width: options.width,
 			..Default::default()
 		};
-		let body = options.stylesheet.rule(Role::Body);
+		let body = options.stylesheet.rule(Condition::Body);
 		let padding = body
 			.padding
 			.as_ref()
@@ -210,10 +210,10 @@ impl LayoutEngine {
 		crate::profile::span(crate::profile::Stage::Highlights, || {
 			self.highlights.prepare(&document.blocks, options)
 		});
-		let codeblock_theme = options
-			.codeblock_theme_override
-			.clone()
-			.or_else(|| options.stylesheet.rule(Role::CodeBlock).theme.clone());
+		let codeblock_theme =
+			options.codeblock_theme_override.clone().or_else(|| {
+				options.stylesheet.rule(Condition::CodeBlock).theme.clone()
+			});
 		result.height =
 			padding[0] + body.space_before.unwrap_or(0.) * options.font_size;
 		// The stylesheet is immutable for this pass. Its identity belongs to
@@ -231,7 +231,8 @@ impl LayoutEngine {
 				w: options.width,
 				h: result.height,
 			},
-			role: Role::Body,
+			chain: Condition::Body.chain(),
+			condition: Condition::Body,
 			radius: body.radius.unwrap_or(0.),
 			border: body.border_width.unwrap_or(0.),
 			left_only: false,
@@ -306,7 +307,8 @@ impl LayoutEngine {
 				w: options.width,
 				h: result.height,
 			},
-			role: Role::Body,
+			chain: Condition::Body.chain(),
+			condition: Condition::Body,
 			radius: body.radius.unwrap_or(0.),
 			border: body.border_width.unwrap_or(0.),
 			left_only: false,

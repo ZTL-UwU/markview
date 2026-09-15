@@ -4,7 +4,9 @@ use crate::{
 	settings::ReaderSettings,
 	state::{Command, InteractionState},
 };
-use markview_core::style::{CjkType, ColorField as C, Role, TextAppearance};
+use markview_core::style::{
+	CjkType, ColorField as C, Condition, TextAppearance,
+};
 pub(in crate::app) fn panel_rect(width: f32, height: f32) -> Rect {
 	let w = 540.0_f32.min((width - 32.0).max(0.0));
 	let h = 480.0_f32.min((height - 32.0).max(0.0));
@@ -128,8 +130,9 @@ pub(super) fn controls(
 fn button_width(shaper: &mut TextShaper, label: &str, size: f32) -> f32 {
 	const HORIZONTAL_PADDING: f32 = 18.0;
 	let old_appearance = shaper.appearance.clone();
-	shaper.appearance =
-		shaper.stylesheet.text(&TextAppearance::default(), Role::Ui);
+	shaper.appearance = shaper
+		.stylesheet
+		.text(&TextAppearance::default(), Condition::Ui);
 	let width = shaper.text_width(label, size) + HORIZONTAL_PADDING;
 	shaper.appearance = old_appearance;
 	width
@@ -144,8 +147,9 @@ pub(super) fn toolbar_controls(
 	const GAP: f32 = 4.0;
 	let entries = [("Open", Command::Open), ("Settings", Command::Settings)];
 	let old_appearance = shaper.appearance.clone();
-	shaper.appearance =
-		shaper.stylesheet.text(&TextAppearance::default(), Role::Ui);
+	shaper.appearance = shaper
+		.stylesheet
+		.text(&TextAppearance::default(), Condition::Ui);
 	let widths: Vec<f32> = entries
 		.iter()
 		.map(|(label, _)| {
@@ -179,8 +183,9 @@ pub(super) fn toolbar_right_edge(shaper: &mut TextShaper, width: f32) -> f32 {
 	const HORIZONTAL_PADDING: f32 = 18.0;
 	const GAP: f32 = 4.0;
 	let old_appearance = shaper.appearance.clone();
-	shaper.appearance =
-		shaper.stylesheet.text(&TextAppearance::default(), Role::Ui);
+	shaper.appearance = shaper
+		.stylesheet
+		.text(&TextAppearance::default(), Condition::Ui);
 	let button_widths = ["Open", "Settings"]
 		.into_iter()
 		.map(|label| shaper.text_width(label, TEXT_SIZE) + HORIZONTAL_PADDING)
@@ -197,8 +202,10 @@ pub(super) fn draw_controls(
 	height: f32,
 ) -> Vec<Draw> {
 	shaper.appearance = shaper.stylesheet.text(
-		&shaper.stylesheet.text(&TextAppearance::default(), Role::Ui),
-		Role::Panel,
+		&shaper
+			.stylesheet
+			.text(&TextAppearance::default(), Condition::Ui),
+		Condition::Panel,
 	);
 	let mut out = Vec::new();
 	if interaction.panel_open {
@@ -223,7 +230,8 @@ pub(super) fn draw_controls(
 		));
 		out.push(Draw::Box {
 			rect,
-			role: Role::Panel,
+			chain: Condition::Panel.chain(),
+			condition: Condition::Panel,
 			radius: 0.,
 			border: 1.,
 			left_only: false,
@@ -235,7 +243,7 @@ pub(super) fn draw_controls(
 				w: 3.0,
 				h: rect.h,
 			},
-			Paint::Styled(Role::Panel, C::BorderColor),
+			Paint::Styled(Condition::Panel, C::BorderColor),
 		));
 		let x = rect.x + 20.0;
 		out.extend(shaper.label(
@@ -243,7 +251,7 @@ pub(super) fn draw_controls(
 			22.0,
 			x,
 			rect.y + 36.0,
-			Paint::Styled(Role::Panel, C::Color),
+			Paint::Styled(Condition::Panel, C::Color),
 		));
 		if rect.h >= 360.0 {
 			out.extend(shaper.label(
@@ -251,7 +259,7 @@ pub(super) fn draw_controls(
 				12.0,
 				x,
 				rect.y + 61.0,
-				Paint::Styled(Role::Panel, C::Muted),
+				Paint::Styled(Condition::Panel, C::Muted),
 			));
 		}
 		let (top, row) = row_geometry(rect);
@@ -291,7 +299,7 @@ pub(super) fn draw_controls(
 				13.0,
 				x,
 				rect.y + top + i as f32 * row + 19.0,
-				Paint::Styled(Role::Panel, C::Color),
+				Paint::Styled(Condition::Panel, C::Color),
 			));
 		}
 	}
@@ -303,7 +311,8 @@ pub(super) fn draw_controls(
 	for b in buttons {
 		out.push(Draw::Box {
 			rect: b.rect,
-			role: Role::Button,
+			chain: Condition::Button.chain(),
+			condition: Condition::Button,
 			radius: 0.,
 			border: 1.,
 			left_only: false,
@@ -311,7 +320,7 @@ pub(super) fn draw_controls(
 		if interaction.focus == Some(b.action) {
 			out.push(Draw::Rect(
 				b.rect,
-				Paint::Styled(Role::Button, C::FocusColor),
+				Paint::Styled(Condition::Button, C::FocusColor),
 			));
 			out.push(Draw::Rect(
 				Rect {
@@ -321,7 +330,7 @@ pub(super) fn draw_controls(
 					h: b.rect.h - 2.0,
 				},
 				Paint::Styled(
-					Role::Button,
+					Condition::Button,
 					if interaction.pressed == Some(b.action) {
 						C::ActiveBackground
 					} else {
@@ -332,12 +341,12 @@ pub(super) fn draw_controls(
 		} else if b.rect.contains(interaction.cursor.0, interaction.cursor.1) {
 			out.push(Draw::Rect(
 				b.rect,
-				Paint::Styled(Role::Button, C::HoverBackground),
+				Paint::Styled(Condition::Button, C::HoverBackground),
 			));
 		} else if interaction.panel_open {
 			out.push(Draw::Rect(
 				b.rect,
-				Paint::Styled(Role::Button, C::Background),
+				Paint::Styled(Condition::Button, C::Background),
 			));
 		}
 		let label_x =
@@ -347,7 +356,7 @@ pub(super) fn draw_controls(
 			13.0,
 			label_x,
 			b.rect.y + b.rect.h / 2.0 + 5.0,
-			Paint::Styled(Role::Button, C::Color),
+			Paint::Styled(Condition::Button, C::Color),
 		));
 	}
 	out

@@ -1,16 +1,21 @@
-//! Markview Stylesheet v1: strict parsing, field-wise cascading and semantic text styles.
+//! Markview Stylesheet v2: strict parsing, field-wise cascading and semantic text styles.
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-use super::{CjkType, FontDefinition, Metadata, Role, Rule, Stylesheet};
+use super::{
+	CjkType, Condition, ConditionSet, FontDefinition, Metadata, Rule,
+	Stylesheet,
+};
 impl Stylesheet {
 	pub fn parse(source: &str) -> Result<Self> {
 		let mut doc = source.parse::<toml_edit::DocumentMut>()?;
 		let format_version =
 			doc.remove("format_version").and_then(|v| v.as_integer());
-		if format_version != Some(1) {
-			bail!("format_version: expected stylesheet format version = 1");
+		if format_version != Some(2) {
+			bail!(
+				"format_version: expected stylesheet format version = 2 (format 1 is no longer read)"
+			);
 		}
 		let version = doc
 			.remove("version")
@@ -18,51 +23,8 @@ impl Stylesheet {
 			.context("version: expected a nonnegative integer")?;
 		let version = u64::try_from(version)
 			.context("version: expected a nonnegative integer")?;
-		let fontdefs = if let Some(item) = doc.remove("fontdef") {
-			let mut d = toml_edit::DocumentMut::new();
-			d["fontdef"] = item;
-			#[derive(Deserialize)]
-			struct D {
-				fontdef: Vec<FontDefinition>,
-			}
-			let defs = toml_edit::de::from_str::<D>(&d.to_string())
-				.context("fontdef")?
-				.fontdef;
-			let mut out = BTreeMap::new();
-			for def in defs {
-				if def.id.trim().is_empty()
-					|| def.id.chars().any(char::is_control)
-					|| def.lookfor.is_empty()
-					|| def.lookfor.iter().any(|name| name.trim().is_empty())
-				{
-					bail!("fontdef {:?}: invalid id or lookfor", def.id);
-				}
-				let key = (def.id.clone(), def.r#type);
-				if out.insert(key.clone(), def).is_some() {
-					bail!(
-						"fontdef {:?} type {:?}: duplicate definition",
-						key.0,
-						key.1
-					);
-				}
-			}
-			out
-		} else {
-			BTreeMap::new()
-		};
-		let meta = if let Some(item) = doc.remove("meta") {
-			let mut d = toml_edit::DocumentMut::new();
-			d["meta"] = item;
-			#[derive(Deserialize)]
-			struct M {
-				meta: Metadata,
-			}
-			toml_edit::de::from_str::<M>(&d.to_string())
-				.context("meta")?
-				.meta
-		} else {
-			Metadata::default()
-		};
+		let fontdefs = parse_fontdefs(&mut doc)?;
+		let meta = parse_meta(&mut doc)?;
 		let mut out = Self {
 			version,
 			fontdefs: BTreeMap::new(),
@@ -72,107 +34,204 @@ impl Stylesheet {
 			..Self::default()
 		};
 		out.resolve_fontdefs();
-		fn visit(
-			out: &mut Stylesheet,
-			name: &str,
-			table: &dyn toml_edit::TableLike,
-		) -> Result<()> {
-			let role = Role::parse(name)
-				.with_context(|| format!("Unknown element [{name}]"))?;
-			let mut fields = toml_edit::DocumentMut::new();
-			for (key, value) in table.iter() {
-				if let Some(child) = value.as_table_like() {
-					visit(out, &format!("{name}.{key}"), child)?;
-				} else {
-					validate_field(role, key)?;
-					fields[key] = value.clone();
+		if let Some(item) = doc.remove("rule") {
+			let rules = item
+				.as_array_of_tables()
+				.context("rule: expected [[rule]] tables")?;
+			for table in rules.iter() {
+				let (conditions, fields) = split_rule(table)?;
+				for (key, _) in fields.iter() {
+					validate_field(conditions, key)?;
 				}
-			}
-			let rule: Rule = toml_edit::de::from_str(&fields.to_string())
-				.with_context(|| format!("[{name}]"))?;
-			for (field, value, positive) in [
-				("size", rule.size, true),
-				("line_height", rule.line_height, true),
-				("space_before", rule.space_before, false),
-				("space_after", rule.space_after, false),
-				("indent", rule.indent, false),
-				("border_width", rule.border_width, false),
-				("radius", rule.radius, false),
-				("thickness", rule.thickness, true),
-				("thickness_hover", rule.thickness_hover, true),
-				("overflow_thickness", rule.overflow_thickness, true),
-				(
-					"overflow_thickness_hover",
-					rule.overflow_thickness_hover,
-					true,
-				),
-				("gutter", rule.gutter, false),
-			] {
-				if value.is_some_and(|v| {
-					!v.is_finite() || if positive { v <= 0. } else { v < 0. }
-				}) {
-					bail!(
-						"{name}.{field}: expected finite {}number",
-						if positive {
-							"positive "
-						} else {
-							"nonnegative "
+				let name = conditions.display();
+				let rule: Rule = toml_edit::de::from_str(&fields.to_string())
+					.with_context(|| format!("rule [{name}]"))?;
+				validate_numbers(&name, &rule)?;
+				if rule.font.as_ref().is_some_and(Vec::is_empty) {
+					bail!("rule [{name}].font: must not be empty");
+				}
+				if let Some(fonts) = &rule.font {
+					for (i, font) in fonts.iter().enumerate() {
+						if font.family.trim().is_empty()
+							|| font
+								.weight
+								.is_some_and(|w| !(1..=1000).contains(&w))
+						{
+							bail!(
+								"rule [{name}].font[{i}]: invalid family or weight"
+							);
 						}
-					);
-				}
-			}
-			if rule.padding.as_ref().is_some_and(|p| {
-				p.sides().iter().any(|v| !v.is_finite() || *v < 0.)
-			}) {
-				bail!("{name}.padding: expected finite nonnegative values");
-			}
-			if rule.weight.is_some_and(|w| !(1..=1000).contains(&w)) {
-				bail!("{name}.weight: expected 1..1000");
-			}
-			if let Some(fonts) = &rule.font {
-				if fonts.is_empty() {
-					bail!("{name}.font: must not be empty");
-				}
-				for (i, font) in fonts.iter().enumerate() {
-					if font.family.trim().is_empty()
-						|| font.weight.is_some_and(|w| !(1..=1000).contains(&w))
-					{
-						bail!("{name}.font[{i}]: invalid family or weight");
 					}
 				}
+				if conditions == ConditionSet::of(Condition::Body)
+					&& rule.background.is_some_and(|c| c.0 & 255 != 255)
+				{
+					bail!("rule [body].background: must be opaque");
+				}
+				if out.rules.insert(conditions, rule).is_some() {
+					bail!("rule [{name}]: duplicate conditions");
+				}
 			}
-			if role == Role::Body
-				&& rule.background.is_some_and(|c| c.0 & 255 != 255)
-			{
-				bail!("body.background: must be opaque");
-			}
-			out.rules.insert(role, rule);
-			Ok(())
 		}
-		for (name, item) in doc.iter() {
-			visit(
-				&mut out,
-				name,
-				item.as_table_like()
-					.with_context(|| format!("{name}: expected a table"))?,
-			)?;
+		if let Some((name, _)) = doc.iter().next() {
+			bail!("unknown table [{name}]");
 		}
+		out.reindex();
 		Ok(out)
 	}
 }
-fn validate_field(role: Role, key: &str) -> Result<()> {
-	use Role::*;
-	let allowed = if role == Selection {
-		key == "background"
-	} else if role == Image {
+
+fn parse_fontdefs(
+	doc: &mut toml_edit::DocumentMut,
+) -> Result<BTreeMap<(String, Option<super::FontDefType>), FontDefinition>> {
+	let Some(item) = doc.remove("fontdef") else {
+		return Ok(BTreeMap::new());
+	};
+	let mut d = toml_edit::DocumentMut::new();
+	d["fontdef"] = item;
+	#[derive(Deserialize)]
+	struct D {
+		fontdef: Vec<FontDefinition>,
+	}
+	let defs = toml_edit::de::from_str::<D>(&d.to_string())
+		.context("fontdef")?
+		.fontdef;
+	let mut out = BTreeMap::new();
+	for def in defs {
+		if def.id.trim().is_empty()
+			|| def.id.chars().any(char::is_control)
+			|| def.lookfor.is_empty()
+			|| def.lookfor.iter().any(|name| name.trim().is_empty())
+		{
+			bail!("fontdef {:?}: invalid id or lookfor", def.id);
+		}
+		let key = (def.id.clone(), def.r#type);
+		if out.insert(key.clone(), def).is_some() {
+			bail!("fontdef {:?} type {:?}: duplicate definition", key.0, key.1);
+		}
+	}
+	Ok(out)
+}
+fn parse_meta(doc: &mut toml_edit::DocumentMut) -> Result<Metadata> {
+	let Some(item) = doc.remove("meta") else {
+		return Ok(Metadata::default());
+	};
+	let mut d = toml_edit::DocumentMut::new();
+	d["meta"] = item;
+	#[derive(Deserialize)]
+	struct M {
+		meta: Metadata,
+	}
+	Ok(toml_edit::de::from_str::<M>(&d.to_string())
+		.context("meta")?
+		.meta)
+}
+
+/// Split one `[[rule]]` table into its condition set and style fields.
+fn split_rule(
+	table: &toml_edit::Table,
+) -> Result<(ConditionSet, toml_edit::DocumentMut)> {
+	let mut fields = toml_edit::DocumentMut::new();
+	let mut when = None;
+	for (key, value) in table.iter() {
+		if key == "when" {
+			when = Some(parse_when(value)?);
+		} else {
+			if value.is_table_like() {
+				bail!("rule.{key}: expected a value");
+			}
+			fields[key] = value.clone();
+		}
+	}
+	let conditions = when.context("rule: missing when")?;
+	if fields.is_empty() {
+		bail!("rule [{}]: declares no fields", conditions.display());
+	}
+	Ok((conditions, fields))
+}
+fn parse_when(value: &toml_edit::Item) -> Result<ConditionSet> {
+	let names = value
+		.as_array()
+		.context("rule.when: expected an array of condition names")?;
+	let mut conditions = ConditionSet::EMPTY;
+	for name in names.iter() {
+		let name = name
+			.as_str()
+			.context("rule.when: expected condition names")?;
+		let condition = Condition::parse(name).with_context(|| {
+			format!("rule.when: unknown condition {name:?}")
+		})?;
+		if conditions.contains(condition) {
+			bail!("rule.when: duplicate condition {name:?}");
+		}
+		conditions = conditions.with(condition);
+	}
+	if conditions.is_empty() {
+		bail!("rule.when: expected at least one condition");
+	}
+	Ok(conditions)
+}
+fn validate_numbers(name: &str, rule: &Rule) -> Result<()> {
+	for (field, value, positive) in [
+		("size", rule.size, true),
+		("line_height", rule.line_height, true),
+		("space_before", rule.space_before, false),
+		("space_after", rule.space_after, false),
+		("indent", rule.indent, false),
+		("border_width", rule.border_width, false),
+		("radius", rule.radius, false),
+		("thickness", rule.thickness, true),
+		("thickness_hover", rule.thickness_hover, true),
+		("overflow_thickness", rule.overflow_thickness, true),
+		(
+			"overflow_thickness_hover",
+			rule.overflow_thickness_hover,
+			true,
+		),
+		("gutter", rule.gutter, false),
+	] {
+		if value.is_some_and(|v| {
+			!v.is_finite() || if positive { v <= 0. } else { v < 0. }
+		}) {
+			bail!(
+				"rule [{name}].{field}: expected finite {}number",
+				if positive {
+					"positive "
+				} else {
+					"nonnegative "
+				}
+			);
+		}
+	}
+	if rule
+		.padding
+		.as_ref()
+		.is_some_and(|p| p.sides().iter().any(|v| !v.is_finite() || *v < 0.))
+	{
+		bail!("rule [{name}].padding: expected finite nonnegative values");
+	}
+	if rule.weight.is_some_and(|w| !(1..=1000).contains(&w)) {
+		bail!("rule [{name}].weight: expected 1..1000");
+	}
+	Ok(())
+}
+fn validate_field(conditions: ConditionSet, key: &str) -> Result<()> {
+	use Condition as K;
+	let has = |condition| conditions.contains(condition);
+	let allowed = if has(K::Scrollbar) {
 		matches!(
 			key,
-			"background"
-				| "border_color"
-				| "border_width"
-				| "padding" | "align"
+			"track"
+				| "thumb" | "thumb_hover"
+				| "thickness"
+				| "thickness_hover"
+				| "overflow_thickness"
+				| "overflow_thickness_hover"
+				| "gutter"
 		)
-	} else if role == ImageCaption {
+	} else if has(K::Selection) {
+		key == "background"
+	} else if has(K::Caption) {
 		matches!(
 			key,
 			"source"
@@ -184,30 +243,27 @@ fn validate_field(role: Role, key: &str) -> Result<()> {
 				| "space_before"
 				| "space_after"
 		)
-	} else if role == ImagePlaceholder {
+	} else if has(K::Placeholder) {
 		matches!(
 			key,
 			"color" | "font" | "weight" | "size" | "decoration" | "background"
 		)
-	} else if role == Scrollbar {
+	} else if has(K::Image) {
 		matches!(
 			key,
-			"track"
-				| "thumb" | "thumb_hover"
-				| "thickness"
-				| "thickness_hover"
-				| "overflow_thickness"
-				| "overflow_thickness_hover"
-				| "gutter"
+			"background"
+				| "border_color"
+				| "border_width"
+				| "padding" | "align"
 		)
-	} else if role == Hr {
+	} else if has(K::Hr) {
 		matches!(
 			key,
 			"color" | "border_width" | "space_before" | "space_after"
 		)
-	} else if role == Math {
+	} else if has(K::Math) && !has(K::Error) {
 		matches!(key, "color" | "size")
-	} else if role == MathError {
+	} else if has(K::Error) {
 		matches!(
 			key,
 			"show"
@@ -220,27 +276,26 @@ fn validate_field(role: Role, key: &str) -> Result<()> {
 	} else {
 		match key {
 			"color" | "font" | "weight" | "decoration" => true,
-			"size" => role != Body,
+			"size" => !has(K::Body),
 			"background" => true,
-			"line_height" | "space_before" | "space_after" => role.block(),
-			"indent" => matches!(role, List | Enum),
-			"padding" | "border_width" | "radius" => {
-				role.block() && role != CodeLabel
+			"line_height" | "space_before" | "space_after" => {
+				conditions.has_block() || has(K::Caption)
 			}
+			"indent" => has(K::List) || has(K::Enum),
+			"padding" | "border_width" | "radius" => conditions.container(),
 			"border_color" => {
-				(role.block() && role != CodeLabel)
-					|| role.ui() || role == TaskMarker
+				conditions.container() || conditions.ui() || has(K::TaskMarker)
 			}
-			"muted" | "accent" | "error" => role.ui(),
-			"shadow" | "scrim" => role == Ui,
+			"muted" | "accent" | "error" => conditions.ui(),
+			"shadow" | "scrim" => has(K::Ui),
 			"hover_background" | "active_background" | "disabled_color"
-			| "focus_color" => role == Button,
-			"theme" => role == CodeBlock,
+			| "focus_color" => has(K::Button),
+			"theme" => conditions == ConditionSet::of(K::CodeBlock),
 			_ => false,
 		}
 	};
 	if !allowed {
-		bail!("{}.{}: unsupported field", role.name(), key);
+		bail!("rule [{}].{key}: unsupported field", conditions.display());
 	}
 	Ok(())
 }

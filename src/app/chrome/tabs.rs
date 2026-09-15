@@ -2,7 +2,7 @@ use super::controls::toolbar_right_edge;
 use crate::app::tab_strip::{TabLayout, TabStrip};
 use crate::layout::{Draw, Paint, Rect, TextShaper};
 use crate::state::ReaderTab;
-use markview_core::style::{ColorField as C, Role};
+use markview_core::style::{ColorField as C, Condition};
 use unicode_segmentation::UnicodeSegmentation;
 pub(in crate::app) struct TabBar<'a> {
 	pub(super) ui: &'a mut TextShaper,
@@ -55,7 +55,8 @@ impl TabBar<'_> {
 			let active = index == self.active_tab;
 			out.push(Draw::Box {
 				rect,
-				role: Role::Toolbar,
+				chain: Condition::Toolbar.chain(),
+				condition: Condition::Toolbar,
 				radius: 0.0,
 				border: 1.0,
 				left_only: false,
@@ -67,7 +68,7 @@ impl TabBar<'_> {
 			} else {
 				C::Background
 			};
-			out.push(Draw::Rect(rect, Paint::Styled(Role::Toolbar, fill)));
+			out.push(Draw::Rect(rect, Paint::Styled(Condition::Toolbar, fill)));
 			let name = self.tabs[index]
 				.path
 				.file_name()
@@ -80,7 +81,7 @@ impl TabBar<'_> {
 				rect.x + 12.0,
 				rect.y + 21.0,
 				Paint::Styled(
-					Role::Toolbar,
+					Condition::Toolbar,
 					if active { C::Color } else { C::Muted },
 				),
 			));
@@ -89,7 +90,7 @@ impl TabBar<'_> {
 				16.0,
 				rect.x + rect.w - 19.0,
 				rect.y + 21.0,
-				Paint::Styled(Role::Toolbar, C::Muted),
+				Paint::Styled(Condition::Toolbar, C::Muted),
 			));
 		}
 		self.ui.appearance = old;
@@ -109,7 +110,7 @@ impl TabBar<'_> {
 					w,
 					h: 2.0,
 				},
-				Paint::Styled(Role::Scrollbar, C::Thumb),
+				Paint::Styled(Condition::Scrollbar, C::Thumb),
 			));
 		}
 		draws

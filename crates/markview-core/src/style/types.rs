@@ -1,10 +1,29 @@
-//! Markview Stylesheet v1: strict parsing, field-wise cascading and semantic text styles.
+//! Markview Stylesheet v2: conditions, field-wise cascading and semantic text styles.
+//!
+//! A rule is keyed by a *set* of conditions rather than by one hierarchical
+//! role name. A condition is one thing that is true of a rendered run: the
+//! containing blocks, the part of a block, the inline markup and its state.
+//! Combination is therefore data: `["em", "strong", "code"]` needs no new
+//! vocabulary, and declaration order inside the set is irrelevant.
 use serde::{Deserialize, Serialize};
 
+/// One condition a rendered run can satisfy.
+///
+/// The declaration order is the canonical bit order: a later variant is more
+/// local than an earlier one, so a part follows its base (`Cell` before
+/// `Header`) and every inline condition follows the blocks that contain it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Role {
+pub enum Condition {
 	#[default]
 	Body,
+	Blockquote,
+	List,
+	Enum,
+	Table,
+	Footnote,
+	CodeBlock,
+	ListItem,
+	Hr,
 	P,
 	H1,
 	H2,
@@ -12,43 +31,42 @@ pub enum Role {
 	H4,
 	H5,
 	H6,
-	Blockquote,
-	List,
-	Enum,
-	ListItem,
-	Footnote,
-	Em,
-	Strong,
-	StrongEm,
-	Link,
-	LinkHover,
-	Code,
-	Del,
-	Sup,
-	CodeBlock,
-	CodeLabel,
-	Table,
-	TableHeader,
-	TableCell,
-	ListMarker,
-	TaskMarker,
-	Hr,
-	Math,
-	MathError,
+	Image,
 	Selection,
 	Scrollbar,
 	Ui,
+	Cell,
+	Header,
+	Label,
+	Marker,
+	TaskMarker,
+	Caption,
+	Placeholder,
 	Toolbar,
 	Statusbar,
 	Panel,
 	Button,
-	Image,
-	ImageCaption,
-	ImagePlaceholder,
+	Math,
+	Em,
+	Strong,
+	Link,
+	Del,
+	Sup,
+	Code,
+	Error,
+	Hover,
 }
-impl Role {
+impl Condition {
 	pub const ALL: &'static [(Self, &'static str)] = &[
 		(Self::Body, "body"),
+		(Self::Blockquote, "blockquote"),
+		(Self::List, "list"),
+		(Self::Enum, "enum"),
+		(Self::Table, "table"),
+		(Self::Footnote, "footnote"),
+		(Self::CodeBlock, "code_block"),
+		(Self::ListItem, "list_item"),
+		(Self::Hr, "hr"),
 		(Self::P, "p"),
 		(Self::H1, "h1"),
 		(Self::H2, "h2"),
@@ -56,45 +74,73 @@ impl Role {
 		(Self::H4, "h4"),
 		(Self::H5, "h5"),
 		(Self::H6, "h6"),
-		(Self::Blockquote, "blockquote"),
-		(Self::List, "list"),
-		(Self::Enum, "enum"),
-		(Self::ListItem, "list_item"),
-		(Self::Footnote, "footnote"),
-		(Self::Em, "em"),
-		(Self::Strong, "strong"),
-		(Self::StrongEm, "strong_em"),
-		(Self::Link, "link"),
-		(Self::LinkHover, "link.hover"),
-		(Self::Code, "code"),
-		(Self::Del, "del"),
-		(Self::Sup, "sup"),
-		(Self::CodeBlock, "code_block"),
-		(Self::CodeLabel, "code_block.label"),
-		(Self::Table, "table"),
-		(Self::TableHeader, "table.header"),
-		(Self::TableCell, "table.cell"),
-		(Self::ListMarker, "list.marker"),
-		(Self::TaskMarker, "task_marker"),
-		(Self::Hr, "hr"),
-		(Self::Math, "math"),
-		(Self::MathError, "math.error"),
+		(Self::Image, "img"),
 		(Self::Selection, "selection"),
 		(Self::Scrollbar, "scrollbar"),
 		(Self::Ui, "ui"),
-		(Self::Toolbar, "ui.toolbar"),
-		(Self::Statusbar, "ui.statusbar"),
-		(Self::Panel, "ui.panel"),
-		(Self::Button, "ui.button"),
-		(Self::Image, "img"),
-		(Self::ImageCaption, "img.caption"),
-		(Self::ImagePlaceholder, "img.placeholder"),
+		(Self::Cell, "cell"),
+		(Self::Header, "header"),
+		(Self::Label, "label"),
+		(Self::Marker, "marker"),
+		(Self::TaskMarker, "task_marker"),
+		(Self::Caption, "caption"),
+		(Self::Placeholder, "placeholder"),
+		(Self::Toolbar, "toolbar"),
+		(Self::Statusbar, "statusbar"),
+		(Self::Panel, "panel"),
+		(Self::Button, "button"),
+		(Self::Math, "math"),
+		(Self::Em, "em"),
+		(Self::Strong, "strong"),
+		(Self::Link, "link"),
+		(Self::Del, "del"),
+		(Self::Sup, "sup"),
+		(Self::Code, "code"),
+		(Self::Error, "error"),
+		(Self::Hover, "hover"),
 	];
 	pub fn name(self) -> &'static str {
 		Self::ALL.iter().find(|(r, _)| *r == self).unwrap().1
 	}
 	pub fn parse(name: &str) -> Option<Self> {
 		Self::ALL.iter().find(|(_, n)| *n == name).map(|(r, _)| *r)
+	}
+	pub const COUNT: usize = Self::ALL.len();
+	pub const fn bit(self) -> u64 {
+		1 << self as u32
+	}
+	/// The chain a single-condition paint resolves through, oldest first. A
+	/// paint usually carries the exact nesting instead; this is only the default
+	/// for isolated paints such as the reader chrome.
+	pub fn chain(self) -> u128 {
+		use Condition::*;
+		match self {
+			Body => chain_of(&[Body]),
+			Blockquote => chain_of(&[Body, Blockquote]),
+			List => chain_of(&[Body, List]),
+			Enum => chain_of(&[Body, Enum]),
+			ListItem => chain_of(&[Body, ListItem]),
+			Table => chain_of(&[Body, Table]),
+			Footnote => chain_of(&[Body, Footnote]),
+			CodeBlock => chain_of(&[Body, CodeBlock]),
+			Hr => chain_of(&[Body, Hr]),
+			P => chain_of(&[Body, P]),
+			H1 | H2 | H3 | H4 | H5 | H6 => chain_of(&[Body, self]),
+			Image => chain_of(&[Body, Image]),
+			Ui => chain_of(&[Body, Ui]),
+			Toolbar | Statusbar | Panel | Button => chain_of(&[Body, Ui, self]),
+			Cell => chain_of(&[Body, Table, Cell]),
+			Header => chain_of(&[Body, Table, Cell, Header]),
+			Label => chain_of(&[Body, CodeBlock, Label]),
+			Marker => chain_of(&[Body, ListItem, Marker]),
+			TaskMarker => chain_of(&[Body, ListItem, TaskMarker]),
+			Caption | Placeholder => chain_of(&[Body, Image, self]),
+			Math => chain_of(&[Body, Math]),
+			Em | Strong | Link | Del | Sup | Code => chain_of(&[Body, self]),
+			Error => chain_of(&[Body, Math, Error]),
+			Hover => chain_of(&[Body, Link, Hover]),
+			Selection | Scrollbar => chain_of(&[self]),
+		}
 	}
 	pub fn ui(self) -> bool {
 		matches!(
@@ -106,7 +152,33 @@ impl Role {
 				| Self::Button
 		)
 	}
-	pub(super) fn block(self) -> bool {
+	/// An inline markup condition, as opposed to a block or a block part.
+	pub fn inline(self) -> bool {
+		matches!(
+			self,
+			Self::Em
+				| Self::Strong
+				| Self::Link | Self::Del
+				| Self::Sup | Self::Code
+				| Self::Math
+		)
+	}
+	/// The conditions whose rules own this element's box: the element itself
+	/// plus the specializations it is built on. Generic ancestors are excluded,
+	/// so a container's geometry and background do not reach its children.
+	pub fn element_path(self) -> ConditionSet {
+		use Condition::*;
+		match self {
+			Header => ConditionSet::of(Cell).with(Header),
+			Toolbar | Statusbar | Panel | Button => {
+				ConditionSet::of(Ui).with(self)
+			}
+			Hover => ConditionSet::of(Link).with(Hover),
+			_ => ConditionSet::of(self),
+		}
+	}
+	/// A condition that carries block geometry.
+	pub fn block(self) -> bool {
 		matches!(
 			self,
 			Self::Body
@@ -118,16 +190,135 @@ impl Role {
 				| Self::ListItem
 				| Self::Footnote
 				| Self::CodeBlock
-				| Self::CodeLabel
 				| Self::Table
-				| Self::TableHeader
-				| Self::TableCell
+				| Self::Cell
 		)
 	}
 	pub fn heading(level: u8) -> Self {
 		[Self::H1, Self::H2, Self::H3, Self::H4, Self::H5, Self::H6]
 			[level.clamp(1, 6) as usize - 1]
 	}
+}
+
+/// A set of conditions that hold together. The empty set is the root.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ConditionSet(u64);
+impl ConditionSet {
+	pub const EMPTY: Self = Self(0);
+	pub const fn of(condition: Condition) -> Self {
+		Self(condition.bit())
+	}
+	pub const fn with(self, condition: Condition) -> Self {
+		Self(self.0 | condition.bit())
+	}
+	pub const fn without(self, condition: Condition) -> Self {
+		Self(self.0 & !condition.bit())
+	}
+	pub const fn contains(self, condition: Condition) -> bool {
+		self.0 & condition.bit() != 0
+	}
+	pub const fn is_empty(self) -> bool {
+		self.0 == 0
+	}
+	pub const fn len(self) -> u32 {
+		self.0.count_ones()
+	}
+	pub const fn is_subset_of(self, other: Self) -> bool {
+		self.0 & !other.0 == 0
+	}
+	pub const fn intersects(self, other: Self) -> bool {
+		self.0 & other.0 != 0
+	}
+	/// Whether the set names any inline markup condition.
+	pub fn has_inline(self) -> bool {
+		const INLINE: u64 = Condition::Em.bit()
+			| Condition::Strong.bit()
+			| Condition::Link.bit()
+			| Condition::Del.bit()
+			| Condition::Sup.bit()
+			| Condition::Code.bit()
+			| Condition::Math.bit();
+		self.0 & INLINE != 0
+	}
+	pub const fn union(self, other: Self) -> Self {
+		Self(self.0 | other.0)
+	}
+	pub fn iter(self) -> impl Iterator<Item = Condition> {
+		Condition::ALL
+			.iter()
+			.map(|(c, _)| *c)
+			.filter(move |c| self.contains(*c))
+	}
+	pub fn names(self) -> Vec<&'static str> {
+		self.iter().map(Condition::name).collect()
+	}
+	/// The canonical spelling, for errors and cache keys.
+	pub fn display(self) -> String {
+		if self.is_empty() {
+			return "root".into();
+		}
+		self.names().join("+")
+	}
+	pub fn ui(self) -> bool {
+		self.iter().any(Condition::ui)
+	}
+	pub fn has_block(self) -> bool {
+		self.iter().any(Condition::block)
+	}
+	/// A set that owns container geometry: a block without a refining part
+	/// other than a table cell.
+	pub fn container(self) -> bool {
+		self.has_block()
+			&& !self.contains(Condition::Label)
+			&& !self.contains(Condition::Marker)
+			&& !self.contains(Condition::TaskMarker)
+			&& !self.contains(Condition::Caption)
+			&& !self.contains(Condition::Placeholder)
+	}
+}
+impl From<Condition> for ConditionSet {
+	fn from(condition: Condition) -> Self {
+		Self::of(condition)
+	}
+}
+
+/// A condition chain packs six bits per slot into a `u128`.
+pub const MAX_CHAIN: usize = 21;
+
+/// Append a condition to an ordered chain. A repeated condition replaces its
+/// earlier occurrence, which keeps deeply nested containers compact.
+pub fn chain_push(chain: u128, condition: Condition) -> u128 {
+	let id = condition as u128 + 1;
+	let mut remaining = chain;
+	let mut compact = 0;
+	let mut shift = 0;
+	while remaining != 0 {
+		let slot = remaining & 63;
+		remaining >>= 6;
+		if slot != id {
+			compact |= slot << shift;
+			shift += 6;
+		}
+	}
+	(compact << 6) | id
+}
+pub fn chain_of(conditions: &[Condition]) -> u128 {
+	conditions.iter().fold(0, |chain, c| chain_push(chain, *c))
+}
+/// The conditions of a chain, as a set, without allocating.
+pub fn chain_set(chain: u128) -> ConditionSet {
+	let mut set = ConditionSet::EMPTY;
+	let mut remaining = chain;
+	while remaining != 0 {
+		let id = (remaining & 63) as usize;
+		remaining >>= 6;
+		if let Some((condition, _)) =
+			id.checked_sub(1).and_then(|i| Condition::ALL.get(i))
+		{
+			set = set.with(*condition);
+		}
+	}
+	set
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -360,6 +551,25 @@ pub struct Rule {
 	pub theme: Option<String>,
 }
 impl Rule {
+	/// Whether a declaration can change layout geometry. Color-only rules must
+	/// not invalidate cached layout.
+	pub fn layout_relevant(&self) -> bool {
+		self.show.is_some()
+			|| self.source.is_some()
+			|| self.align.is_some()
+			|| self.font.is_some()
+			|| self.weight.is_some()
+			|| self.size.is_some()
+			|| self.decoration.is_some()
+			|| self.line_height.is_some()
+			|| self.space_before.is_some()
+			|| self.space_after.is_some()
+			|| self.indent.is_some()
+			|| self.padding.is_some()
+			|| self.border_width.is_some()
+			|| self.radius.is_some()
+			|| self.gutter.is_some()
+	}
 	pub fn overlay(&mut self, higher: &Self) {
 		macro_rules! merge { ($($f:ident),*) => { $(if higher.$f.is_some(){self.$f=higher.$f.clone();})* }; }
 		merge!(

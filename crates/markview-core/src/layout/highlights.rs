@@ -2,7 +2,7 @@
 use super::{LayoutOptions, expand_tabs_mapped};
 use crate::{
 	document::{Block, BlockKind},
-	style::Role,
+	style::Condition,
 };
 use std::ops::Range;
 use std::{
@@ -51,7 +51,11 @@ impl Highlights {
 		let theme = options
 			.codeblock_theme_override
 			.as_deref()
-			.or(options.stylesheet.rule(Role::CodeBlock).theme.as_deref())
+			.or(options
+				.stylesheet
+				.rule(Condition::CodeBlock)
+				.theme
+				.as_deref())
 			.map(str::to_owned);
 		let mut jobs = Vec::new();
 		fn collect(

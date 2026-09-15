@@ -217,7 +217,7 @@ fn tab_strip_frames_clip_overflow_at_fractional_dpi() -> Result<()> {
 				w: width,
 				h: TOP,
 			},
-			Paint::Styled(Role::Toolbar, C::Background),
+			Paint::Styled(Condition::Toolbar, C::Background),
 		);
 		let controls = draw_controls(
 			&mut ui,

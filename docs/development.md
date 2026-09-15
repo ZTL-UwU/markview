@@ -86,7 +86,7 @@ Use this sequence when adding a Markdown or HTML construct:
 3. Parse the construct into that semantic representation, preserving a source range and stable reading order. Keep unsupported syntax as literal text rather than silently dropping it.
 4. Add layout behavior in `layout.rs`. Decide whether the node is text, a block, or an atomic inline box; produce text nodes and geometry together so hit testing and copying use the same mapping.
 5. Add only the semantic paint instructions needed by the renderer. Do not make the renderer reinterpret Markdown.
-6. Update stylesheet roles only if the node has a visual role that cannot use an existing one. Validate the role through the same MVSS parser as bundled and user styles.
+6. Add a stylesheet condition only if the node has a visual role that no existing condition expresses. Validate it through the same MVSS parser as bundled and user styles.
 7. Add focused unit tests for parsing, source ranges, reading text, selection/copying, layout, and cache identity. Add a renderer test only for GPU-specific behavior.
 8. Add a fixture or example when the feature is difficult to understand visually, then run the full workspace checks.
 

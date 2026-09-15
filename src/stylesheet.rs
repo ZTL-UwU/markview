@@ -213,14 +213,14 @@ mod tests {
 		let source = tmp.path().join("a.mvss.toml");
 		fs::write(
 			&source,
-			"format_version=1\nversion=1\n[body]\ncolor='#abcdef'",
+			"format_version=2\nversion=1\n[[rule]]\nwhen=['body']\ncolor='#abcdef'",
 		)
 		.unwrap();
 		install(&source, &dir, false).unwrap();
 		assert!(install(&source, &dir, false).is_err());
 		fs::write(
 			&source,
-			"format_version=1\nversion=2\n[body]\ncolor='#123456'",
+			"format_version=2\nversion=2\n[[rule]]\nwhen=['body']\ncolor='#123456'",
 		)
 		.unwrap();
 		install(&source, &dir, false).unwrap();
@@ -231,7 +231,7 @@ mod tests {
 		assert_eq!(scan(Some(&dir)).len(), 3);
 		fs::write(
 			&source,
-			"format_version=1\nversion=3\n[body]\ncolor='#123456'",
+			"format_version=2\nversion=3\n[[rule]]\nwhen=['body']\ncolor='#123456'",
 		)
 		.unwrap();
 		install(&source, &dir, true).unwrap();
@@ -245,12 +245,12 @@ mod tests {
 		let tmp = tempfile::tempdir().unwrap();
 		fs::write(
 			tmp.path().join("a.mvss.toml"),
-			"format_version=1\nversion=1\n[body]\ncolor='#123456'",
+			"format_version=2\nversion=1\n[[rule]]\nwhen=['body']\ncolor='#123456'",
 		)
 		.unwrap();
 		let s = load(&["a".into(), "dark".into()], Some(tmp.path())).unwrap();
 		assert_eq!(
-			s.rule(markview_core::style::Role::Body).color,
+			s.rule(markview_core::style::Condition::Body).color,
 			Some(markview_core::style::Color(0x123456ff))
 		);
 	}
@@ -264,14 +264,14 @@ mod cascade_tests {
 		let tmp = tempfile::tempdir().unwrap();
 		fs::write(
 			tmp.path().join("fonts.mvss.toml"),
-			"format_version=1\nversion=1\n[em]\nfont=[{family='Custom'}]",
+			"format_version=2\nversion=1\n[[rule]]\nwhen=['em']\nfont=[{family='Custom'}]",
 		)
 		.unwrap();
 		let sheet =
 			load(&["dark".into(), "fonts".into()], Some(tmp.path())).unwrap();
 		assert_eq!(
 			sheet
-				.rule(markview_core::style::Role::Em)
+				.rule(markview_core::style::Condition::Em)
 				.font
 				.as_ref()
 				.unwrap()[0]

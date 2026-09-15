@@ -4,7 +4,7 @@ use crate::{
 	linebreak::{Break, Unit},
 	scene::BlockLayout,
 	shaping::{Cluster, Span},
-	style::Role,
+	style::Condition,
 };
 use std::collections::HashSet;
 use std::{collections::BTreeMap, ops::Range};
@@ -52,7 +52,7 @@ impl BlockContext<'_> {
 								size * self
 									.shaper
 									.stylesheet
-									.rule(Role::Math)
+									.rule(Condition::Math)
 									.size
 									.unwrap_or(1.),
 							)
@@ -65,10 +65,17 @@ impl BlockContext<'_> {
 						}
 						Err(error) => {
 							p.text.push_str(latex);
+							// `["error"]` and `["math", "error"]` both apply.
 							let show_error = self
 								.shaper
 								.stylesheet
-								.rule(Role::MathError)
+								.element_rule(
+									crate::style::chain_of(&[
+										Condition::Math,
+										Condition::Error,
+									]),
+									Condition::Error,
+								)
 								.show
 								.unwrap_or(true);
 							if show_error {

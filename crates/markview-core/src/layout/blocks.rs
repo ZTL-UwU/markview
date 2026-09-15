@@ -3,7 +3,7 @@ use crate::text::{TextCluster, TextNode};
 use crate::{
 	document::{Block, BlockKind, CellAlign, Inline, InlineKind, RichText},
 	scene::{BlockLayout, Draw, HeadingAnchor, Paint, Rect},
-	style::{ColorField, Role},
+	style::{ColorField, Condition},
 };
 
 /// A paragraph earns a first-line indent only when its first visible content is
@@ -159,24 +159,26 @@ impl BlockContext<'_> {
 		out: &mut BlockLayout,
 	) -> f32 {
 		let role = match &block.kind {
-			BlockKind::Paragraph(_) => Role::P,
-			BlockKind::Heading { level, .. } => Role::heading(*level),
-			BlockKind::Code { .. } => Role::CodeBlock,
-			BlockKind::Quote { .. } => Role::Blockquote,
+			BlockKind::Paragraph(_) => Condition::P,
+			BlockKind::Heading { level, .. } => Condition::heading(*level),
+			BlockKind::Code { .. } => Condition::CodeBlock,
+			BlockKind::Quote { .. } => Condition::Blockquote,
 			BlockKind::List { start, .. } => {
 				if start.is_some() {
-					Role::Enum
+					Condition::Enum
 				} else {
-					Role::List
+					Condition::List
 				}
 			}
-			BlockKind::Table { .. } => Role::Table,
-			BlockKind::Footnote { .. } => Role::Footnote,
-			BlockKind::Rule => Role::Hr,
+			BlockKind::Table { .. } => Condition::Table,
+			BlockKind::Footnote { .. } => Condition::Footnote,
+			BlockKind::Rule => Condition::Hr,
 		};
 		let previous = self.shaper.appearance.clone();
-		let rule = opts.stylesheet.rule(role).clone();
-		self.shaper.appearance = opts.stylesheet.text(&previous, role);
+		let appearance = opts.stylesheet.text(&previous, role);
+		let chain = appearance.chain;
+		let rule = opts.stylesheet.element_rule(chain, role);
+		self.shaper.appearance = appearance;
 		self.shaper.appearance.background = None;
 		let before = rule.space_before.unwrap_or(0.) * opts.font_size;
 		let after = rule.space_after.unwrap_or(0.) * opts.font_size;
@@ -189,10 +191,11 @@ impl BlockContext<'_> {
 		let placeholder = out.draws.len();
 		out.draws.push(Draw::Box {
 			rect: Rect::default(),
-			role,
+			chain,
+			condition: role,
 			radius: rule.radius.unwrap_or(0.),
 			border: rule.border_width.unwrap_or(0.),
-			left_only: role == Role::Blockquote,
+			left_only: role == Condition::Blockquote,
 		});
 		let height = self.block_inner(
 			block,
@@ -210,14 +213,15 @@ impl BlockContext<'_> {
 				w: width,
 				h: box_height,
 			},
-			role,
+			chain,
+			condition: role,
 			radius: rule.radius.unwrap_or(0.),
-			border: if role == Role::Hr || role == Role::Table {
+			border: if role == Condition::Hr || role == Condition::Table {
 				0.
 			} else {
 				rule.border_width.unwrap_or(0.)
 			},
-			left_only: role == Role::Blockquote,
+			left_only: role == Condition::Blockquote,
 		};
 		if let BlockKind::Heading { anchor, .. } = &block.kind {
 			// A link to this heading lands on the top of its box.
@@ -278,13 +282,16 @@ impl BlockContext<'_> {
 						w: width,
 						h: opts
 							.stylesheet
-							.rule(Role::Hr)
+							.rule(Condition::Hr)
 							.border_width
 							.unwrap_or(1.),
 					},
-					Paint::Styled(Role::Hr, ColorField::Color),
+					Paint::Styled(Condition::Hr, ColorField::Color),
 				));
-				opts.stylesheet.rule(Role::Hr).border_width.unwrap_or(1.)
+				opts.stylesheet
+					.rule(Condition::Hr)
+					.border_width
+					.unwrap_or(1.)
 			}
 			BlockKind::Code { language, text } => {
 				self.code(language, text, x, y, width, size, opts, out)
@@ -297,7 +304,7 @@ impl BlockContext<'_> {
 						size * 0.8,
 						x,
 						top + size,
-						Paint::Styled(Role::Blockquote, ColorField::Color),
+						Paint::Styled(Condition::Blockquote, ColorField::Color),
 					));
 					top += size * self.shaper.appearance.line_height;
 				}
@@ -334,15 +341,18 @@ impl BlockContext<'_> {
 				};
 				let mut top = y;
 				let list_appearance = self.shaper.appearance.clone();
-				let item_rule = opts.stylesheet.rule(Role::ListItem).clone();
+				let item_appearance =
+					opts.stylesheet.text(&list_appearance, Condition::ListItem);
+				let item_rule = opts
+					.stylesheet
+					.element_rule(item_appearance.chain, Condition::ListItem);
 				let padding = item_rule
 					.padding
 					.as_ref()
 					.map(|p| p.sides().map(|v| v * opts.font_size))
 					.unwrap_or([0.; 4]);
 				for (i, item) in items.iter().enumerate() {
-					self.shaper.appearance =
-						opts.stylesheet.text(&list_appearance, Role::ListItem);
+					self.shaper.appearance = item_appearance.clone();
 					top +=
 						item_rule.space_before.unwrap_or(0.) * opts.font_size;
 					let box_y = top;
@@ -380,9 +390,10 @@ impl BlockContext<'_> {
 						30.0
 					};
 					if let Some(checked) = item.checked {
-						let task = opts
-							.stylesheet
-							.text(&self.shaper.appearance, Role::TaskMarker);
+						let task = opts.stylesheet.text(
+							&self.shaper.appearance,
+							Condition::TaskMarker,
+						);
 						let marker_size = opts.font_size * task.size;
 						let r = Rect {
 							x: item_x + 2.,
@@ -392,10 +403,7 @@ impl BlockContext<'_> {
 						};
 						out.draws.push(Draw::Rect(
 							r,
-							Paint::Styled(
-								Role::TaskMarker,
-								ColorField::BorderColor,
-							),
+							Paint::Cascade(task.chain, ColorField::BorderColor),
 						));
 						out.draws.push(Draw::Rect(
 							Rect {
@@ -404,21 +412,21 @@ impl BlockContext<'_> {
 								w: (r.w - 2.).max(0.),
 								h: (r.h - 2.).max(0.),
 							},
-							Paint::Styled(
-								Role::TaskMarker,
-								ColorField::Background,
-							),
+							Paint::Cascade(task.chain, ColorField::Background),
 						));
 						if checked {
-							out.draws.extend(self.shaper.label(
+							out.draws.extend(self.shaper.label_with(
 								"✓",
 								opts.font_size * 0.7,
 								r.x,
 								r.y + r.h,
-								Paint::Styled(
-									Role::TaskMarker,
-									ColorField::Color,
-								),
+								&task,
+								task.paint,
+								Some(Paint::Scoped(
+									task.chain,
+									Condition::TaskMarker,
+									ColorField::Background,
+								)),
 							));
 						}
 					} else {
@@ -426,12 +434,21 @@ impl BlockContext<'_> {
 							|| "•".to_string(),
 							|n| format!("{}.", n + i),
 						);
-						out.draws.extend(self.shaper.label(
+						let bullet = opts
+							.stylesheet
+							.text(&self.shaper.appearance, Condition::Marker);
+						out.draws.extend(self.shaper.label_with(
 							&marker,
 							opts.font_size,
 							item_x + 2.0,
 							top + size * 1.15,
-							Paint::Styled(Role::ListMarker, ColorField::Color),
+							&bullet,
+							bullet.paint,
+							Some(Paint::Scoped(
+								bullet.chain,
+								Condition::Marker,
+								ColorField::Background,
+							)),
 						));
 					}
 					top += self
@@ -453,7 +470,8 @@ impl BlockContext<'_> {
 							w: width,
 							h: top - box_y,
 						},
-						role: Role::ListItem,
+						chain: item_appearance.chain,
+						condition: Condition::ListItem,
 						radius: item_rule.radius.unwrap_or(0.),
 						border: item_rule.border_width.unwrap_or(0.),
 						left_only: false,
@@ -475,7 +493,7 @@ impl BlockContext<'_> {
 					size * 0.75,
 					x,
 					y + size,
-					Paint::Styled(Role::Footnote, ColorField::Color),
+					Paint::Styled(Condition::Footnote, ColorField::Color),
 				));
 				// The label leads the block, so its paragraphs stay flush.
 				let body_opts = LayoutOptions {

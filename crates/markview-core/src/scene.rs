@@ -5,8 +5,11 @@ use std::{collections::HashMap, ops::Range, sync::Arc};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Paint {
 	Color(crate::style::Color),
-	Styled(crate::style::Role, crate::style::ColorField),
+	Styled(crate::style::Condition, crate::style::ColorField),
 	Cascade(u128, crate::style::ColorField),
+	/// A box owned by one element inside a chain: only rules naming that
+	/// element, or a specialization of it, apply.
+	Scoped(u128, crate::style::Condition, crate::style::ColorField),
 	#[default]
 	Text,
 	Muted,
@@ -23,28 +26,15 @@ pub enum Paint {
 impl Paint {
 	pub fn cascade(
 		self,
-		role: crate::style::Role,
+		condition: crate::style::Condition,
 		field: crate::style::ColorField,
 	) -> Self {
 		let chain = match self {
 			Self::Cascade(v, _) => v,
-			Self::Styled(r, _) => r as u128 + 1,
-			_ => crate::style::Role::Body as u128 + 1,
+			Self::Styled(c, _) => c as u128 + 1,
+			_ => crate::style::Condition::Body as u128 + 1,
 		};
-		// A repeated container replaces its earlier occurrence. This keeps the
-		// finite semantic ancestry compact even for deeply nested lists/quotes.
-		let mut remaining = chain;
-		let mut compact = 0;
-		let mut shift = 0;
-		while remaining != 0 {
-			let id = remaining & 63;
-			remaining >>= 6;
-			if id != role as u128 + 1 {
-				compact |= id << shift;
-				shift += 6;
-			}
-		}
-		Self::Cascade((compact << 6) | (role as u128 + 1), field)
+		Self::Cascade(crate::style::chain_push(chain, condition), field)
 	}
 }
 
@@ -99,7 +89,10 @@ pub enum Draw {
 	Rect(Rect, Paint),
 	Box {
 		rect: Rect,
-		role: crate::style::Role,
+		/// The condition chain the box was laid out in.
+		chain: u128,
+		/// The element the box belongs to; its rules own the box colors.
+		condition: crate::style::Condition,
 		radius: f32,
 		border: f32,
 		left_only: bool,

@@ -1,6 +1,6 @@
 //! Cache filename measurements so pointer motion never shapes offscreen tabs.
 use crate::{layout::TextShaper, state::ReaderTab};
-use markview_core::style::{Role, Stylesheet, TextAppearance};
+use markview_core::style::{Condition, Stylesheet, TextAppearance};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -64,7 +64,8 @@ impl TabMetrics {
 }
 pub(super) fn tab_appearance(ui: &TextShaper) -> TextAppearance {
 	ui.stylesheet.text(
-		&ui.stylesheet.text(&TextAppearance::default(), Role::Ui),
-		Role::Toolbar,
+		&ui.stylesheet
+			.text(&TextAppearance::default(), Condition::Ui),
+		Condition::Toolbar,
 	)
 }

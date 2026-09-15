@@ -5,7 +5,7 @@ use crate::{
 	settings::ReaderSettings,
 	state::{Command, InteractionState},
 };
-use markview_core::style::{ColorField as C, Role, TextAppearance};
+use markview_core::style::{ColorField as C, Condition, TextAppearance};
 fn style_rows(rect: Rect) -> usize {
 	((rect.h - 142.) / 60.).floor().max(1.) as usize
 }
@@ -144,8 +144,10 @@ pub(super) fn draw_styles(
 	height: f32,
 ) -> Vec<Draw> {
 	shaper.appearance = shaper.stylesheet.text(
-		&shaper.stylesheet.text(&TextAppearance::default(), Role::Ui),
-		Role::Panel,
+		&shaper
+			.stylesheet
+			.text(&TextAppearance::default(), Condition::Ui),
+		Condition::Panel,
 	);
 	let r = panel_rect(width, height);
 	let rows = style_rows(r);
@@ -163,7 +165,8 @@ pub(super) fn draw_styles(
 		),
 		Draw::Box {
 			rect: r,
-			role: Role::Panel,
+			chain: Condition::Panel.chain(),
+			condition: Condition::Panel,
 			radius: 0.,
 			border: 1.,
 			left_only: false,
@@ -179,7 +182,7 @@ pub(super) fn draw_styles(
 		13.,
 		r.x + 20.,
 		r.y + 66.,
-		Paint::Styled(Role::Panel, C::Color),
+		Paint::Styled(Condition::Panel, C::Color),
 	));
 	for (row, index) in
 		order.into_iter().skip(page * rows).take(rows).enumerate()
@@ -202,7 +205,7 @@ pub(super) fn draw_styles(
 			13.,
 			r.x + 20.,
 			y + 18.,
-			Paint::Styled(Role::Panel, C::Color),
+			Paint::Styled(Condition::Panel, C::Color),
 		));
 		if e.error.is_some() && pos.is_none() {
 			let rect = Rect {
@@ -213,14 +216,14 @@ pub(super) fn draw_styles(
 			};
 			out.push(Draw::Rect(
 				rect,
-				Paint::Styled(Role::Button, C::Background),
+				Paint::Styled(Condition::Button, C::Background),
 			));
 			out.extend(shaper.label(
 				"Invalid",
 				12.,
 				rect.x + 7.,
 				rect.y + 18.,
-				Paint::Styled(Role::Button, C::DisabledColor),
+				Paint::Styled(Condition::Button, C::DisabledColor),
 			));
 		}
 		let detail = e.error.as_deref().unwrap_or(&e.source);
@@ -231,7 +234,7 @@ pub(super) fn draw_styles(
 			r.x + 20.,
 			y + 40.,
 			Paint::Styled(
-				Role::Panel,
+				Condition::Panel,
 				if e.error.is_some() {
 					C::Error
 				} else {
@@ -243,7 +246,8 @@ pub(super) fn draw_styles(
 	for b in style_controls(settings, entries, page, width, height) {
 		out.push(Draw::Box {
 			rect: b.rect,
-			role: Role::Button,
+			chain: Condition::Button.chain(),
+			condition: Condition::Button,
 			radius: 0.,
 			border: 1.,
 			left_only: false,
@@ -253,7 +257,7 @@ pub(super) fn draw_styles(
 		out.push(Draw::Rect(
 			b.rect,
 			Paint::Styled(
-				Role::Button,
+				Condition::Button,
 				if interaction.pressed == Some(b.action) {
 					C::ActiveBackground
 				} else if hovered {
@@ -280,7 +284,7 @@ pub(super) fn draw_styles(
 			] {
 				out.push(Draw::Rect(
 					rect,
-					Paint::Styled(Role::Button, C::FocusColor),
+					Paint::Styled(Condition::Button, C::FocusColor),
 				));
 			}
 		}
@@ -291,7 +295,7 @@ pub(super) fn draw_styles(
 			12.,
 			label_x,
 			b.rect.y + 18.,
-			Paint::Styled(Role::Button, C::Color),
+			Paint::Styled(Condition::Button, C::Color),
 		));
 	}
 	out

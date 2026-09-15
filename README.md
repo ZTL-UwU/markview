@@ -50,7 +50,7 @@ markview ss install paper.mvss.toml
 markview document.md --style paper
 ```
 
-The [stylesheet guide](docs/stylesheets.md) explains the format and its supported roles.
+The [stylesheet guide](docs/stylesheets.md) explains the format and its supported conditions.
 
 ## Development
 

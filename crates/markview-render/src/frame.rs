@@ -124,7 +124,7 @@ impl Renderer {
 					track,
 					self.color(
 						Paint::Styled(
-							markview_core::style::Role::Scrollbar,
+							markview_core::style::Condition::Scrollbar,
 							markview_core::style::ColorField::Track,
 						),
 						view.theme,
@@ -134,7 +134,7 @@ impl Renderer {
 					thumb,
 					self.color(
 						Paint::Styled(
-							markview_core::style::Role::Scrollbar,
+							markview_core::style::Condition::Scrollbar,
 							if on_thumb {
 								markview_core::style::ColorField::ThumbHover
 							} else {
@@ -152,7 +152,7 @@ impl Renderer {
 		if let Some(selection) = view.selection {
 			let color = self.color(
 				Paint::Styled(
-					markview_core::style::Role::Selection,
+					markview_core::style::Condition::Selection,
 					markview_core::style::ColorField::Background,
 				),
 				view.theme,

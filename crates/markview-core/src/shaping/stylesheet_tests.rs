@@ -27,7 +27,7 @@ fn shaper() -> TextShaper {
 		);
 	}
 	let mut style = (*Stylesheet::bundled(false)).clone();
-	style.merge(&Stylesheet::parse("format_version=1\nversion=1\n[em]\nfont=[{family='Primary',variant='italic'},{family='Fallback'}]").unwrap());
+	style.merge(&Stylesheet::parse("format_version=2\nversion=1\n[[rule]]\nwhen=['em']\nfont=[{family='Primary',variant='italic'},{family='Fallback'}]").unwrap());
 	s.set_stylesheet(Arc::new(style));
 	s
 }
@@ -158,7 +158,7 @@ fn font_choices_are_scoped_and_invalidated_with_stylesheet() {
 	let mut style = (*s.stylesheet).clone();
 	style.merge(
 		&Stylesheet::parse(
-			"format_version=1\nversion=1\n[[fontdef]]\nid='Primary'\nlookfor=['Missing']",
+			"format_version=2\nversion=1\n[[fontdef]]\nid='Primary'\nlookfor=['Missing']",
 		)
 		.unwrap(),
 	);

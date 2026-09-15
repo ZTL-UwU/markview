@@ -1,6 +1,6 @@
 use super::super::BOTTOM;
 use crate::layout::{Draw, Paint, Rect, TextShaper};
-use markview_core::style::{ColorField as C, Role, TextAppearance};
+use markview_core::style::{ColorField as C, Condition, TextAppearance};
 pub(super) fn draw_footer(
 	shaper: &mut TextShaper,
 	counts: Option<markview_core::text::TextCounts>,
@@ -11,8 +11,10 @@ pub(super) fn draw_footer(
 	height: f32,
 ) -> Vec<Draw> {
 	shaper.appearance = shaper.stylesheet.text(
-		&shaper.stylesheet.text(&TextAppearance::default(), Role::Ui),
-		Role::Statusbar,
+		&shaper
+			.stylesheet
+			.text(&TextAppearance::default(), Condition::Ui),
+		Condition::Statusbar,
 	);
 	let mut out = vec![
 		Draw::Rect(
@@ -22,7 +24,7 @@ pub(super) fn draw_footer(
 				w: width,
 				h: BOTTOM,
 			},
-			Paint::Styled(Role::Statusbar, C::Background),
+			Paint::Styled(Condition::Statusbar, C::Background),
 		),
 		Draw::Rect(
 			Rect {
@@ -31,7 +33,7 @@ pub(super) fn draw_footer(
 				w: width,
 				h: 1.0,
 			},
-			Paint::Styled(Role::Statusbar, C::BorderColor),
+			Paint::Styled(Condition::Statusbar, C::BorderColor),
 		),
 	];
 	let mut text = counts.map_or_else(
@@ -51,7 +53,7 @@ pub(super) fn draw_footer(
 		11.0,
 		16.0,
 		height - 9.0,
-		Paint::Styled(Role::Statusbar, C::Muted),
+		Paint::Styled(Condition::Statusbar, C::Muted),
 	));
 	let available = width - used - 56.0;
 	if !secondary.is_empty() && available >= 80.0 {
@@ -61,7 +63,7 @@ pub(super) fn draw_footer(
 			available,
 			width - 16.0,
 			height - 9.0,
-			Paint::Styled(Role::Statusbar, C::Muted),
+			Paint::Styled(Condition::Statusbar, C::Muted),
 		));
 	}
 	if let Some(warning) = warning {
@@ -72,7 +74,7 @@ pub(super) fn draw_footer(
 				w: width,
 				h: 24.0,
 			},
-			Paint::Styled(Role::Statusbar, C::Background),
+			Paint::Styled(Condition::Statusbar, C::Background),
 		));
 		let warning = shaper.fit(warning, 11.0, width - 32.0);
 		out.extend(shaper.label(
@@ -80,7 +82,7 @@ pub(super) fn draw_footer(
 			11.0,
 			16.0,
 			height - BOTTOM - 8.0,
-			Paint::Styled(Role::Statusbar, C::Error),
+			Paint::Styled(Condition::Statusbar, C::Error),
 		));
 	}
 	out

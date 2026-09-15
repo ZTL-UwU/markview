@@ -4,7 +4,7 @@ use crate::{
 	document::TextStyle,
 	scene::{BlockLayout, Draw, Overflow, Paint, Rect},
 	shaping::Span,
-	style::{ColorField, Role},
+	style::{ColorField, Condition},
 	text::{TextCluster, TextNode},
 };
 use std::sync::Arc;
@@ -30,19 +30,26 @@ impl BlockContext<'_> {
 
 		let mut cursor = y;
 		if !language.is_empty() {
-			let rule = opts.stylesheet.rule(Role::CodeLabel);
-			cursor += rule.space_before.unwrap_or(0.) * opts.font_size;
 			let label = opts
 				.stylesheet
-				.text(&self.shaper.appearance, Role::CodeLabel);
+				.text(&self.shaper.appearance, Condition::Label);
+			let rule =
+				opts.stylesheet.element_rule(label.chain, Condition::Label);
+			cursor += rule.space_before.unwrap_or(0.) * opts.font_size;
 			let label_size = opts.font_size * label.size;
 			let label_height = label_size * label.line_height;
-			out.draws.extend(self.shaper.label(
+			out.draws.extend(self.shaper.label_with(
 				language,
 				opts.font_size,
 				x,
 				cursor + label_size,
-				Paint::Styled(Role::CodeLabel, ColorField::Color),
+				&label,
+				label.paint,
+				Some(Paint::Scoped(
+					label.chain,
+					Condition::Label,
+					ColorField::Background,
+				)),
 			));
 			cursor +=
 				label_height + rule.space_after.unwrap_or(0.) * opts.font_size;
@@ -51,7 +58,7 @@ impl BlockContext<'_> {
 		let mut natural = 0.0_f32;
 		let theme = opts.codeblock_theme_override.as_deref().or(opts
 			.stylesheet
-			.rule(Role::CodeBlock)
+			.rule(Condition::CodeBlock)
 			.theme
 			.as_deref());
 		let highlight_key =

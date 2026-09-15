@@ -22,6 +22,24 @@ pub struct TextStyle {
 	pub link: Option<String>,
 	pub color: Option<crate::style::Color>,
 }
+impl TextStyle {
+	/// The inline conditions this style activates, in application order.
+	pub fn conditions(&self) -> impl Iterator<Item = crate::style::Condition> {
+		use crate::style::Condition as C;
+		[
+			self.italic.then_some(C::Em),
+			self.bold.then_some(C::Strong),
+			self.link.as_ref().map(|_| C::Link),
+			self.strike.then_some(C::Del),
+			self.superscript.then_some(C::Sup),
+			self.code.then_some(C::Code),
+			self.math_error.then_some(C::Math),
+			self.math_error.then_some(C::Error),
+		]
+		.into_iter()
+		.flatten()
+	}
+}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum InlineKind {

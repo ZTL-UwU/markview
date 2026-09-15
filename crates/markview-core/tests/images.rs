@@ -21,7 +21,7 @@ fn styled(rules: &str, width: f32) -> LayoutOptions {
 	let mut sheet = (*markview_core::style::Stylesheet::bundled(false)).clone();
 	sheet.merge(
 		&markview_core::style::Stylesheet::parse(&format!(
-			"format_version=1\nversion=1\n{rules}"
+			"format_version=2\nversion=1\n{rules}"
 		))
 		.unwrap(),
 	);
@@ -40,12 +40,12 @@ fn caption_wraps_and_toggling_it_keeps_reading_positions() {
 	let mut engine = LayoutEngine::new();
 	let hidden = engine.layout_with_images(
 		&doc,
-		&styled("[img.caption]\nsource='none'", 180.),
+		&styled("[[rule]]\nwhen=['img','caption']\nsource='none'", 180.),
 		&resources(),
 	);
 	let selection = hidden.select_all(5).unwrap();
 	let options = styled(
-		"[img.caption]\nsource='title'\nalign='left'\ncolor='#123456'\nspace_before=1.0\nsize=0.9",
+		"[[rule]]\nwhen=['img','caption']\nsource='title'\nalign='left'\ncolor='#123456'\nspace_before=1.0\nsize=0.9",
 		180.,
 	);
 	let visible = engine.layout_with_images(&doc, &options, &resources());
@@ -99,25 +99,27 @@ fn caption_sources_and_image_fields_are_strict_and_cascade() {
 	assert_eq!(CaptionSource::Title.text(&spec), None);
 	assert_eq!(CaptionSource::None.text(&spec), None);
 	for rule in [
-		"[img.caption]\nsource='auto'",
-		"[p]\nsource='title'",
-		"[img]\nradius=8",
-		"[img.caption]\nsize=0",
-		"[img]\npadding=-1",
-		"[img.caption]\nalign='justify'",
+		"[[rule]]\nwhen=['img','caption']\nsource='auto'",
+		"[[rule]]\nwhen=['p']\nsource='title'",
+		"[[rule]]\nwhen=['img']\nradius=8",
+		"[[rule]]\nwhen=['img','caption']\nsize=0",
+		"[[rule]]\nwhen=['img']\npadding=-1",
+		"[[rule]]\nwhen=['img','caption']\nalign='justify'",
 	] {
 		assert!(
-			Stylesheet::parse(&format!("format_version=1\nversion=1\n{rule}"))
+			Stylesheet::parse(&format!("format_version=2\nversion=1\n{rule}"))
 				.is_err(),
 			"{rule}"
 		);
 	}
-	let options = styled("[img.caption]\nsource='none'", 200.);
+	let options =
+		styled("[[rule]]\nwhen=['img','caption']\nsource='none'", 200.);
+	let caption = markview_core::style::ConditionSet::of(
+		markview_core::style::Condition::Image,
+	)
+	.with(markview_core::style::Condition::Caption);
 	assert_eq!(
-		options
-			.stylesheet
-			.rule(markview_core::style::Role::ImageCaption)
-			.source,
+		options.stylesheet.rules.get(&caption).unwrap().source,
 		Some(CaptionSource::None)
 	);
 }
@@ -127,7 +129,7 @@ fn image_padding_and_border_reserve_space_and_caption_colors_reuse_layout() {
 	let doc = document::parse("![alt](test.png)");
 	let mut engine = LayoutEngine::new();
 	let options = styled(
-		"[img]\npadding=0.5\nborder_width=2\nalign='left'\n[img.caption]\nsource='alt'",
+		"[[rule]]\nwhen=['img']\npadding=0.5\nborder_width=2\nalign='left'\n[[rule]]\nwhen=['img','caption']\nsource='alt'",
 		120.,
 	);
 	let first = engine.layout_with_images(&doc, &options, &resources());
@@ -135,7 +137,7 @@ fn image_padding_and_border_reserve_space_and_caption_colors_reuse_layout() {
 	assert_eq!(image.x, 11.);
 	assert!(image.x + image.w <= 109.01);
 	let changed = styled(
-		"[img]\npadding=0.5\nborder_width=2\nalign='left'\nborder_color='#ff0000'\n[img.caption]\nsource='alt'\ncolor='#00ff00'",
+		"[[rule]]\nwhen=['img']\npadding=0.5\nborder_width=2\nalign='left'\nborder_color='#ff0000'\n[[rule]]\nwhen=['img','caption']\nsource='alt'\ncolor='#00ff00'",
 		120.,
 	);
 	let second = engine.layout_with_images(&doc, &changed, &resources());
@@ -150,12 +152,12 @@ fn mixed_inline_images_do_not_gain_captions() {
 	let mut engine = LayoutEngine::new();
 	let hidden = engine.layout_with_images(
 		&doc,
-		&styled("[img.caption]\nsource='none'", 400.),
+		&styled("[[rule]]\nwhen=['img','caption']\nsource='none'", 400.),
 		&resources(),
 	);
 	let shown = engine.layout_with_images(
 		&doc,
-		&styled("[img.caption]\nsource='title'", 400.),
+		&styled("[[rule]]\nwhen=['img','caption']\nsource='title'", 400.),
 		&resources(),
 	);
 	assert_eq!(hidden.height, shown.height);
@@ -206,7 +208,7 @@ fn caption_can_be_drag_selected_copied_and_reflowed() {
 	let mut engine = LayoutEngine::new();
 	let first = engine.layout_with_images(
 		&doc,
-		&styled("[img.caption]\nsource='title'", 180.),
+		&styled("[[rule]]\nwhen=['img','caption']\nsource='title'", 180.),
 		&resources(),
 	);
 	let selected = drag_node(&first, 1);
@@ -214,14 +216,17 @@ fn caption_can_be_drag_selected_copied_and_reflowed() {
 	assert_eq!(first.extract_text(selected, 7), caption);
 	let next = engine.layout_with_images(
 		&doc,
-		&styled("[img.caption]\nsource='title'\nsize=1.1", 300.),
+		&styled(
+			"[[rule]]\nwhen=['img','caption']\nsource='title'\nsize=1.1",
+			300.,
+		),
 		&resources(),
 	);
 	let selected = first.rebase_selection(&next, selected, 7, 8).unwrap();
 	assert_eq!(next.extract_text(selected, 8), caption);
 	let hidden = engine.layout_with_images(
 		&doc,
-		&styled("[img.caption]\nsource='none'", 300.),
+		&styled("[[rule]]\nwhen=['img','caption']\nsource='none'", 300.),
 		&resources(),
 	);
 	assert!(next.rebase_selection(&hidden, selected, 8, 9).is_none());
@@ -239,7 +244,7 @@ fn placeholder_text_and_elided_errors_have_character_hit_geometry() {
 		images.entries.get_mut("test.png").unwrap().error = Some(reason.into());
 		let snapshot = LayoutEngine::new().layout_with_images(
 			&doc,
-			&styled("[img.caption]\nsource='none'", 500.),
+			&styled("[[rule]]\nwhen=['img','caption']\nsource='none'", 500.),
 			&images,
 		);
 		let selected = drag_node(&snapshot, 0);
@@ -258,7 +263,8 @@ fn placeholder_updates_preserve_surrounding_text_selection_but_clear_changed_tex
  {
 	use markview_core::text::{Affinity, TextPosition, TextSelection};
 	let doc = document::parse("![alt](test.png) trailing words");
-	let options = styled("[img.caption]\nsource='none'", 500.);
+	let options =
+		styled("[[rule]]\nwhen=['img','caption']\nsource='none'", 500.);
 	let mut engine = LayoutEngine::new();
 	let pending = engine.layout(&doc, &options);
 	let text = &pending.blocks[0].layout.text[0].text;

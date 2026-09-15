@@ -4,7 +4,7 @@ use crate::{
 	document::{CellAlign, Inline, InlineKind, TextStyle},
 	linebreak::{self},
 	scene::{BlockLayout, Draw, LinkRect, Overflow, Rect},
-	style::{ColorField, Decoration, Role},
+	style::{ColorField, Condition, Decoration},
 	text::{TextCluster, TextNode},
 };
 impl BlockContext<'_> {
@@ -69,7 +69,7 @@ impl BlockContext<'_> {
 			});
 		let align = if only_images && align == CellAlign::Left {
 			opts.stylesheet
-				.rule(Role::Image)
+				.rule(Condition::Image)
 				.align
 				.map(Into::into)
 				.unwrap_or(CellAlign::Center)
@@ -239,13 +239,16 @@ impl BlockContext<'_> {
 					cursor += c.width;
 					continue;
 				}
+				// The cluster's real advance: justification stretches spaces and
+				// CJK glue, and backgrounds and decorations must cover it too.
+				let advance = c.width + flex * ratio;
 				if !range.is_empty() {
 					out.text[node].push(TextCluster {
 						range,
 						rect: Rect {
 							x: cursor,
 							y: y_cursor,
-							w: (c.width + flex * ratio).max(1.0),
+							w: advance.max(1.0),
 							h: height,
 						},
 						rtl: c.rtl,
@@ -289,7 +292,7 @@ impl BlockContext<'_> {
 						Rect {
 							x: cursor,
 							y: baseline - c.ascent - 1.0,
-							w: c.width,
+							w: advance,
 							h: c.ascent + c.descent + 2.0,
 						},
 						background,
@@ -300,7 +303,7 @@ impl BlockContext<'_> {
 						math: math.clone(),
 						paint: appearance
 							.paint
-							.cascade(Role::Math, ColorField::Color),
+							.cascade(Condition::Math, ColorField::Color),
 						x: cursor,
 						y: baseline - math.ascent,
 					});
@@ -320,13 +323,13 @@ impl BlockContext<'_> {
 							} else {
 								baseline + size * 0.12
 							},
-							w: c.width,
+							w: advance,
 							h: 1.0,
 						},
 						appearance.paint,
 					));
 				}
-				cursor += c.width + flex * ratio;
+				cursor += advance;
 			}
 			if let Some((url, x0)) = link {
 				out.links.push(LinkRect {
@@ -360,11 +363,20 @@ impl BlockContext<'_> {
 		}
 		if only_images && p.images.len() == 1 {
 			let image = p.images.values().next().unwrap();
-			let rule = opts.stylesheet.rule(Role::ImageCaption).clone();
+			let captioned = opts
+				.stylesheet
+				.text(&self.shaper.appearance, Condition::Image);
+			let captioned =
+				opts.stylesheet.text(&captioned, Condition::Caption);
+			let rule = opts
+				.stylesheet
+				.element_rule(captioned.chain, Condition::Caption);
 			if let Some(caption) = rule.source.unwrap_or_default().text(image) {
 				let old = self.shaper.appearance.clone();
-				self.shaper.appearance =
-					opts.stylesheet.text(&old, Role::ImageCaption);
+				self.shaper.appearance = opts.stylesheet.text(
+					&opts.stylesheet.text(&old, Condition::Image),
+					Condition::Caption,
+				);
 				let caption_size = opts.font_size * self.shaper.appearance.size;
 				y_cursor += rule.space_before.unwrap_or(0.) * opts.font_size;
 				let mut decoration = BlockLayout::default();

@@ -14,7 +14,7 @@ use crate::{
 pub(super) use controls::panel_rect;
 use controls::{controls, draw_controls, toolbar_controls};
 use footer::draw_footer;
-use markview_core::style::{ColorField as C, Role};
+use markview_core::style::{ColorField as C, Condition};
 use std::time::Instant;
 use styles::{draw_styles, style_controls};
 
@@ -70,7 +70,7 @@ impl Chrome<'_> {
 					w: width,
 					h: TOP,
 				},
-				Paint::Styled(Role::Toolbar, C::Background),
+				Paint::Styled(Condition::Toolbar, C::Background),
 			),
 			Draw::Rect(
 				Rect {
@@ -79,7 +79,7 @@ impl Chrome<'_> {
 					w: width,
 					h: 1.0,
 				},
-				Paint::Styled(Role::Toolbar, C::BorderColor),
+				Paint::Styled(Condition::Toolbar, C::BorderColor),
 			),
 			Draw::Rect(
 				Rect {
@@ -88,7 +88,7 @@ impl Chrome<'_> {
 					w: width,
 					h: BOTTOM,
 				},
-				Paint::Styled(Role::Toolbar, C::Background),
+				Paint::Styled(Condition::Toolbar, C::Background),
 			),
 		];
 		out.extend(self.tab_bar().draw_tabs());
@@ -140,7 +140,7 @@ impl Chrome<'_> {
 				26.0,
 				x,
 				y,
-				Paint::Styled(Role::Ui, C::Color),
+				Paint::Styled(Condition::Ui, C::Color),
 			));
 			out.extend(self.ui.label(
 				if self.session.path.is_some()
@@ -153,7 +153,7 @@ impl Chrome<'_> {
 				15.0,
 				x,
 				y + 38.0,
-				Paint::Styled(Role::Ui, C::Muted),
+				Paint::Styled(Condition::Ui, C::Muted),
 			));
 		}
 		if let Some(bar) = self.scrollbar {
@@ -167,12 +167,12 @@ impl Chrome<'_> {
 			let (track, thumb) = bar.bars(held || bar.hit(x, y));
 			out.push(Draw::Rect(
 				track,
-				Paint::Styled(Role::Scrollbar, C::Track),
+				Paint::Styled(Condition::Scrollbar, C::Track),
 			));
 			out.push(Draw::Rect(
 				thumb,
 				Paint::Styled(
-					Role::Scrollbar,
+					Condition::Scrollbar,
 					if held || bar.on_thumb(x, y) {
 						C::ThumbHover
 					} else {

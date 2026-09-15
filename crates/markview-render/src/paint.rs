@@ -171,7 +171,8 @@ impl Renderer {
 			),
 			Draw::Box {
 				rect,
-				role,
+				chain,
+				condition,
 				radius,
 				border,
 				left_only,
@@ -182,8 +183,9 @@ impl Renderer {
 					..*rect
 				};
 				let background = self.color(
-					Paint::Styled(
-						*role,
+					Paint::Scoped(
+						*chain,
+						*condition,
 						markview_core::style::ColorField::Background,
 					),
 					view.theme,
@@ -191,8 +193,9 @@ impl Renderer {
 				self.geometry.rounded(rect, *radius, background, clip, view);
 				if *border > 0. {
 					let color = self.color(
-						Paint::Styled(
-							*role,
+						Paint::Scoped(
+							*chain,
+							*condition,
 							markview_core::style::ColorField::BorderColor,
 						),
 						view.theme,

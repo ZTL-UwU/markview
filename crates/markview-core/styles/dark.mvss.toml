@@ -1,69 +1,87 @@
-format_version = 1
+format_version = 2
 version = 1
 
 [meta]
 name = "Dark"
 description = "Markview's default dark stylesheet"
 
-[body]
+[[rule]]
+when = ["body"]
 color = "#DDE2E7"
 background = "#20252B"
 
-[link]
+[[rule]]
+when = ["link"]
 color = "#8FB9DD"
 
-[link.hover]
+[[rule]]
+when = ["link", "hover"]
 color = "#B7D8F2"
 
-[code]
+[[rule]]
+when = ["code"]
 background = "#2A3139"
 
-[code_block]
+[[rule]]
+when = ["code_block"]
 background = "#2A3139"
 theme = "base16-ocean.dark"
 
-[code_block.label]
+[[rule]]
+when = ["code_block", "label"]
 color = "#98A5B1"
 
-[blockquote]
+[[rule]]
+when = ["blockquote"]
 border_color = "#8FB9DD"
 
-[list.marker]
+[[rule]]
+when = ["marker"]
 color = "#98A5B1"
 
-[task_marker]
+[[rule]]
+when = ["task_marker"]
 color = "#8FB9DD"
 background = "#20252B"
 border_color = "#8FB9DD"
 
-[table]
+[[rule]]
+when = ["table", "cell"]
 border_color = "#414C58"
 
-[table.header]
+[[rule]]
+when = ["table", "header"]
 background = "#2A3139"
 
-[hr]
+[[rule]]
+when = ["hr"]
 color = "#414C58"
 
-[selection]
+[[rule]]
+when = ["selection"]
 background = "#8FB9DD47"
 
-[img]
+[[rule]]
+when = ["img"]
 border_color = "#414C58"
 
-[img.caption]
+[[rule]]
+when = ["img", "caption"]
 color = "#98A5B1"
 
-[img.placeholder]
+[[rule]]
+when = ["img", "placeholder"]
 color = "#98A5B1"
 background = "#2A3139"
 
-[scrollbar]
+[[rule]]
+when = ["scrollbar"]
 track = "#414C58"
 thumb = "#98A5B1"
 thumb_hover = "#8FB9DD"
 
-[ui]
+[[rule]]
+when = ["ui"]
 color = "#DDE2E7"
 background = "#20252B"
 muted = "#98A5B1"
@@ -71,10 +89,12 @@ accent = "#8FB9DD"
 border_color = "#414C58"
 error = "#F39A9A"
 
-[ui.panel]
+[[rule]]
+when = ["ui", "panel"]
 background = "#252E38F0"
 
-[ui.button]
+[[rule]]
+when = ["ui", "button"]
 background = "#2A3139"
 hover_background = "#35414F"
 active_background = "#414C58"

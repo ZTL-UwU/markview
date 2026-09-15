@@ -40,7 +40,7 @@ fn measured_tabs_fit_minimum_window_and_styles_invalidate_widths() {
 		assert!((rect.w - minimum).abs() < 0.001);
 	}
 	let sheet = markview_core::style::Stylesheet::parse(
-		"format_version=1\nversion=1\n[ui.toolbar]\nsize = 1.5\n",
+		"format_version=2\nversion=1\n[[rule]]\nwhen=['ui','toolbar']\nsize = 1.5\n",
 	)
 	.unwrap();
 	ui.set_stylesheet(std::sync::Arc::new(sheet));

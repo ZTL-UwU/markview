@@ -1,5 +1,5 @@
 //! Shared font shaping for document text, labels and renderer fallbacks.
-use crate::style::{Font, Role, Stylesheet, TextAppearance, Variant};
+use crate::style::{Condition, Font, Stylesheet, TextAppearance, Variant};
 use crate::{
 	document::TextStyle,
 	scene::{Draw, Glyph, Paint},
@@ -98,7 +98,7 @@ impl TextShaper {
 			context: LayoutContext::new(),
 			stylesheet: Stylesheet::bundled(false),
 			appearance: Stylesheet::bundled(false)
-				.text(&TextAppearance::default(), Role::Body),
+				.text(&TextAppearance::default(), Condition::Body),
 			faces: HashMap::new(),
 			font_sets: Vec::new(),
 			warned_fallbacks: HashSet::new(),
@@ -108,7 +108,7 @@ impl TextShaper {
 		self.faces.clear();
 		self.font_sets.clear();
 		self.appearance =
-			stylesheet.text(&TextAppearance::default(), Role::Body);
+			stylesheet.text(&TextAppearance::default(), Condition::Body);
 		self.stylesheet = stylesheet;
 	}
 	pub fn validate_stylesheet(
@@ -459,6 +459,8 @@ impl TextShaper {
 		clusters
 	}
 
+	/// A reader-chrome label. The appearance comes from `paint`'s condition,
+	/// which is always a UI condition for chrome.
 	pub fn label(
 		&mut self,
 		text: &str,
@@ -468,30 +470,57 @@ impl TextShaper {
 		paint: Paint,
 	) -> Vec<Draw> {
 		let old = self.appearance.clone();
-		let role = match paint {
-			Paint::Styled(r, _) => r,
-			_ => Role::Ui,
+		let condition = match paint {
+			Paint::Styled(c, _) => c,
+			Paint::Scoped(_, c, _) => c,
+			_ => Condition::Ui,
 		};
-		let parent = if role.ui() {
-			self.stylesheet.text(&TextAppearance::default(), Role::Ui)
+		let parent = if condition.ui() {
+			self.stylesheet
+				.text(&TextAppearance::default(), Condition::Ui)
 		} else {
 			old.clone()
 		};
-		self.appearance = self.stylesheet.text(&parent, role);
+		let appearance = self.stylesheet.text(&parent, condition);
 		let paint = if matches!(
 			paint,
 			Paint::Styled(_, crate::style::ColorField::Color)
 		) {
-			self.appearance.paint
+			appearance.paint
 		} else {
 			paint
 		};
-		let decoration = self.appearance.decoration.clone();
-		let clusters = self.shape(text, &[], size * self.appearance.size, true);
+		let background = (!condition.ui()).then_some(Paint::Styled(
+			condition,
+			crate::style::ColorField::Background,
+		));
+		self.label_with(text, size, x, baseline, &appearance, paint, background)
+	}
+
+	/// Shape a label with an appearance that the caller already resolved, so a
+	/// text element keeps its own typography instead of the UI default.
+	#[expect(
+		clippy::too_many_arguments,
+		reason = "Label text, geometry, appearance and paints are independent inputs"
+	)]
+	pub fn label_with(
+		&mut self,
+		text: &str,
+		size: f32,
+		x: f32,
+		baseline: f32,
+		appearance: &TextAppearance,
+		paint: Paint,
+		background: Option<Paint>,
+	) -> Vec<Draw> {
+		let old = self.appearance.clone();
+		self.appearance = appearance.clone();
+		let decoration = appearance.decoration.clone();
+		let clusters = self.shape(text, &[], size * appearance.size, true);
 		self.appearance = old;
 		let mut draws = Vec::new();
 		let mut cursor = x;
-		if !role.ui() {
+		if let Some(background) = background {
 			let width = clusters.iter().map(|c| c.width).sum();
 			let ascent = clusters.iter().map(|c| c.ascent).fold(0., f32::max);
 			let descent = clusters.iter().map(|c| c.descent).fold(0., f32::max);
@@ -502,7 +531,7 @@ impl TextShaper {
 					w: width,
 					h: ascent + descent,
 				},
-				Paint::Styled(role, crate::style::ColorField::Background),
+				background,
 			));
 		}
 		for c in clusters {

@@ -49,7 +49,7 @@ markview ss install paper.mvss.toml
 markview document.md --style paper
 ```
 
-格式和支持的语义角色见[样式表指南](docs/stylesheets.md)。
+格式和支持的语义条件见[样式表指南](docs/stylesheets.md)。
 
 ## 开发
 

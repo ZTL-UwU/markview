@@ -24,54 +24,100 @@ The filename without `.mvss.toml` is the style ID. Only the first directory leve
 
 In the Settings panel, **Styles…** lets you enable, disable, and reorder styles. The leftmost selected style has the highest priority. `--style` replaces the session's selected list and is not saved. It cannot be combined with `--light` or `--dark`.
 
-## Minimal valid file
+## A minimal valid file
 
 ```toml
-format_version = 1
+format_version = 2
 version = 1
 
 [meta]
 name = "Paper"
 description = "Warm reading theme"
 
-[body]
+[[rule]]
+when = ["body"]
 color = "#292524"
 background = "#FAF8F2"
 font = [{ family = "serif" }]
 line_height = 1.65
 
-[link]
+[[rule]]
+when = ["link"]
 color = "#315D86"
 decoration = ["underline"]
 ```
 
-`format_version` describes the file format; `version` is the installed theme's revision. Both are required and `version` must be a non-negative integer. `meta` is optional and does not participate in styling.
+`format_version` describes the file format and must be `2`. `version` is the installed theme's revision, a non-negative integer. `meta` is optional and does not participate in styling.
 
-## Roles and properties
+## Rules and conditions
 
-Roles are semantic names, not CSS selectors. Supported roles are:
+A stylesheet is a list of `[[rule]]` tables. Each rule names the **conditions** it requires in `when` and then declares visual fields:
 
-| Area | Roles |
+```toml
+[[rule]]
+when = ["code"]
+font = [{ family = "monospace" }]
+size = 0.9
+background = "#EFF1F3"
+
+[[rule]]
+when = ["strong", "code"]
+weight = 400
+```
+
+A condition is one fact about a rendered run: the blocks that contain it, the part of a block it belongs to, the inline markup it carries, and its state. The vocabulary is closed:
+
+| Area | Conditions |
 | --- | --- |
-| Blocks | `body`, `p`, `h1`–`h6`, `blockquote`, `list`, `enum`, `list_item`, `footnote` |
-| Inline content | `em`, `strong`, `strong_em`, `link`, `code`, `del`, `sup` |
-| Code and media | `code_block`, `code_block.label`, `img`, `img.caption`, `img.placeholder` |
-| Tables and marks | `table`, `table.header`, `table.cell`, `list.marker`, `task_marker`, `hr`, `math` |
-| Reader and UI | `selection`, `scrollbar`, `ui`, `ui.toolbar`, `ui.statusbar`, `ui.panel`, `ui.button` |
+| Blocks | `body`, `p`, `h1`–`h6`, `blockquote`, `list`, `enum`, `list_item`, `footnote`, `code_block`, `table`, `hr` |
+| Block parts | `label`, `cell`, `header`, `marker`, `task_marker`, `caption`, `placeholder` |
+| Inline | `em`, `strong`, `link`, `del`, `sup`, `code`, `math` |
+| State | `hover`, `error` |
+| Surfaces and UI | `img`, `selection`, `scrollbar`, `ui`, `toolbar`, `statusbar`, `panel`, `button` |
 
-Text roles accept `color`, `font`, `weight`, `size`, and `decoration`. Block roles additionally accept `line_height`, `space_before`, and `space_after`; block containers accept `padding`, `border_color`, `border_width`, and `radius`. The `list` role styles bullet lists and `enum` styles ordered lists. Both also accept `indent`, the extra inset of the list in base-size units, which adds to the reader's paragraph indent. Inline roles do not accept container geometry.
+A rule applies to a run when **every** condition it names holds for that run. The order inside `when` is not part of the rule's identity, so `["strong", "code"]` and `["code", "strong"]` are the same rule, and a file that declares both is rejected as a duplicate. There are no selectors, variables, `inherit`, `unset`, imports, scripts, or remote resources.
 
-Special properties include `align` on images, `source` on captions, scrollbar colors and thicknesses, and `shadow`/`scrim` on `ui`. The UI theme controls appearance, not widget layout or dimensions.
+## Composition
 
-Colors are sRGB `#RRGGBB` or `#RRGGBBAA`; `body.background` must be opaque. Sizes and spacing are positive or non-negative finite values. `size` is relative to the reader's base size, `line_height` is a multiple of the role's size, and spacing/padding use base-size units. Border width and radius use logical pixels. Unknown roles, fields, types, and enum values are errors.
+Because a rule names a set of conditions, combinations need no new vocabulary. Inline code inside a heading, a quote, or strong text is written directly:
+
+```toml
+[[rule]]
+when = ["code"]
+background = "#EFF1F3"
+
+[[rule]]
+when = ["strong", "code"]
+weight = 400
+
+[[rule]]
+when = ["h2", "code"]
+background = "#E8EEF5"
+
+[[rule]]
+when = ["blockquote", "code"]
+background = "#F3F0EA"
+```
+
+Conditions are entered as layout descends into the document, and a rule joins once its last condition is present. Later conditions therefore override earlier ones, in this order: containing blocks, the block itself, its part, inline markup, then state. Within one step, a rule that names more conditions overrides a rule that names fewer, so `["strong", "code"]` overrides both `["strong"]` and `["code"]`, and every field it leaves out still comes from them.
+
+This means a theme only writes the exceptions it cares about. A field omitted by every matching rule falls back to the containing block, and ultimately to `["body"]`.
+
+A block's own box is the exception. Its background, border, padding, spacing, and size come only from rules that name the element or a specialization of it, so `["p"]` styles a paragraph in any context and `["blockquote", "p"]` styles a paragraph in a quote, while a container's `["blockquote"] background` never paints its children. Inline runs keep the same split: a background must come from a rule that names inline markup, so `["code"]` and `["blockquote", "code"]` paint a code chip but `["blockquote"]` does not.
+
+## Fields
+
+Text conditions accept `color`, `font`, `weight`, `size`, `decoration`, and `background`. Block conditions additionally accept `line_height`, `space_before`, `space_after`, and the container fields `padding`, `border_color`, `border_width`, and `radius`. Parts that are not containers—`label`, `marker`, `task_marker`, `caption`, and `placeholder`—reject container geometry. `indent` styles `list` and `enum`; `align` and `source` belong to image conditions; `show` belongs to `error`.
+
+Special properties include `theme` on `["code_block"]` alone, scrollbar colors and thicknesses on `["scrollbar"]`, `muted`/`accent`/`error`/`shadow`/`scrim` on `["ui"]`, and `hover_background`/`active_background`/`disabled_color`/`focus_color` on `["ui", "button"]`. The UI theme controls appearance, not widget layout or dimensions.
+
+Colors are sRGB `#RRGGBB` or `#RRGGBBAA`; `body.background` must be opaque. Sizes and spacing are positive or non-negative finite values. `size` is relative to the reader's base size, `line_height` is a multiple of the condition's size, and spacing/padding use base-size units. Border width and radius use logical pixels. Unknown conditions, fields, types, and enum values are errors.
 
 ## Cascade and inheritance
 
-Stylesheets are merged from left to right by role. A field omitted by a higher-priority style remains from the lower-priority style; arrays replace the entire lower-priority array. The final role is then applied with document-text inheritance.
+Stylesheets are merged from left to right by condition set. A field omitted by a higher-priority style remains from the lower-priority style; arrays replace the entire lower-priority array.
 
-Text properties inherit from the containing block. Backgrounds, borders, padding, and spacing do not inherit. There are no variables, selectors, `inherit`, `unset`, imports, scripts, or remote resources.
-
-`strong_em` combines the `em` font with the `strong` weight unless it explicitly supplies a value. Inline conflicts resolve by semantic precedence: block, emphasis, link, deletion, superscript, then code.
+Text properties inherit from the containing block. Backgrounds, borders, padding, and spacing do not inherit.
 
 ## Fonts and fallback
 
@@ -82,7 +128,8 @@ Fonts are named by ordered candidates. A candidate must reference an installed f
 id = "reading"
 lookfor = ["Noto Serif", "Georgia"]
 
-[body]
+[[rule]]
+when = ["body"]
 font = [{ family = "reading" }]
 ```
 
@@ -91,23 +138,25 @@ Use `variant = "normal"`, `"italic"`, or `"oblique"`, and an optional weight fro
 ## Images and captions
 
 ```toml
-[img]
+[[rule]]
+when = ["img"]
 align = "center"
 padding = 0.3
 border_width = 1.0
 border_color = "#D8DEE3"
 
-[img.caption]
+[[rule]]
+when = ["img", "caption"]
 source = "title_or_alt"
 align = "center"
 size = 0.8
 color = "#69747E"
 ```
 
-`align` affects image-only paragraphs. Images mixed with text remain inline and never create text wrapping on their sides. A single image paragraph may show a caption, using `title_or_alt`, `title`, `alt`, or `none`; multiple-image and mixed paragraphs do not show captions. `img.placeholder` styles loading and error text.
+`align` affects image-only paragraphs. Images mixed with text remain inline and never create text wrapping on their sides. A single image paragraph may show a caption, using `title_or_alt`, `title`, `alt`, or `none`; multiple-image and mixed paragraphs do not show captions. `["img", "placeholder"]` styles loading and error text.
 
 ## Live updates and safe authoring
 
 Markview watches installed styles and settings. A valid save applies automatically; an invalid stylesheet leaves the previous effective style active. Color-only changes can repaint cached layout, while font and geometry changes reflow it.
 
-Keep a style focused on visual decisions, use semantic roles rather than trying to imitate CSS, and test it with both Latin and CJK text, formulas, code, tables, links, selections, and missing images. Do not rely on a font that is unavailable on the target machine; provide an ordered fallback list.
+Keep a style focused on visual decisions, name the conditions a run really has rather than trying to imitate CSS, and test it with both Latin and CJK text, formulas, code, tables, links, selections, and missing images. Do not rely on a font that is unavailable on the target machine; provide an ordered fallback list.

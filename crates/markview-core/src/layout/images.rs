@@ -1,7 +1,7 @@
 use super::{BlockContext, fitted_range};
 use crate::{
 	scene::{BlockLayout, Draw, Paint, Rect},
-	style::{ColorField, Role},
+	style::{ColorField, Condition},
 	text::TextCluster,
 };
 impl BlockContext<'_> {
@@ -37,7 +37,7 @@ impl BlockContext<'_> {
 	}
 
 	pub(super) fn image_insets(&self, size: f32, available: f32) -> [f32; 4] {
-		let rule = self.shaper.stylesheet.rule(Role::Image);
+		let rule = self.shaper.stylesheet.rule(Condition::Image);
 		let base = size / self.shaper.appearance.size;
 		let border = rule.border_width.unwrap_or(0.);
 		let mut inset = rule
@@ -77,12 +77,13 @@ impl BlockContext<'_> {
 		});
 		out.draws.push(Draw::Box {
 			rect,
-			role: Role::Image,
+			chain: Condition::Image.chain(),
+			condition: Condition::Image,
 			radius: 0.,
 			border: self
 				.shaper
 				.stylesheet
-				.rule(Role::Image)
+				.rule(Condition::Image)
 				.border_width
 				.unwrap_or(0.)
 				.min(inset[1])
@@ -93,12 +94,13 @@ impl BlockContext<'_> {
 			let rect = content;
 			out.draws.push(Draw::Rect(
 				rect,
-				Paint::Styled(Role::ImagePlaceholder, ColorField::Background),
+				Paint::Styled(Condition::Placeholder, ColorField::Background),
 			));
 			let old = self.shaper.appearance.clone();
 			let base = size / old.size;
+			let image = self.shaper.stylesheet.text(&old, Condition::Image);
 			self.shaper.appearance =
-				self.shaper.stylesheet.text(&old, Role::ImagePlaceholder);
+				self.shaper.stylesheet.text(&image, Condition::Placeholder);
 			let label_size = base * self.shaper.appearance.size;
 			let label = self.shaper.fit(&text, base, (rect.w - 12.).max(0.));
 			if rect.h >= label_size + 12. && rect.w > 12. {
@@ -124,7 +126,7 @@ impl BlockContext<'_> {
 					base,
 					rect.x + 6.,
 					rect.y + 6. + label_size,
-					Paint::Styled(Role::ImagePlaceholder, ColorField::Color),
+					Paint::Styled(Condition::Placeholder, ColorField::Color),
 				));
 			}
 			self.shaper.appearance = old;

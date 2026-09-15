@@ -2,7 +2,7 @@ use super::{BlockContext, LayoutOptions};
 use crate::{
 	document::{CellAlign, RichText},
 	scene::{BlockLayout, Draw, Overflow, Paint, Rect},
-	style::Role,
+	style::Condition,
 };
 impl BlockContext<'_> {
 	#[expect(
@@ -24,23 +24,25 @@ impl BlockContext<'_> {
 			return 0.;
 		}
 		let table_appearance = self.shaper.appearance.clone();
-		let table_rule = opts.stylesheet.rule(Role::Table).clone();
 		let mut minima = vec![48_f32; n];
 		let mut preferred = vec![48_f32; n];
-		let cell_rule = |header: bool| {
-			let mut rule = opts.stylesheet.rule(Role::TableCell).clone();
-			if header {
-				rule.overlay(opts.stylesheet.rule(Role::TableHeader));
-			}
-			rule
-		};
 		let cell_appearance = |header: bool| {
-			let base = opts.stylesheet.text(&table_appearance, Role::TableCell);
+			let base = opts.stylesheet.text(&table_appearance, Condition::Cell);
 			if header {
-				opts.stylesheet.text(&base, Role::TableHeader)
+				opts.stylesheet.text(&base, Condition::Header)
 			} else {
 				base
 			}
+		};
+		let cell_rule = |header: bool| {
+			let chain = cell_appearance(header).chain;
+			let mut rule = opts.stylesheet.element_rule(chain, Condition::Cell);
+			if header {
+				rule.overlay(
+					&opts.stylesheet.element_rule(chain, Condition::Header),
+				);
+			}
+			rule
 		};
 		for (row_index, row) in rows.iter().enumerate() {
 			self.shaper.appearance = cell_appearance(row_index == 0);
@@ -88,9 +90,9 @@ impl BlockContext<'_> {
 		for (row_index, row) in rows.iter().enumerate() {
 			let header = row_index == 0;
 			let role = if header {
-				Role::TableHeader
+				Condition::Header
 			} else {
-				Role::TableCell
+				Condition::Cell
 			};
 			let rule = cell_rule(header);
 			let pad = rule
@@ -101,6 +103,7 @@ impl BlockContext<'_> {
 			let before = rule.space_before.unwrap_or(0.) * opts.font_size;
 			let after = rule.space_after.unwrap_or(0.) * opts.font_size;
 			self.shaper.appearance = cell_appearance(header);
+			let cell_chain = self.shaper.appearance.chain;
 			let size = opts.font_size * self.shaper.appearance.size;
 			let mut left = x;
 			let mut row_height = size * self.shaper.appearance.line_height
@@ -148,12 +151,10 @@ impl BlockContext<'_> {
 						w,
 						h: (row_height - before - after).max(0.),
 					},
-					role,
+					chain: cell_chain,
+					condition: role,
 					radius: rule.radius.unwrap_or(0.),
-					border: rule
-						.border_width
-						.or(table_rule.border_width)
-						.unwrap_or(0.),
+					border: rule.border_width.unwrap_or(0.),
 					left_only: false,
 				};
 			}

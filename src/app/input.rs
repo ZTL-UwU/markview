@@ -5,7 +5,7 @@ use gpui::{
 };
 use std::time::Instant;
 
-use super::{App, BOTTOM, TOP, modifiers_from};
+use super::{App, BOTTOM, TOP, modifiers_from, window_frame};
 
 impl App {
 	pub(super) fn on_mouse_move(
@@ -16,8 +16,10 @@ impl App {
 	) {
 		self.interaction.modifiers = modifiers_from(event.modifiers);
 		let old = self.interaction.cursor;
-		self.interaction.cursor =
-			(f32::from(event.position.x), f32::from(event.position.y));
+		self.interaction.cursor = self.frame.to_content(
+			f32::from(event.position.x),
+			f32::from(event.position.y),
+		);
 		self.move_tab_drag();
 		self.drag_scrollbar();
 		self.update_drag();
@@ -58,10 +60,14 @@ impl App {
 
 	pub(super) fn on_middle_down(
 		&mut self,
-		_: &MouseDownEvent,
+		event: &MouseDownEvent,
 		_: &mut gpui::Window,
 		cx: &mut gpui::Context<Self>,
 	) {
+		self.interaction.cursor = self.frame.to_content(
+			f32::from(event.position.x),
+			f32::from(event.position.y),
+		);
 		if self.interaction.panel_open {
 			return;
 		}
@@ -82,11 +88,24 @@ impl App {
 		cx: &mut gpui::Context<Self>,
 	) {
 		self.interaction.modifiers = modifiers_from(event.modifiers);
+		self.interaction.cursor = self.frame.to_content(
+			f32::from(event.position.x),
+			f32::from(event.position.y),
+		);
 		self.tab_strip.cancel_drag();
 		self.readers.session.select_all_pending = false;
 		// A new press always ends a drag left over from a release the
 		// platform swallowed outside the window.
 		self.interaction.scrollbar = None;
+		if window_frame::resize_edge(
+			event.position,
+			window.viewport_size(),
+			self.frame,
+		)
+		.is_some()
+		{
+			return;
+		}
 		if let Some(index) = (!self.interaction.panel_open)
 			.then(|| self.tab_close_at_cursor())
 			.flatten()

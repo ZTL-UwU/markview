@@ -31,6 +31,13 @@ pub(super) struct GpuiPainter {
 	bytes: u64,
 	pointer: Option<(f32, f32)>,
 	frame_images: markview_core::image::ImageSnapshot,
+	origin: (f32, f32),
+	content: (f32, f32),
+	radius: f32,
+	round_tl: bool,
+	round_tr: bool,
+	round_bl: bool,
+	round_br: bool,
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
@@ -65,11 +72,38 @@ impl GpuiPainter {
 			bytes: 0,
 			pointer: None,
 			frame_images: Default::default(),
+			origin: (0.0, 0.0),
+			content: (0.0, 0.0),
+			radius: 0.0,
+			round_tl: false,
+			round_tr: false,
+			round_bl: false,
+			round_br: false,
 		}
 	}
 
 	pub(super) fn set_pointer(&mut self, pointer: Option<(f32, f32)>) {
 		self.pointer = pointer;
+	}
+
+	pub(super) fn set_frame(
+		&mut self,
+		origin: (f32, f32),
+		content: (f32, f32),
+		radius: f32,
+		tiling: gpui::Tiling,
+	) {
+		self.origin = origin;
+		self.content = content;
+		self.radius = radius;
+		self.round_tl =
+			super::window_frame::corner_radius(tiling, true, true) > 0.0;
+		self.round_tr =
+			super::window_frame::corner_radius(tiling, true, false) > 0.0;
+		self.round_bl =
+			super::window_frame::corner_radius(tiling, false, true) > 0.0;
+		self.round_br =
+			super::window_frame::corner_radius(tiling, false, false) > 0.0;
 	}
 
 	pub(super) fn set_stylesheet(
@@ -133,24 +167,72 @@ impl GpuiPainter {
 		}
 	}
 
-	fn bounds(rect: Rect) -> Bounds<Pixels> {
+	fn bounds(&self, rect: Rect) -> Bounds<Pixels> {
 		Bounds {
-			origin: point(px(rect.x), px(rect.y)),
+			origin: point(
+				px(self.origin.0 + rect.x),
+				px(self.origin.1 + rect.y),
+			),
 			size: size(px(rect.w.max(0.0)), px(rect.h.max(0.0))),
 		}
 	}
 
-	fn mask(clip: Rect) -> ContentMask<Pixels> {
+	fn mask(&self, clip: Rect) -> ContentMask<Pixels> {
 		ContentMask {
-			bounds: Self::bounds(clip),
+			bounds: self.bounds(clip),
 		}
 	}
 
-	fn fill_rect(window: &mut Window, rect: Rect, color: Rgba, clip: Rect) {
+	fn radii(&self, rect: Rect) -> Corners<Pixels> {
+		let r = px(self.radius);
+		let zero = px(0.0);
+		let (w, h) = self.content;
+		Corners {
+			top_left: if self.round_tl && rect.x <= 0.5 && rect.y <= 0.5 {
+				r
+			} else {
+				zero
+			},
+			top_right: if self.round_tr
+				&& rect.x + rect.w >= w - 0.5
+				&& rect.y <= 0.5
+			{
+				r
+			} else {
+				zero
+			},
+			bottom_right: if self.round_br
+				&& rect.x + rect.w >= w - 0.5
+				&& rect.y + rect.h >= h - 0.5
+			{
+				r
+			} else {
+				zero
+			},
+			bottom_left: if self.round_bl
+				&& rect.x <= 0.5
+				&& rect.y + rect.h >= h - 0.5
+			{
+				r
+			} else {
+				zero
+			},
+		}
+	}
+
+	fn fill_rect(
+		&self,
+		window: &mut Window,
+		rect: Rect,
+		color: Rgba,
+		clip: Rect,
+	) {
 		let Some(rect) = rect.intersect(clip) else {
 			return;
 		};
-		window.paint_quad(fill(Self::bounds(rect), color));
+		window.paint_quad(
+			fill(self.bounds(rect), color).corner_radii(self.radii(rect)),
+		);
 	}
 
 	pub(super) fn paint(
@@ -184,10 +266,10 @@ impl GpuiPainter {
 			w: view.width as f32 / view.scale,
 			h: view.height as f32 / view.scale,
 		};
-		window.paint_quad(fill(
-			Self::bounds(full),
-			self.color(Paint::Background, view.theme),
-		));
+		window.paint_quad(
+			fill(self.bounds(full), self.color(Paint::Background, view.theme))
+				.corner_radii(self.radii(full)),
+		);
 		let clip = view.viewport().clip();
 		let metrics = self.stylesheet.as_ref().map_or_else(
 			|| markview_core::scene::ScrollbarMetrics::OVERFLOW,
@@ -317,7 +399,7 @@ impl GpuiPainter {
 				view.revision,
 				view.scroll..view.scroll + clip.h,
 			) {
-				Self::fill_rect(
+				self.fill_rect(
 					window,
 					view.viewport().window_rect(rect),
 					color,
@@ -329,7 +411,7 @@ impl GpuiPainter {
 			self.draw(window, draw, dx, dy, clip, view, hovered);
 		}
 		for (rect, color) in tracks {
-			Self::fill_rect(window, rect, color, clip);
+			self.fill_rect(window, rect, color, clip);
 		}
 		for draw in overlay {
 			self.draw(window, draw, 0.0, 0.0, full, view, false);
@@ -363,16 +445,13 @@ impl GpuiPainter {
 					..*rect
 				};
 				if let Some(clip) = clip.intersect(rect) {
-					window.with_content_mask(
-						Some(Self::mask(clip)),
-						|window| {
-							for draw in draws {
-								self.draw(
-									window, draw, dx, dy, clip, view, hovered,
-								);
-							}
-						},
-					);
+					window.with_content_mask(Some(self.mask(clip)), |window| {
+						for draw in draws {
+							self.draw(
+								window, draw, dx, dy, clip, view, hovered,
+							);
+						}
+					});
 				}
 			}
 			Draw::Rect(r, paint) => {
@@ -384,7 +463,7 @@ impl GpuiPainter {
 					},
 					view.theme,
 				);
-				Self::fill_rect(
+				self.fill_rect(
 					window,
 					Rect {
 						x: r.x + dx,
@@ -416,9 +495,9 @@ impl GpuiPainter {
 					Paint::Scoped(*chain, *condition, *fill),
 					view.theme,
 				);
-				window.with_content_mask(Some(Self::mask(clip)), |window| {
+				window.with_content_mask(Some(self.mask(clip)), |window| {
 					window.paint_quad(quad(
-						Self::bounds(rect),
+						self.bounds(rect),
 						Corners::all(px(*radius)),
 						background,
 						Edges::all(px(0.0)),
@@ -431,7 +510,7 @@ impl GpuiPainter {
 							view.theme,
 						);
 						if *left_only {
-							Self::fill_rect(
+							self.fill_rect(
 								window,
 								Rect { w: *border, ..rect },
 								color,
@@ -439,7 +518,7 @@ impl GpuiPainter {
 							);
 						} else {
 							window.paint_quad(quad(
-								Self::bounds(rect),
+								self.bounds(rect),
 								Corners::all(px(*radius)),
 								Rgba {
 									a: 0.0,
@@ -519,9 +598,9 @@ impl GpuiPainter {
 			return;
 		}
 		let image = bitmap.image.clone();
-		window.with_content_mask(Some(Self::mask(clip)), |window| {
+		window.with_content_mask(Some(self.mask(clip)), |window| {
 			let _ = window.paint_image(
-				Self::bounds(rect),
+				self.bounds(rect),
 				Corners::all(px(0.0)),
 				image,
 				0,
@@ -670,9 +749,9 @@ impl GpuiPainter {
 		else {
 			return;
 		};
-		window.with_content_mask(Some(Self::mask(clip)), |window| {
+		window.with_content_mask(Some(self.mask(clip)), |window| {
 			let _ = window.paint_image(
-				Self::bounds(rect),
+				self.bounds(rect),
 				Corners::all(px(0.0)),
 				image,
 				0,
@@ -783,7 +862,7 @@ impl GpuiPainter {
 					if *dashed {
 						let mut left = 0.0;
 						while left < rect.w {
-							Self::fill_rect(
+							self.fill_rect(
 								window,
 								Rect {
 									x: rect.x + left,
@@ -796,7 +875,7 @@ impl GpuiPainter {
 							left += size * 0.5;
 						}
 					} else {
-						Self::fill_rect(window, rect, color, clip);
+						self.fill_rect(window, rect, color, clip);
 					}
 				}
 				DisplayItem::Rect {
@@ -805,7 +884,7 @@ impl GpuiPainter {
 					width,
 					height,
 					color,
-				} => Self::fill_rect(
+				} => self.fill_rect(
 					window,
 					Rect {
 						x: x + *rx as f32 * size,
@@ -851,6 +930,8 @@ impl GpuiPainter {
 		color: Rgba,
 		clip: Rect,
 	) {
+		let ox = self.origin.0;
+		let oy = self.origin.1;
 		let mut builder = if fill {
 			PathBuilder::fill()
 		} else {
@@ -862,14 +943,14 @@ impl GpuiPainter {
 			match *command {
 				PathCommand::MoveTo { x: px, y: py } => {
 					builder.move_to(point(
-						gpui::px(x + px as f32 * size),
-						gpui::px(y + py as f32 * size),
+						gpui::px(ox + x + px as f32 * size),
+						gpui::px(oy + y + py as f32 * size),
 					));
 				}
 				PathCommand::LineTo { x: px, y: py } => {
 					builder.line_to(point(
-						gpui::px(x + px as f32 * size),
-						gpui::px(y + py as f32 * size),
+						gpui::px(ox + x + px as f32 * size),
+						gpui::px(oy + y + py as f32 * size),
 					));
 				}
 				PathCommand::QuadTo {
@@ -880,12 +961,12 @@ impl GpuiPainter {
 				} => {
 					builder.curve_to(
 						point(
-							gpui::px(x + px as f32 * size),
-							gpui::px(y + py as f32 * size),
+							gpui::px(ox + x + px as f32 * size),
+							gpui::px(oy + y + py as f32 * size),
 						),
 						point(
-							gpui::px(x + x1 as f32 * size),
-							gpui::px(y + y1 as f32 * size),
+							gpui::px(ox + x + x1 as f32 * size),
+							gpui::px(oy + y + y1 as f32 * size),
 						),
 					);
 				}
@@ -899,16 +980,16 @@ impl GpuiPainter {
 				} => {
 					builder.cubic_bezier_to(
 						point(
-							gpui::px(x + px as f32 * size),
-							gpui::px(y + py as f32 * size),
+							gpui::px(ox + x + px as f32 * size),
+							gpui::px(oy + y + py as f32 * size),
 						),
 						point(
-							gpui::px(x + x1 as f32 * size),
-							gpui::px(y + y1 as f32 * size),
+							gpui::px(ox + x + x1 as f32 * size),
+							gpui::px(oy + y + y1 as f32 * size),
 						),
 						point(
-							gpui::px(x + x2 as f32 * size),
-							gpui::px(y + y2 as f32 * size),
+							gpui::px(ox + x + x2 as f32 * size),
+							gpui::px(oy + y + y2 as f32 * size),
 						),
 					);
 				}
@@ -921,7 +1002,7 @@ impl GpuiPainter {
 		let Ok(path) = builder.build() else {
 			return;
 		};
-		window.with_content_mask(Some(Self::mask(clip)), |window| {
+		window.with_content_mask(Some(self.mask(clip)), |window| {
 			window.paint_path(path, color);
 		});
 	}

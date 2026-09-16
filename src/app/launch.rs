@@ -8,8 +8,9 @@ use crate::{
 };
 use anyhow::{Result, bail};
 use gpui::{
-	AppContext, Application, Bounds, TitlebarOptions, WindowBounds,
-	WindowDecorations, WindowOptions, point, px, size,
+	AppContext, Application, Bounds, TitlebarOptions,
+	WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowOptions,
+	point, px, size,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -153,6 +154,11 @@ pub(super) fn run() -> Result<()> {
 						traffic_light_position: Some(point(px(9.0), px(9.0))),
 					}),
 					window_decorations: Some(WindowDecorations::Client),
+					window_background: if cfg!(target_os = "linux") {
+						WindowBackgroundAppearance::Transparent
+					} else {
+						WindowBackgroundAppearance::Opaque
+					},
 					..Default::default()
 				},
 				{

@@ -16,6 +16,7 @@ mod tab_strip;
 mod tabs;
 mod ui;
 mod viewport;
+mod window_frame;
 use crate::cli::LaunchOptions;
 use crate::state::{Command, InteractionState};
 use crate::{
@@ -138,6 +139,7 @@ struct App {
 	width: f32,
 	height: f32,
 	scale: f32,
+	frame: window_frame::FramePad,
 	painter: gpui_paint::GpuiPainter,
 	focus: FocusHandle,
 	needs_frame: bool,
@@ -179,7 +181,7 @@ impl App {
 				let _ = events.send_blocking(Event::StylesChanged);
 			})
 		});
-		window.set_client_inset(gpui::px(5.0));
+		window_frame::prepare(window);
 		let focus = cx.focus_handle();
 		focus.focus(window);
 		let appearance =
@@ -193,14 +195,16 @@ impl App {
 		painter.set_stylesheet(preferences.values.stylesheet.clone());
 		let size = window.viewport_size();
 		let scale = window.scale_factor();
-		let width = f32::from(size.width);
-		let height = f32::from(size.height);
+		let frame = window_frame::pad(window);
+		let width = (f32::from(size.width) - frame.left - frame.right).max(1.0);
+		let height =
+			(f32::from(size.height) - frame.top - frame.bottom).max(1.0);
 		eprintln!(
 			"Display scale (DPR): {scale:.3}; framebuffer: {}×{} physical px; window: {:.1}×{:.1} logical px",
-			(width * scale).round() as u32,
-			(height * scale).round() as u32,
-			width,
-			height,
+			(f32::from(size.width) * scale).round() as u32,
+			(f32::from(size.height) * scale).round() as u32,
+			f32::from(size.width),
+			f32::from(size.height),
 		);
 		Self {
 			interaction: InteractionState::default(),
@@ -230,6 +234,7 @@ impl App {
 			width: width.max(1.0),
 			height: height.max(1.0),
 			scale,
+			frame,
 			painter,
 			focus,
 			needs_frame: true,
@@ -346,8 +351,13 @@ impl App {
 	fn sync_window(&mut self, window: &Window) {
 		let size = window.viewport_size();
 		let scale = window.scale_factor();
-		self.width = f32::from(size.width).max(1.0);
-		self.height = f32::from(size.height).max(1.0);
+		self.frame = window_frame::pad(window);
+		self.width =
+			(f32::from(size.width) - self.frame.left - self.frame.right)
+				.max(1.0);
+		self.height =
+			(f32::from(size.height) - self.frame.top - self.frame.bottom)
+				.max(1.0);
 		self.os_theme = system_theme(window);
 		self.chrome_frame = ChromeFrame::from_window(window);
 		if (self.scale - scale).abs() > 0.001 {
@@ -410,14 +420,25 @@ impl gpui::Render for App {
 		window: &mut Window,
 		cx: &mut Context<Self>,
 	) -> impl gpui::IntoElement {
+		window_frame::prepare(window);
 		self.sync_window(window);
 		if window.window_title() != self.title {
 			window.set_window_title(&self.title);
 		}
-		use gpui::{DispatchPhase, HitboxBehavior, canvas, div, prelude::*};
+		use gpui::{
+			Bounds, Decorations, DispatchPhase, HitboxBehavior, canvas, div,
+			point, prelude::*, px, transparent_black,
+		};
 		let reader = cx.entity();
-		div()
-			.id("markview")
+		let decorations = window.window_decorations();
+		let rounding = px(window_frame::radius());
+		let shadow = px(window_frame::shadow_size());
+		let border = px(window_frame::border_size());
+		let dark = matches!(
+			window.appearance(),
+			WindowAppearance::Dark | WindowAppearance::VibrantDark
+		);
+		let content = div()
 			.size_full()
 			.track_focus(&self.focus)
 			.occlude()
@@ -465,6 +486,95 @@ impl gpui::Render for App {
 					},
 				)
 				.size_full(),
-			)
+			);
+		div()
+			.id("markview")
+			.size_full()
+			.bg(transparent_black())
+			.map(|root| match decorations {
+				Decorations::Server => root.child(content),
+				Decorations::Client { tiling } => {
+					let inner = content
+						.border_color(window_frame::border_color(dark))
+						.when(!(tiling.top || tiling.right), |el| {
+							el.rounded_tr(rounding)
+						})
+						.when(!(tiling.top || tiling.left), |el| {
+							el.rounded_tl(rounding)
+						})
+						.when(!(tiling.bottom || tiling.right), |el| {
+							el.rounded_br(rounding)
+						})
+						.when(!(tiling.bottom || tiling.left), |el| {
+							el.rounded_bl(rounding)
+						})
+						.when(!tiling.top, |el| el.border_t(border))
+						.when(!tiling.bottom, |el| el.border_b(border))
+						.when(!tiling.left, |el| el.border_l(border))
+						.when(!tiling.right, |el| el.border_r(border))
+						.when(!tiling.is_tiled(), |el| {
+							el.shadow(window_frame::shadow())
+						});
+					root.when(!(tiling.top || tiling.right), |el| {
+						el.rounded_tr(rounding)
+					})
+					.when(!(tiling.top || tiling.left), |el| {
+						el.rounded_tl(rounding)
+					})
+					.when(!(tiling.bottom || tiling.right), |el| {
+						el.rounded_br(rounding)
+					})
+					.when(!(tiling.bottom || tiling.left), |el| {
+						el.rounded_bl(rounding)
+					})
+					.when(!tiling.top, |el| el.pt(shadow))
+					.when(!tiling.bottom, |el| el.pb(shadow))
+					.when(!tiling.left, |el| el.pl(shadow))
+					.when(!tiling.right, |el| el.pr(shadow))
+					.child(
+						canvas(
+							|_bounds, window, _| {
+								window.insert_hitbox(
+									Bounds::new(
+										point(px(0.0), px(0.0)),
+										window.viewport_size(),
+									),
+									HitboxBehavior::Normal,
+								)
+							},
+							move |_bounds, hitbox, window, _| {
+								let size = window.viewport_size();
+								let pos = window.mouse_position();
+								let pad = window_frame::pad(window);
+								if let Some(edge) =
+									window_frame::resize_edge(pos, size, pad)
+								{
+									window.set_cursor_style(
+										window_frame::resize_cursor(edge),
+										&hitbox,
+									);
+								}
+							},
+						)
+						.size_full()
+						.absolute(),
+					)
+					.on_mouse_move(|_, window, _| window.refresh())
+					.on_mouse_down(gpui::MouseButton::Left, {
+						move |event, window, _| {
+							let size = window.viewport_size();
+							let pad = window_frame::pad(window);
+							if let Some(edge) = window_frame::resize_edge(
+								event.position,
+								size,
+								pad,
+							) {
+								window.start_window_resize(edge);
+							}
+						}
+					})
+					.child(inner)
+				}
+			})
 	}
 }

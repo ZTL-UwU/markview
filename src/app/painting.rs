@@ -6,7 +6,7 @@ use crate::{
 };
 use gpui::{Hitbox, Window};
 
-use super::{App, BOTTOM, TOP};
+use super::{App, BOTTOM, TOP, window_frame};
 
 impl App {
 	fn document_view(&self) -> View<'_> {
@@ -48,6 +48,16 @@ impl App {
 		}
 		self.painter.set_pointer(
 			(!self.interaction.panel_open).then_some(self.interaction.cursor),
+		);
+		let tiling = match window.window_decorations() {
+			gpui::Decorations::Client { tiling } => tiling,
+			gpui::Decorations::Server => gpui::Tiling::tiled(),
+		};
+		self.painter.set_frame(
+			self.frame.origin(),
+			(self.width, self.height),
+			window_frame::radius(),
+			tiling,
 		);
 		if let Some(specs) = window.gpu_specs()
 			&& !specs.device_name.is_empty()

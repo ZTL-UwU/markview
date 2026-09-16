@@ -31,10 +31,10 @@ use gpui::{
 };
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
-/// Zed title bar (`h_32` + 1px), then the tab strip.
+/// Zed title bar (`h_32` + 1px). Tabs share this row with window controls.
 pub(super) const TITLE: f32 = 33.0;
-pub(super) const TAB: f32 = 32.0;
-pub(super) const TOP: f32 = TITLE + TAB;
+pub(super) const TAB: f32 = TITLE - 1.0;
+pub(super) const TOP: f32 = TITLE;
 pub(super) const BOTTOM: f32 = 24.0;
 
 #[derive(Clone, Copy, Default)]

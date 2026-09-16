@@ -116,7 +116,7 @@ impl App {
 			if !self.pointer_in_panel() {
 				self.action(Command::Settings);
 			}
-		} else if self.interaction.cursor.1 < super::TITLE {
+		} else if self.interaction.cursor.1 < super::TOP {
 			if self.interaction.click_count(Instant::now()) >= 2 {
 				window.zoom_window();
 			} else {

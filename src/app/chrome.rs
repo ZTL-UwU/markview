@@ -5,7 +5,7 @@ mod footer;
 mod gpu_tests;
 mod styles;
 mod tabs;
-use super::{Button, ChromeFrame, TAB, TITLE, TOP};
+use super::{Button, ChromeFrame, TITLE, TOP};
 use crate::{
 	layout::{Draw, Paint, Rect, Scrollbar, TextShaper},
 	settings::ReaderSettings,
@@ -73,32 +73,16 @@ impl Chrome<'_> {
 			Draw::Rect(
 				Rect {
 					x: 0.0,
-					y: TITLE,
-					w: width,
-					h: TAB,
-				},
-				Paint::Styled(Condition::Toolbar, C::Background),
-			),
-			Draw::Rect(
-				Rect {
-					x: 0.0,
-					y: TITLE - 1.0,
+					y: TOP - 1.0,
 					w: width,
 					h: 1.0,
 				},
 				Paint::Styled(Condition::Statusbar, C::BorderColor),
 			),
-			Draw::Rect(
-				Rect {
-					x: 0.0,
-					y: TOP - 1.0,
-					w: width,
-					h: 1.0,
-				},
-				Paint::Styled(Condition::Toolbar, C::BorderColor),
-			),
 		];
-		out.extend(self.title_label());
+		if self.tabs.is_empty() {
+			out.extend(self.title_label());
+		}
 		out.extend(self.tab_bar().draw_tabs());
 		let warning = if self.error
 			&& self
@@ -244,6 +228,7 @@ impl Chrome<'_> {
 			active_tab: self.active_tab,
 			cursor: self.interaction.cursor,
 			width: self.width,
+			frame: self.frame,
 		}
 	}
 }

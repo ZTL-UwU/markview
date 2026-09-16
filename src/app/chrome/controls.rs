@@ -213,7 +213,7 @@ pub(super) fn toolbar_controls(
 	buttons
 }
 
-pub(super) fn toolbar_left(
+pub(in crate::app) fn toolbar_left(
 	shaper: &mut TextShaper,
 	width: f32,
 	frame: ChromeFrame,

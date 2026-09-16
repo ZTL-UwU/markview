@@ -1,5 +1,6 @@
+use super::controls::{title_bar_leading, toolbar_left};
 use crate::app::tab_strip::{TabLayout, TabStrip};
-use crate::app::{TAB, TITLE, TOP};
+use crate::app::{ChromeFrame, TAB, TITLE};
 use crate::layout::{Draw, Paint, Rect, TextShaper};
 use crate::state::ReaderTab;
 use markview_core::style::{ColorField as C, Condition};
@@ -12,15 +13,18 @@ pub(in crate::app) struct TabBar<'a> {
 	pub(super) active_tab: usize,
 	pub(super) cursor: (f32, f32),
 	pub(super) width: f32,
+	pub(super) frame: ChromeFrame,
 }
 impl TabBar<'_> {
 	pub(in crate::app) fn layout(&mut self) -> TabLayout {
+		let left = title_bar_leading();
+		let right = toolbar_left(self.ui, self.width, self.frame);
 		TabLayout::new(
 			Rect {
-				x: 0.0,
-				y: TITLE,
-				w: self.width,
-				h: TAB,
+				x: left,
+				y: 0.0,
+				w: (right - left - 8.0).max(0.0),
+				h: TITLE,
 			},
 			self.widths,
 			self.strip.scroll,
@@ -53,7 +57,7 @@ impl TabBar<'_> {
 			}
 			let active = index == self.active_tab;
 			let hovered = rect.contains(self.cursor.0, self.cursor.1);
-			rect.h = if active { TAB } else { TAB - 1.0 };
+			rect.h = if active { TITLE } else { TAB };
 			if active {
 				out.push(Draw::Rect(
 					rect,
@@ -132,7 +136,7 @@ impl TabBar<'_> {
 					x: layout.viewport.x
 						+ (layout.viewport.w - w) * layout.scroll
 							/ layout.max_scroll,
-					y: TOP - 3.0,
+					y: TITLE - 3.0,
 					w,
 					h: 2.0,
 				},

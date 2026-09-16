@@ -127,7 +127,7 @@ impl App {
 			self.interaction.reset_clicks();
 			self.interaction.focus = Some(button.action);
 			self.interaction.pressed = Some(button.action);
-			if !self.window_command(button.action, window) {
+			if !self.window_command(button.action) {
 				self.action(button.action);
 			}
 		} else if self.interaction.panel_open {
@@ -363,7 +363,7 @@ impl App {
 				"enter" => {
 					if let Some(action) = self.interaction.focus
 						&& self.buttons().iter().any(|b| b.action == action)
-						&& !self.window_command(action, window)
+						&& !self.window_command(action)
 					{
 						self.action(action);
 					}

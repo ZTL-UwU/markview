@@ -32,26 +32,12 @@ fn sanitize_filename(title: &str) -> String {
 }
 
 impl App {
-	pub(super) fn window_command(
-		&mut self,
-		action: Command,
-		window: &gpui::Window,
-	) -> bool {
-		match action {
-			Command::Minimize => {
-				window.minimize_window();
-				true
-			}
-			Command::Maximize => {
-				window.zoom_window();
-				true
-			}
-			Command::CloseWindow => {
-				self.pending_quit = true;
-				true
-			}
-			_ => false,
+	pub(super) fn window_command(&mut self, action: Command) -> bool {
+		if action != Command::CloseWindow {
+			return false;
 		}
+		self.pending_quit = true;
+		true
 	}
 
 	pub(super) fn action(&mut self, action: Command) {
@@ -232,7 +218,6 @@ impl App {
 				self.redraw();
 				return;
 			}
-			Command::Minimize | Command::Maximize => return,
 			Command::CloseWindow => {
 				self.pending_quit = true;
 				return;

@@ -41,8 +41,6 @@ pub(super) const BOTTOM: f32 = 24.0;
 #[derive(Clone, Copy, Default)]
 pub(super) struct ChromeFrame {
 	client: bool,
-	minimize: bool,
-	maximize: bool,
 }
 
 impl ChromeFrame {
@@ -50,30 +48,20 @@ impl ChromeFrame {
 		if cfg!(target_os = "macos") {
 			return Self::default();
 		}
-		if cfg!(target_os = "windows") {
-			return Self {
-				client: true,
-				minimize: true,
-				maximize: true,
-			};
-		}
-		let controls = window.window_controls();
 		Self {
-			client: matches!(
-				window.window_decorations(),
-				Decorations::Client { .. }
-			),
-			minimize: controls.minimize,
-			maximize: controls.maximize,
+			client: cfg!(target_os = "windows")
+				|| matches!(
+					window.window_decorations(),
+					Decorations::Client { .. }
+				),
 		}
 	}
 
 	pub(super) fn control_width(self) -> f32 {
-		if !self.client {
-			0.0
-		} else {
+		if self.client {
 			chrome::WINDOW_CONTROL
-				* (1 + u8::from(self.minimize) + u8::from(self.maximize)) as f32
+		} else {
+			0.0
 		}
 	}
 }

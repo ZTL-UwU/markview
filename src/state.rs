@@ -55,8 +55,6 @@ pub(crate) enum Command {
 	StylesFolder,
 	SelectTab(usize),
 	CloseTab(usize),
-	Minimize,
-	Maximize,
 	CloseWindow,
 }
 

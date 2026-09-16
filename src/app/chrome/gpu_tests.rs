@@ -79,7 +79,7 @@ fn settings_and_selection_frame() -> Result<()> {
 			&mut TextShaper::new(),
 			&settings,
 			&interaction,
-			ChromeFrame::default(),
+			ChromeFrame { client: true },
 			width,
 			height,
 		));
@@ -209,7 +209,7 @@ fn tab_strip_frames_clip_overflow_at_fractional_dpi() -> Result<()> {
 			active_tab: 3.min(count - 1),
 			cursor: (150.0, 10.0),
 			width,
-			frame: ChromeFrame::default(),
+			frame: ChromeFrame { client: true },
 		};
 		let viewport = bar.layout().viewport;
 		let tabs = bar.draw_tabs();
@@ -226,7 +226,7 @@ fn tab_strip_frames_clip_overflow_at_fractional_dpi() -> Result<()> {
 			&mut ui,
 			&settings,
 			&InteractionState::default(),
-			ChromeFrame::default(),
+			ChromeFrame { client: true },
 			width,
 			100.0,
 		);

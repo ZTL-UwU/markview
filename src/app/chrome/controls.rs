@@ -240,20 +240,15 @@ fn window_controls(width: f32, frame: ChromeFrame) -> Vec<Button> {
 	if !frame.client {
 		return Vec::new();
 	}
-	let mut x = width - frame.control_width();
-	let mut out = Vec::new();
-	for (enabled, label, action) in [
-		(frame.minimize, "–", Command::Minimize),
-		(frame.maximize, "□", Command::Maximize),
-		(true, "×", Command::CloseWindow),
-	] {
-		if !enabled {
-			continue;
-		}
-		out.push(btn(label, action, x, 0.0, WINDOW_CONTROL, TITLE, false));
-		x += WINDOW_CONTROL;
-	}
-	out
+	vec![btn(
+		"×",
+		Command::CloseWindow,
+		width - WINDOW_CONTROL,
+		0.0,
+		WINDOW_CONTROL,
+		TITLE,
+		false,
+	)]
 }
 
 pub(super) fn draw_controls(
@@ -381,10 +376,7 @@ pub(super) fn paint_button(
 		.contains(interaction.cursor.0, interaction.cursor.1);
 	let focused = interaction.focus == Some(button.action);
 	let pressed = interaction.pressed == Some(button.action);
-	let window_control = matches!(
-		button.action,
-		Command::Minimize | Command::Maximize | Command::CloseWindow
-	);
+	let window_control = button.action == Command::CloseWindow;
 	let fill = if pressed {
 		Some(C::ActiveBackground)
 	} else if hovered && button.action == Command::CloseWindow {
@@ -524,24 +516,15 @@ mod tests {
 		}
 	}
 	#[test]
-	fn client_chrome_places_window_controls_on_the_title_bar() {
+	fn client_chrome_places_only_the_close_control() {
 		let mut shaper = TextShaper::new();
-		let frame = ChromeFrame {
-			client: true,
-			minimize: true,
-			maximize: true,
-		};
+		let frame = ChromeFrame { client: true };
 		let buttons = toolbar_controls(&mut shaper, 800.0, frame);
 		assert_eq!(
 			buttons.iter().map(|b| b.action).collect::<Vec<_>>(),
-			vec![
-				Command::Open,
-				Command::Settings,
-				Command::Minimize,
-				Command::Maximize,
-				Command::CloseWindow
-			]
+			vec![Command::Open, Command::Settings, Command::CloseWindow]
 		);
+		assert_eq!(frame.control_width(), WINDOW_CONTROL);
 		assert!(
 			(buttons.last().unwrap().rect.x + WINDOW_CONTROL - 800.0).abs()
 				< 0.01

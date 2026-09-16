@@ -277,7 +277,7 @@ impl App {
 	pub(super) fn on_key_down(
 		&mut self,
 		event: &KeyDownEvent,
-		window: &mut gpui::Window,
+		_: &mut gpui::Window,
 		cx: &mut gpui::Context<Self>,
 	) {
 		self.interaction.modifiers = modifiers_from(event.keystroke.modifiers);

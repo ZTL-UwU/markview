@@ -1018,6 +1018,12 @@ impl GpuiPainter {
 	}
 }
 
+struct GlyphOrigin {
+	x: f32,
+	y: f32,
+	phase: u8,
+}
+
 fn bitmap_size_quarters(font_size: f32, scale: f32) -> u32 {
 	(font_size * scale * 4.0).round().max(1.0) as u32
 }
@@ -1029,23 +1035,6 @@ fn glyph_origin(x: f32, y: f32, scale: f32) -> GlyphOrigin {
 		y: (y * scale).round(),
 		phase: phased_x.rem_euclid(4.0) as u8,
 	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::bitmap_size_quarters;
-
-	#[test]
-	fn coverage_glyphs_rasterize_at_physical_size() {
-		assert_eq!(bitmap_size_quarters(16.0, 1.0), 64);
-		assert_eq!(bitmap_size_quarters(16.0, 2.0), 128);
-	}
-}
-
-struct GlyphOrigin {
-	x: f32,
-	y: f32,
-	phase: u8,
 }
 
 fn unpremultiply(rgba: &mut [u8]) {
@@ -1066,4 +1055,15 @@ fn rgba_bits(color: Rgba) -> u32 {
 	let b = (color.b * 255.0).round() as u32;
 	let a = (color.a * 255.0).round() as u32;
 	(r << 24) | (g << 16) | (b << 8) | a
+}
+
+#[cfg(test)]
+mod tests {
+	use super::bitmap_size_quarters;
+
+	#[test]
+	fn coverage_glyphs_rasterize_at_physical_size() {
+		assert_eq!(bitmap_size_quarters(16.0, 1.0), 64);
+		assert_eq!(bitmap_size_quarters(16.0, 2.0), 128);
+	}
 }

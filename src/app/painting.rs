@@ -4,30 +4,18 @@ use crate::{
 	benchmark,
 	render::{Renderer, View},
 };
-use anyhow::Result;
-use std::time::Instant;
-use winit::event_loop::ActiveEventLoop;
+use gpui::{Hitbox, Window};
 
-use super::{App, BOTTOM, Event, TOP};
+use super::{App, BOTTOM, TOP, window_frame};
+
 impl App {
-	pub(super) fn render(
-		&mut self,
-		event_loop: &ActiveEventLoop,
-	) -> Result<()> {
-		let Some(window) = self.window.clone() else {
-			return Ok(());
-		};
-		let size = window.inner_size();
-		if size.width == 0 || size.height == 0 {
-			return Ok(());
-		}
-		let overlay = self.overlay();
-		let (width, _, scale) = self.dimensions();
-		let view = View {
+	fn document_view(&self) -> View<'_> {
+		let (width, height, scale) = self.dimensions();
+		View {
 			selection: self.interaction.selection,
 			revision: self.readers.session.accepted_revision,
-			width: size.width,
-			height: size.height,
+			width: (width * scale).round() as u32,
+			height: (height * scale).round() as u32,
 			scale,
 			scroll: self.readers.session.scroll,
 			left: ((width - self.readers.session.snapshot.width) / 2.0)
@@ -46,37 +34,74 @@ impl App {
 					ScrollbarAxis::Document => None,
 				},
 			),
-		};
-		let Some(renderer) = &mut self.renderer else {
-			return Ok(());
-		};
-		renderer.set_pointer(
+		}
+	}
+
+	pub(super) fn paint_frame(
+		&mut self,
+		window: &mut Window,
+		hitbox: &Hitbox,
+		cx: &mut gpui::Context<Self>,
+	) {
+		if self.width < 1.0 || self.height < 1.0 {
+			return;
+		}
+		self.painter.set_pointer(
 			(!self.interaction.panel_open).then_some(self.interaction.cursor),
 		);
-		let (frame, suboptimal) = match renderer.acquire(window.clone())? {
-			crate::render::FrameStatus::Ready(frame, suboptimal) => {
-				(frame, suboptimal)
-			}
-			crate::render::FrameStatus::Retry(delay) => {
-				self.retry_at = Some(Instant::now() + delay);
-				return Ok(());
-			}
-			crate::render::FrameStatus::Occluded => return Ok(()),
+		let tiling = match window.window_decorations() {
+			gpui::Decorations::Client { tiling } => tiling,
+			gpui::Decorations::Server => gpui::Tiling::tiled(),
 		};
-		let target = frame.texture.create_view(&Default::default());
-		let submission = renderer.render(
-			&self.readers.session.snapshot,
-			&view,
-			&overlay,
-			&target,
-		)?;
-		window.pre_present_notify();
-		frame.present();
-		if suboptimal {
-			renderer.resize(size.width, size.height);
+		self.painter.set_frame(
+			self.frame.origin(),
+			(self.width, self.height),
+			window_frame::radius(),
+			tiling,
+		);
+		if let Some(specs) = window.gpu_specs()
+			&& !specs.device_name.is_empty()
+		{
+			self.compositor = specs.device_name;
+		}
+		let overlay = self.overlay();
+		let cursor = self.cursor_style();
+		{
+			let (width, height, scale) = self.dimensions();
+			let view = View {
+				selection: self.interaction.selection,
+				revision: self.readers.session.accepted_revision,
+				width: (width * scale).round() as u32,
+				height: (height * scale).round() as u32,
+				scale,
+				scroll: self.readers.session.scroll,
+				left: ((width - self.readers.session.snapshot.width) / 2.0)
+					.max(20.0),
+				top: TOP + 10.0,
+				bottom: BOTTOM + 10.0,
+				theme: self.preferences.values.theme,
+				horizontal: &self.readers.session.horizontal,
+				hovered_link: self.interaction.hover.as_deref(),
+				hovered_overflow: self.interaction.hover_overflow,
+				held_overflow: self.interaction.scrollbar.and_then(|drag| {
+					match drag.target {
+						ScrollbarAxis::Overflow { block, overflow } => {
+							Some((block, overflow))
+						}
+						ScrollbarAxis::Document => None,
+					}
+				}),
+			};
+			self.painter.paint(
+				window,
+				&self.readers.session.snapshot,
+				&view,
+				&overlay,
+				hitbox,
+				cursor,
+			);
 		}
 		if let Some(update) = self.first_frame.take() {
-			renderer.wait(Some(submission.clone()))?;
 			eprintln!(
 				"open→GPU complete: {:.2} ms (read {:.2}, parse {:.2}, layout {:.2}); reused {} blocks; {}",
 				update.requested.elapsed().as_secs_f64() * 1000.0,
@@ -84,51 +109,55 @@ impl App {
 				update.parse_ms,
 				update.layout_ms,
 				self.readers.session.snapshot.reused,
-				renderer.adapter_name
+				self.compositor
 			);
 			if self.args.mode == Mode::Smoke {
 				eprintln!(
 					"process app entry→readable GPU frame: {:.2} ms; memory {}",
 					self.started.elapsed().as_secs_f64() * 1000.0,
-					serde_json::to_string(&benchmark::memory())?
+					serde_json::to_string(&benchmark::memory())
+						.unwrap_or_else(|_| "{}".into())
 				);
-				if let Some(output) = &self.args.output {
-					if let Some(parent) =
-						output.parent().filter(|p| !p.as_os_str().is_empty())
-					{
-						std::fs::create_dir_all(parent)?;
-					}
-					let texture = renderer.offscreen(size.width, size.height);
-					let s = renderer.render(
-						&self.readers.session.snapshot,
-						&view,
-						&overlay,
-						&texture.create_view(&Default::default()),
-					)?;
-					renderer.wait(Some(s))?;
-					renderer.save_png(&texture, output)?;
+				if let Some(output) = self.args.output.clone()
+					&& let Err(error) = self.dump_png(&output, &overlay)
+				{
+					self.fail(format!("Smoke PNG failed: {error:#}"), cx);
+					return;
 				}
 			}
 		}
-		// Exercise completion too, while the diagnostic above records only the
-		// first readable frame (which may contain a prefix of the document).
 		if self.args.mode == Mode::Smoke
 			&& self.readers.session.snapshot_complete
+			&& self.readers.session.displayed_version
+				== self.readers.session.version
 		{
-			renderer.wait(Some(submission))?;
-			event_loop.exit();
+			self.pending_quit = true;
+			cx.defer(|cx| cx.quit());
 		}
-		Ok(())
 	}
-	pub(super) fn gpu(&mut self) -> Result<()> {
-		let mut renderer =
-			pollster::block_on(Renderer::new(self.window.clone()))?;
+
+	fn dump_png(
+		&self,
+		output: &std::path::Path,
+		overlay: &[markview_core::scene::Draw],
+	) -> anyhow::Result<()> {
+		let view = self.document_view();
+		let mut renderer = pollster::block_on(Renderer::new(None))?;
 		renderer.set_stylesheet(self.preferences.values.stylesheet.clone());
-		let proxy = self.proxy.clone();
-		renderer.on_device_lost(move || {
-			let _ = proxy.send_event(Event::DeviceLost);
-		});
-		self.renderer = Some(renderer);
+		if let Some(parent) =
+			output.parent().filter(|p| !p.as_os_str().is_empty())
+		{
+			std::fs::create_dir_all(parent)?;
+		}
+		let texture = renderer.offscreen(view.width, view.height);
+		let submission = renderer.render(
+			&self.readers.session.snapshot,
+			&view,
+			overlay,
+			&texture.create_view(&Default::default()),
+		)?;
+		renderer.wait(Some(submission))?;
+		renderer.save_png(&texture, output)?;
 		Ok(())
 	}
 }

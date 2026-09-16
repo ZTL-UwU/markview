@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::tab_metrics::TabMetrics;
+use crate::app::{ChromeFrame, TITLE};
 
 #[test]
 fn compact_labels_keep_two_whole_graphemes_and_fit_the_measured_space() {
@@ -33,6 +34,7 @@ fn measured_tabs_fit_minimum_window_and_styles_invalidate_widths() {
 		active_tab: 0,
 		cursor: (0.0, 0.0),
 		width: 500.0,
+		frame: ChromeFrame::default(),
 	};
 	let layout = bar.layout();
 	assert!(layout.max_scroll > 0.0);
@@ -48,4 +50,79 @@ fn measured_tabs_fit_minimum_window_and_styles_invalidate_widths() {
 	assert!(metrics.widths[0].1 > old[0].1);
 	metrics.sync(&mut ui, &[]);
 	assert!(metrics.widths.is_empty());
+}
+
+#[test]
+fn tabs_share_the_title_bar_and_close_follows_hover() {
+	let mut ui = TextShaper::new();
+	let tabs = vec![
+		ReaderTab::new("one.md".into()),
+		ReaderTab::new("two.md".into()),
+	];
+	let mut metrics = TabMetrics::default();
+	metrics.sync(&mut ui, &tabs);
+	let strip = TabStrip::default();
+	let mut idle = TabBar {
+		ui: &mut ui,
+		strip: &strip,
+		widths: &metrics.widths,
+		tabs: &tabs,
+		active_tab: 0,
+		cursor: (0.0, 0.0),
+		width: 800.0,
+		frame: ChromeFrame::default(),
+	};
+	let layout = idle.layout();
+	assert!(layout.viewport.y.abs() < 0.01);
+	assert!((layout.viewport.h - TITLE).abs() < 0.01);
+	assert!(
+		layout.viewport.x >= super::super::controls::title_bar_leading() - 0.01
+	);
+	let right = super::super::controls::toolbar_left(
+		idle.ui,
+		800.0,
+		ChromeFrame::default(),
+	);
+	assert!(layout.viewport.x + layout.viewport.w <= right - 7.99);
+	assert!(
+		(layout.rects[1].x - (layout.rects[0].x + layout.rects[0].w)).abs()
+			< 0.01
+	);
+	let idle_close = close_glyph_count(&idle.draw_tabs(), &layout.rects);
+	assert!(idle_close[0] > 0);
+	assert_eq!(idle_close[1], 0);
+	let mut hovered = TabBar {
+		ui: &mut ui,
+		strip: &strip,
+		widths: &metrics.widths,
+		tabs: &tabs,
+		active_tab: 0,
+		cursor: (layout.rects[1].x + 4.0, 4.0),
+		width: 800.0,
+		frame: ChromeFrame::default(),
+	};
+	let hovered_close = close_glyph_count(&hovered.draw_tabs(), &layout.rects);
+	assert!(hovered_close[0] > 0);
+	assert!(hovered_close[1] > 0);
+}
+
+fn close_glyph_count(draws: &[Draw], rects: &[Rect]) -> Vec<usize> {
+	let mut counts = vec![0; rects.len()];
+	fn walk(draws: &[Draw], rects: &[Rect], counts: &mut [usize]) {
+		for draw in draws {
+			match draw {
+				Draw::Clipped { draws, .. } => walk(draws, rects, counts),
+				Draw::Glyph(g) => {
+					if let Some(i) = rects.iter().position(|r| {
+						g.x >= r.x + r.w - 24.0 && g.x <= r.x + r.w
+					}) {
+						counts[i] += 1;
+					}
+				}
+				_ => {}
+			}
+		}
+	}
+	walk(draws, rects, &mut counts);
+	counts
 }

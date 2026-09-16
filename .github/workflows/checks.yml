@@ -18,7 +18,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Linux fonts and native development libraries
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libwayland-dev fonts-noto-core fonts-noto-cjk
+        run: sudo apt-get update && sudo apt-get install -y g++ libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev fonts-noto-core fonts-noto-cjk
       - run: cargo check --workspace --locked --all-targets
       - run: cargo test --workspace --locked --all-targets
       - run: cargo fmt --all --check

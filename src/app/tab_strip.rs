@@ -60,7 +60,7 @@ pub(super) struct TabLayout {
 }
 impl TabLayout {
 	pub fn new(viewport: Rect, widths: &[(f32, f32)], scroll: f32) -> Self {
-		let gaps = widths.len().saturating_sub(1) as f32 * 2.0;
+		let gaps = 0.0;
 		let natural = widths.iter().map(|(w, _)| w).sum::<f32>();
 		let minimum = widths.iter().map(|(_, w)| w).sum::<f32>();
 		let shrink = ((natural + gaps - viewport.w)
@@ -75,7 +75,7 @@ impl TabLayout {
 			.map(|(natural, minimum)| {
 				let w = natural - (natural - minimum) * shrink;
 				let rect = Rect { x, w, ..viewport };
-				x += w + 2.0;
+				x += w;
 				rect
 			})
 			.collect();

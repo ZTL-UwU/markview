@@ -193,6 +193,7 @@ impl BlockContext<'_> {
 			rect: Rect::default(),
 			chain,
 			condition: role,
+			fill: ColorField::Background,
 			radius: rule.radius.unwrap_or(0.),
 			border: rule.border_width.unwrap_or(0.),
 			left_only: role == Condition::Blockquote,
@@ -215,6 +216,7 @@ impl BlockContext<'_> {
 			},
 			chain,
 			condition: role,
+			fill: ColorField::Background,
 			radius: rule.radius.unwrap_or(0.),
 			border: if role == Condition::Hr || role == Condition::Table {
 				0.
@@ -472,6 +474,7 @@ impl BlockContext<'_> {
 						},
 						chain: item_appearance.chain,
 						condition: Condition::ListItem,
+						fill: ColorField::Background,
 						radius: item_rule.radius.unwrap_or(0.),
 						border: item_rule.border_width.unwrap_or(0.),
 						left_only: false,

@@ -404,6 +404,44 @@ fn bundled_table_cells_keep_their_grid() {
 }
 
 #[test]
+fn hover_background_belongs_to_toolbar_or_button() {
+	assert!(Stylesheet::parse(
+		"format_version=2\nversion=1\n[[rule]]\nwhen=['ui','toolbar']\nhover_background='#dfdfe0'\nactive_background='#fafaf8'"
+	)
+	.is_ok());
+	assert!(
+		Stylesheet::parse(
+			"format_version=2\nversion=1\n[[rule]]\nwhen=['ui','panel']\nhover_background='#dfdfe0'"
+		)
+		.is_err()
+	);
+}
+
+#[test]
+fn bundled_chrome_uses_zed_one_tokens() {
+	let light = Stylesheet::bundled(false);
+	let toolbar =
+		light.element_rule(Condition::Toolbar.chain(), Condition::Toolbar);
+	assert_eq!(toolbar.background, Some(Color(0xebebecff)));
+	assert_eq!(toolbar.hover_background, Some(Color(0xdfdfe0ff)));
+	assert_eq!(toolbar.active_background, Some(Color(0xfafaf8ff)));
+	let button =
+		light.element_rule(Condition::Button.chain(), Condition::Button);
+	assert_eq!(button.background, Some(Color(0x00000000)));
+	assert_eq!(button.hover_background, Some(Color(0xdfdfe0ff)));
+	assert_eq!(button.active_background, Some(Color(0xcacacaff)));
+	let status =
+		light.element_rule(Condition::Statusbar.chain(), Condition::Statusbar);
+	assert_eq!(status.background, Some(Color(0xdcdcddff)));
+	let dark = Stylesheet::bundled(true);
+	let toolbar =
+		dark.element_rule(Condition::Toolbar.chain(), Condition::Toolbar);
+	assert_eq!(toolbar.active_background, Some(Color(0x282c33ff)));
+	let body = dark.element_rule(Condition::Body.chain(), Condition::Body);
+	assert_eq!(body.background, Some(Color(0x282c33ff)));
+}
+
+#[test]
 fn theme_belongs_to_the_plain_code_block_condition() {
 	assert!(
 		Stylesheet::parse(

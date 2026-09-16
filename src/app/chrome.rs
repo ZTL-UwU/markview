@@ -5,16 +5,17 @@ mod footer;
 mod gpu_tests;
 mod styles;
 mod tabs;
-use super::{BOTTOM, Button, TOP};
+use super::{Button, ChromeFrame, TITLE, TOP};
 use crate::{
 	layout::{Draw, Paint, Rect, Scrollbar, TextShaper},
 	settings::ReaderSettings,
 	state::{InteractionState, ReaderSession, ReaderTab, ScrollbarAxis},
 };
+pub(super) use controls::WINDOW_CONTROL;
 pub(super) use controls::panel_rect;
-use controls::{controls, draw_controls, toolbar_controls};
+use controls::{draw_controls, panel_controls, toolbar_controls};
 use footer::draw_footer;
-use markview_core::style::{ColorField as C, Condition};
+use markview_core::style::{ColorField as C, Condition, TextAppearance};
 use std::time::Instant;
 use styles::{draw_styles, style_controls};
 
@@ -36,41 +37,38 @@ pub(super) struct Chrome<'a> {
 	pub(super) status: &'a str,
 	pub(super) status_until: Option<Instant>,
 	pub(super) error: bool,
+	pub(super) frame: ChromeFrame,
+	pub(super) title: &'a str,
 }
 impl Chrome<'_> {
 	pub(super) fn buttons(&mut self) -> Vec<Button> {
-		let (width, height, _) = (self.width, self.height, 1.0);
+		let (width, height) = (self.width, self.height);
+		let mut out = Vec::new();
 		if self.interaction.styles_open {
-			style_controls(
+			out.extend(style_controls(
 				self.settings,
 				self.style_entries,
 				self.style_page,
 				width,
 				height,
-			)
+			));
 		} else if self.interaction.panel_open {
-			controls(
-				self.ui,
-				self.settings,
-				self.interaction.panel_open,
-				width,
-				height,
-			)
-		} else {
-			toolbar_controls(self.ui, width)
+			out.extend(panel_controls(self.ui, self.settings, width, height));
 		}
+		out.extend(toolbar_controls(self.ui, width, self.frame));
+		out
 	}
 	pub(super) fn overlay(&mut self) -> Vec<Draw> {
-		let (width, height, _) = (self.width, self.height, 1.0);
+		let (width, height) = (self.width, self.height);
 		let mut out = vec![
 			Draw::Rect(
 				Rect {
 					x: 0.0,
 					y: 0.0,
 					w: width,
-					h: TOP,
+					h: TITLE,
 				},
-				Paint::Styled(Condition::Toolbar, C::Background),
+				Paint::Styled(Condition::Statusbar, C::Background),
 			),
 			Draw::Rect(
 				Rect {
@@ -79,18 +77,12 @@ impl Chrome<'_> {
 					w: width,
 					h: 1.0,
 				},
-				Paint::Styled(Condition::Toolbar, C::BorderColor),
-			),
-			Draw::Rect(
-				Rect {
-					x: 0.0,
-					y: height - BOTTOM,
-					w: width,
-					h: BOTTOM,
-				},
-				Paint::Styled(Condition::Toolbar, C::Background),
+				Paint::Styled(Condition::Statusbar, C::BorderColor),
 			),
 		];
+		if self.tabs.is_empty() {
+			out.extend(self.title_label());
+		}
 		out.extend(self.tab_bar().draw_tabs());
 		let warning = if self.error
 			&& self
@@ -123,7 +115,7 @@ impl Chrome<'_> {
 		));
 		if self.session.snapshot.blocks.is_empty() {
 			let x = ((width - 440.0) / 2.0).max(24.0);
-			let y = (height * 0.4).max(110.0);
+			let y = (height * 0.4).max(TOP + 48.0);
 			let title = if self.session.path.is_none() {
 				"Open a Markdown file"
 			} else if self.error {
@@ -137,7 +129,7 @@ impl Chrome<'_> {
 			};
 			out.extend(self.ui.label(
 				title,
-				26.0,
+				18.0,
 				x,
 				y,
 				Paint::Styled(Condition::Ui, C::Color),
@@ -150,9 +142,9 @@ impl Chrome<'_> {
 				} else {
 					"Drop a file here or press Ctrl+O."
 				},
-				15.0,
+				13.0,
 				x,
-				y + 38.0,
+				y + 28.0,
 				Paint::Styled(Condition::Ui, C::Muted),
 			));
 		}
@@ -181,6 +173,14 @@ impl Chrome<'_> {
 				),
 			));
 		}
+		out.extend(draw_controls(
+			self.ui,
+			self.settings,
+			self.interaction,
+			self.frame,
+			width,
+			height,
+		));
 		if self.interaction.styles_open {
 			out.extend(draw_styles(
 				self.ui,
@@ -191,15 +191,31 @@ impl Chrome<'_> {
 				width,
 				height,
 			));
-		} else {
-			out.extend(draw_controls(
-				self.ui,
-				self.settings,
-				self.interaction,
-				width,
-				height,
-			));
 		}
+		out
+	}
+
+	fn title_label(&mut self) -> Vec<Draw> {
+		let old = self.ui.appearance.clone();
+		self.ui.appearance = self.ui.stylesheet.text(
+			&self
+				.ui
+				.stylesheet
+				.text(&TextAppearance::default(), Condition::Ui),
+			Condition::Statusbar,
+		);
+		let left = controls::title_bar_leading();
+		let right = controls::toolbar_left(self.ui, self.width, self.frame);
+		let width = (right - left - 8.0).max(0.0);
+		let title = self.ui.fit(self.title, 12.0, width);
+		let out = self.ui.label(
+			&title,
+			12.0,
+			left,
+			TITLE / 2.0 + 12.0 * 0.38,
+			Paint::Styled(Condition::Statusbar, C::Color),
+		);
+		self.ui.appearance = old;
 		out
 	}
 
@@ -212,6 +228,7 @@ impl Chrome<'_> {
 			active_tab: self.active_tab,
 			cursor: self.interaction.cursor,
 			width: self.width,
+			frame: self.frame,
 		}
 	}
 }

@@ -173,6 +173,7 @@ impl Renderer {
 				rect,
 				chain,
 				condition,
+				fill,
 				radius,
 				border,
 				left_only,
@@ -183,11 +184,7 @@ impl Renderer {
 					..*rect
 				};
 				let background = self.color(
-					Paint::Scoped(
-						*chain,
-						*condition,
-						markview_core::style::ColorField::Background,
-					),
+					Paint::Scoped(*chain, *condition, *fill),
 					view.theme,
 				);
 				self.geometry.rounded(rect, *radius, background, clip, view);

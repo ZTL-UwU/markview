@@ -10,7 +10,7 @@ readme.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-keywords = ["markdown", "reader", "desktop", "typography", "wgpu"]
+keywords = ["markdown", "reader", "desktop", "typography", "gpui"]
 categories = ["text-processing", "gui"]
 publish = false
 
@@ -63,6 +63,8 @@ icu_segmenter = "2.3"
 notify = "8.2"
 open = "5.4"
 parley = { version = "0.11.1", features = ["complex-scripts"] }
+# GPUI enables `fontconfig-dlopen`; keep Fontique on the same feature.
+fontique = { version = "0.11.1", features = ["fontconfig-dlopen"] }
 pollster = "0.4"
 ratex-parser = "=0.1.14"
 ratex-layout = "=0.1.14"
@@ -77,6 +79,8 @@ swash = "0.2.9"
 tiny-skia = "0.11"
 wgpu = { version = "29.0.4", default-features = false, features = ["std", "parking_lot", "wgsl"] }
 winit = "0.30.13"
+gpui = "0.2.2"
+async-channel = "2"
 
 [dependencies]
 unicode-segmentation.workspace = true
@@ -98,7 +102,14 @@ rfd.workspace = true
 sys-locale.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-winit.workspace = true
+gpui.workspace = true
+async-channel.workspace = true
+parley.workspace = true
+fontique.workspace = true
+swash.workspace = true
+ratex-types.workspace = true
+ratex-font.workspace = true
+ratex-katex-fonts.workspace = true
 
 tempfile.workspace = true
 

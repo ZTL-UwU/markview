@@ -93,7 +93,10 @@ fn shift_extends_original_anchor_and_reload_clears_gesture() {
 	let mut interaction = InteractionState::default();
 	interaction.begin_selection(position(2), None);
 	interaction.finish_selection(None);
-	interaction.modifiers = ModifiersState::SHIFT;
+	interaction.modifiers = Modifiers {
+		shift: true,
+		..Default::default()
+	};
 	interaction
 		.begin_selection(position(10), Some("https://example.com".into()));
 	assert_eq!(interaction.selection.unwrap().anchor.offset, 2);

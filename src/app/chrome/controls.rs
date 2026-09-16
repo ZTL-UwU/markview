@@ -1,4 +1,4 @@
-use super::super::Button;
+use super::super::{Button, ChromeFrame, TITLE};
 use crate::{
 	layout::{Draw, Paint, Rect, TextShaper},
 	settings::ReaderSettings,
@@ -7,6 +7,11 @@ use crate::{
 use markview_core::style::{
 	CjkType, ColorField as C, Condition, TextAppearance,
 };
+pub(in crate::app) const BUTTON_RADIUS: f32 = 4.0;
+pub(in crate::app) const PANEL_RADIUS: f32 = 8.0;
+pub(in crate::app) const WINDOW_CONTROL: f32 = 36.0;
+const TITLE_BUTTON: f32 = 24.0;
+
 pub(in crate::app) fn panel_rect(width: f32, height: f32) -> Rect {
 	let w = 540.0_f32.min((width - 32.0).max(0.0));
 	let h = 480.0_f32.min((height - 32.0).max(0.0));
@@ -17,118 +22,153 @@ pub(in crate::app) fn panel_rect(width: f32, height: f32) -> Rect {
 		h,
 	}
 }
+
+pub(in crate::app) fn title_bar_leading() -> f32 {
+	if cfg!(target_os = "macos") {
+		78.0
+	} else {
+		12.0
+	}
+}
+
 fn row_geometry(rect: Rect) -> (f32, f32) {
-	let top = if rect.h < 360.0 { 60.0 } else { 94.0 };
+	let top = if rect.h < 360.0 { 52.0 } else { 56.0 };
 	(top, (rect.h - top - 48.0) / 7.0)
 }
-pub(super) fn controls(
+
+fn btn(
+	label: &'static str,
+	action: Command,
+	x: f32,
+	y: f32,
+	w: f32,
+	h: f32,
+	selected: bool,
+) -> Button {
+	Button {
+		label,
+		action,
+		selected,
+		rect: Rect { x, y, w, h },
+	}
+}
+
+pub(super) fn panel_controls(
 	shaper: &mut TextShaper,
 	settings: &ReaderSettings,
-	panel_open: bool,
 	width: f32,
 	height: f32,
 ) -> Vec<Button> {
-	if panel_open {
-		let rect = panel_rect(width, height);
-		let (top, row) = row_geometry(rect);
-		let close_width = button_width(shaper, "Close", 13.0);
-		let mut buttons = vec![Button {
-			label: "Close",
-			action: Command::Settings,
-			rect: Rect {
-				x: rect.x + rect.w - 20.0 - close_width,
-				y: rect.y + 16.0,
-				w: close_width,
-				h: 28.0,
+	let rect = panel_rect(width, height);
+	let (top, row) = row_geometry(rect);
+	let mut buttons = vec![btn(
+		"×",
+		Command::Settings,
+		rect.x + rect.w - 42.0,
+		rect.y + 10.0,
+		32.0,
+		32.0,
+		false,
+	)];
+	for (i, entries) in [
+		vec![
+			("System", Command::SystemTheme, settings.style.is_none()),
+			("Styles…", Command::Styles, false),
+		],
+		vec![
+			("A−", Command::Smaller, false),
+			("A+", Command::Larger, false),
+		],
+		vec![
+			("W−", Command::Narrower, false),
+			("W+", Command::Wider, false),
+		],
+		vec![(
+			if settings.justify {
+				"Justified"
+			} else {
+				"Left aligned"
 			},
-		}];
-		for (i, entries) in [
-			vec![
-				("System", Command::SystemTheme),
-				("Styles…", Command::Styles),
-			],
-			vec![("A−", Command::Smaller), ("A+", Command::Larger)],
-			vec![("W−", Command::Narrower), ("W+", Command::Wider)],
-			vec![(
-				if settings.justify {
-					"Justified"
-				} else {
-					"Left aligned"
-				},
-				Command::Align,
-			)],
-			vec![(
-				if settings.hyphenate { "On" } else { "Off" },
-				Command::Hyphens,
-			)],
-			vec![
-				("Off", Command::Indent(0)),
-				("1 em", Command::Indent(1)),
-				("2 em", Command::Indent(2)),
-				("3 em", Command::Indent(3)),
-			],
-			vec![
-				("SC", Command::CjkType(CjkType::Sc)),
-				("TC", Command::CjkType(CjkType::Tc)),
-				("JP", Command::CjkType(CjkType::Jp)),
-				("none", Command::CjkType(CjkType::None)),
-			],
-		]
-		.into_iter()
-		.enumerate()
-		{
-			let count = entries.len();
-			let button_width =
-				(168.0 - 4.0 * (count - 1) as f32) / count as f32;
-			for (j, (label, action)) in entries.into_iter().enumerate() {
-				buttons.push(Button {
-					label,
-					action,
-					rect: Rect {
-						x: rect.x + rect.w - 20.0 - 168.0
-							+ j as f32 * (button_width + 4.0),
-						y: rect.y + top + i as f32 * row,
-						w: button_width,
-						h: (row - 4.0).min(32.0),
-					},
-				});
-			}
-		}
-		let open_config_width =
-			button_width(shaper, "Open settings.toml", 13.0);
-		let reset_width = button_width(shaper, "Reset defaults", 13.0);
-		for (label, action, x, w) in [
+			Command::Align,
+			settings.justify,
+		)],
+		vec![(
+			if settings.hyphenate { "On" } else { "Off" },
+			Command::Hyphens,
+			settings.hyphenate,
+		)],
+		vec![
+			("Off", Command::Indent(0), settings.paragraph_indent == 0.0),
+			("1 em", Command::Indent(1), settings.paragraph_indent == 1.0),
+			("2 em", Command::Indent(2), settings.paragraph_indent == 2.0),
+			("3 em", Command::Indent(3), settings.paragraph_indent == 3.0),
+		],
+		vec![
 			(
-				"Open settings.toml",
-				Command::OpenConfig,
-				20.0,
-				open_config_width,
+				"SC",
+				Command::CjkType(CjkType::Sc),
+				settings.cjk_type == CjkType::Sc,
 			),
 			(
-				"Reset defaults",
-				Command::Reset,
-				rect.w - 20.0 - reset_width,
-				reset_width,
+				"TC",
+				Command::CjkType(CjkType::Tc),
+				settings.cjk_type == CjkType::Tc,
 			),
-		] {
-			buttons.push(Button {
+			(
+				"JP",
+				Command::CjkType(CjkType::Jp),
+				settings.cjk_type == CjkType::Jp,
+			),
+			(
+				"none",
+				Command::CjkType(CjkType::None),
+				settings.cjk_type == CjkType::None,
+			),
+		],
+	]
+	.into_iter()
+	.enumerate()
+	{
+		let count = entries.len();
+		let button_width = (168.0 - 4.0 * (count - 1) as f32) / count as f32;
+		for (j, (label, action, selected)) in entries.into_iter().enumerate() {
+			buttons.push(btn(
 				label,
 				action,
-				rect: Rect {
-					x: rect.x + x,
-					y: rect.y + rect.h - 38.0,
-					w,
-					h: 28.0,
-				},
-			});
+				rect.x + rect.w - 20.0 - 168.0
+					+ j as f32 * (button_width + 4.0),
+				rect.y + top + i as f32 * row,
+				button_width,
+				(row - 4.0).min(28.0),
+				selected,
+			));
 		}
-		return buttons;
 	}
-	toolbar_controls(shaper, width)
+	let open_config_width = button_width(shaper, "Open settings.toml", 12.0);
+	let reset_width = button_width(shaper, "Reset defaults", 12.0);
+	buttons.push(btn(
+		"Open settings.toml",
+		Command::OpenConfig,
+		rect.x + 20.0,
+		rect.y + rect.h - 38.0,
+		open_config_width,
+		28.0,
+		false,
+	));
+	buttons.push(btn(
+		"Reset defaults",
+		Command::Reset,
+		rect.x + rect.w - 20.0 - reset_width,
+		rect.y + rect.h - 38.0,
+		reset_width,
+		28.0,
+		false,
+	));
+	buttons
 }
 
 fn button_width(shaper: &mut TextShaper, label: &str, size: f32) -> f32 {
-	const HORIZONTAL_PADDING: f32 = 18.0;
+	const HORIZONTAL_PADDING: f32 = 12.0;
 	let old_appearance = shaper.appearance.clone();
 	shaper.appearance = shaper
 		.stylesheet
@@ -141,10 +181,11 @@ fn button_width(shaper: &mut TextShaper, label: &str, size: f32) -> f32 {
 pub(super) fn toolbar_controls(
 	shaper: &mut TextShaper,
 	width: f32,
+	frame: ChromeFrame,
 ) -> Vec<Button> {
-	const TEXT_SIZE: f32 = 13.0;
-	const HORIZONTAL_PADDING: f32 = 18.0;
-	const GAP: f32 = 4.0;
+	const TEXT_SIZE: f32 = 12.0;
+	const HORIZONTAL_PADDING: f32 = 12.0;
+	const GAP: f32 = 2.0;
 	let entries = [("Open", Command::Open), ("Settings", Command::Settings)];
 	let old_appearance = shaper.appearance.clone();
 	shaper.appearance = shaper
@@ -157,31 +198,29 @@ pub(super) fn toolbar_controls(
 		})
 		.collect();
 	shaper.appearance = old_appearance;
-	let mut x = toolbar_right_edge(shaper, width);
-	entries
+	let y = (TITLE - TITLE_BUTTON) / 2.0;
+	let mut x = toolbar_left(shaper, width, frame);
+	let mut buttons: Vec<Button> = entries
 		.into_iter()
 		.zip(widths)
 		.map(|((label, action), w)| {
-			let rect = Rect {
-				x,
-				y: 6.0,
-				w,
-				h: 28.0,
-			};
+			let button = btn(label, action, x, y, w, TITLE_BUTTON, false);
 			x += w + GAP;
-			Button {
-				rect,
-				label,
-				action,
-			}
+			button
 		})
-		.collect()
+		.collect();
+	buttons.extend(window_controls(width, frame));
+	buttons
 }
 
-pub(super) fn toolbar_right_edge(shaper: &mut TextShaper, width: f32) -> f32 {
-	const TEXT_SIZE: f32 = 13.0;
-	const HORIZONTAL_PADDING: f32 = 18.0;
-	const GAP: f32 = 4.0;
+pub(in crate::app) fn toolbar_left(
+	shaper: &mut TextShaper,
+	width: f32,
+	frame: ChromeFrame,
+) -> f32 {
+	const TEXT_SIZE: f32 = 12.0;
+	const HORIZONTAL_PADDING: f32 = 12.0;
+	const GAP: f32 = 2.0;
 	let old_appearance = shaper.appearance.clone();
 	shaper.appearance = shaper
 		.stylesheet
@@ -191,13 +230,32 @@ pub(super) fn toolbar_right_edge(shaper: &mut TextShaper, width: f32) -> f32 {
 		.map(|label| shaper.text_width(label, TEXT_SIZE) + HORIZONTAL_PADDING)
 		.collect::<Vec<_>>();
 	shaper.appearance = old_appearance;
-	width - button_widths.iter().sum::<f32>() - GAP - 16.0
+	width
+		- frame.control_width()
+		- button_widths.iter().sum::<f32>()
+		- GAP - 8.0
+}
+
+fn window_controls(width: f32, frame: ChromeFrame) -> Vec<Button> {
+	if !frame.client {
+		return Vec::new();
+	}
+	vec![btn(
+		"×",
+		Command::CloseWindow,
+		width - WINDOW_CONTROL,
+		0.0,
+		WINDOW_CONTROL,
+		TITLE,
+		false,
+	)]
 }
 
 pub(super) fn draw_controls(
 	shaper: &mut TextShaper,
 	settings: &ReaderSettings,
 	interaction: &InteractionState,
+	frame: ChromeFrame,
 	width: f32,
 	height: f32,
 ) -> Vec<Draw> {
@@ -208,7 +266,7 @@ pub(super) fn draw_controls(
 		Condition::Panel,
 	);
 	let mut out = Vec::new();
-	if interaction.panel_open {
+	if interaction.panel_open && !interaction.styles_open {
 		let rect = panel_rect(width, height);
 		out.push(Draw::Rect(
 			Rect {
@@ -219,49 +277,41 @@ pub(super) fn draw_controls(
 			},
 			Paint::Scrim,
 		));
-		out.push(Draw::Rect(
-			Rect {
-				x: rect.x - 5.0,
-				y: rect.y + 6.0,
-				w: rect.w + 10.0,
-				h: rect.h + 4.0,
-			},
-			Paint::Shadow,
-		));
 		out.push(Draw::Box {
 			rect,
 			chain: Condition::Panel.chain(),
 			condition: Condition::Panel,
-			radius: 0.,
+			fill: C::Background,
+			radius: PANEL_RADIUS,
 			border: 1.,
 			left_only: false,
 		});
+		let x = rect.x + 20.0;
+		out.extend(shaper.label(
+			"Settings",
+			18.0,
+			x,
+			rect.y + 32.0,
+			Paint::Styled(Condition::Panel, C::Color),
+		));
 		out.push(Draw::Rect(
 			Rect {
 				x: rect.x,
-				y: rect.y,
-				w: 3.0,
-				h: rect.h,
+				y: rect.y + 48.0,
+				w: rect.w,
+				h: 1.0,
 			},
 			Paint::Styled(Condition::Panel, C::BorderColor),
 		));
-		let x = rect.x + 20.0;
-		out.extend(shaper.label(
-			"Reading settings",
-			22.0,
-			x,
-			rect.y + 36.0,
-			Paint::Styled(Condition::Panel, C::Color),
+		out.push(Draw::Rect(
+			Rect {
+				x: rect.x,
+				y: rect.y + rect.h - 48.0,
+				w: rect.w,
+				h: 1.0,
+			},
+			Paint::Styled(Condition::Panel, C::BorderColor),
 		));
-		if rect.h >= 360.0 {
-			out.extend(shaper.label(
-				"Saved automatically · file changes apply live",
-				12.0,
-				x,
-				rect.y + 61.0,
-				Paint::Styled(Condition::Panel, C::Muted),
-			));
-		}
 		let (top, row) = row_geometry(rect);
 		for (i, label) in [
 			format!(
@@ -303,75 +353,82 @@ pub(super) fn draw_controls(
 			));
 		}
 	}
-	let buttons = if interaction.panel_open {
-		controls(shaper, settings, true, width, height)
+	for b in toolbar_controls(shaper, width, frame) {
+		out.extend(paint_button(shaper, &b, interaction, false, 12.0));
+	}
+	if interaction.panel_open && !interaction.styles_open {
+		for b in panel_controls(shaper, settings, width, height) {
+			out.extend(paint_button(shaper, &b, interaction, false, 12.0));
+		}
+	}
+	out
+}
+
+pub(super) fn paint_button(
+	shaper: &mut TextShaper,
+	button: &Button,
+	interaction: &InteractionState,
+	always_fill: bool,
+	size: f32,
+) -> Vec<Draw> {
+	let hovered = button
+		.rect
+		.contains(interaction.cursor.0, interaction.cursor.1);
+	let focused = interaction.focus == Some(button.action);
+	let pressed = interaction.pressed == Some(button.action);
+	let window_control = button.action == Command::CloseWindow;
+	let fill = if pressed {
+		Some(C::ActiveBackground)
+	} else if hovered && button.action == Command::CloseWindow {
+		Some(C::Error)
+	} else if hovered {
+		Some(C::HoverBackground)
+	} else if button.selected {
+		Some(C::ActiveBackground)
+	} else if always_fill {
+		Some(C::Background)
 	} else {
-		toolbar_controls(shaper, width)
+		None
 	};
-	for b in buttons {
+	let mut out = Vec::new();
+	if fill.is_some() || focused {
 		out.push(Draw::Box {
-			rect: b.rect,
+			rect: button.rect,
 			chain: Condition::Button.chain(),
 			condition: Condition::Button,
-			radius: 0.,
-			border: 1.,
+			fill: fill.unwrap_or(C::Background),
+			radius: if window_control { 0.0 } else { BUTTON_RADIUS },
+			border: if focused { 1. } else { 0. },
 			left_only: false,
 		});
-		if interaction.focus == Some(b.action) {
-			out.push(Draw::Rect(
-				b.rect,
-				Paint::Styled(Condition::Button, C::FocusColor),
-			));
-			out.push(Draw::Rect(
-				Rect {
-					x: b.rect.x + 1.0,
-					y: b.rect.y + 1.0,
-					w: b.rect.w - 2.0,
-					h: b.rect.h - 2.0,
-				},
-				Paint::Styled(
-					Condition::Button,
-					if interaction.pressed == Some(b.action) {
-						C::ActiveBackground
-					} else {
-						C::Background
-					},
-				),
-			));
-		} else if b.rect.contains(interaction.cursor.0, interaction.cursor.1) {
-			out.push(Draw::Rect(
-				b.rect,
-				Paint::Styled(Condition::Button, C::HoverBackground),
-			));
-		} else if interaction.panel_open {
-			out.push(Draw::Rect(
-				b.rect,
-				Paint::Styled(Condition::Button, C::Background),
-			));
-		}
-		let label_x =
-			b.rect.x + (b.rect.w - shaper.text_width(b.label, 13.0)) / 2.0;
-		out.extend(shaper.label(
-			b.label,
-			13.0,
-			label_x,
-			b.rect.y + b.rect.h / 2.0 + 5.0,
-			Paint::Styled(Condition::Button, C::Color),
-		));
 	}
+	let size = if button.label == "×" && !window_control {
+		16.0
+	} else {
+		size
+	};
+	let label_x = button.rect.x
+		+ (button.rect.w - shaper.text_width(button.label, size)) / 2.0;
+	out.extend(shaper.label(
+		button.label,
+		size,
+		label_x,
+		button.rect.y + button.rect.h / 2.0 + size * 0.38,
+		Paint::Styled(Condition::Button, C::Color),
+	));
 	out
 }
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::app::TOP;
+	use crate::app::TITLE;
+	use crate::layout::Draw;
 	#[test]
 	fn panel_exposes_first_line_indent_presets() {
 		let mut shaper = TextShaper::new();
-		let buttons = controls(
+		let buttons = panel_controls(
 			&mut shaper,
 			&ReaderSettings::default(),
-			true,
 			1200.0,
 			800.0,
 		);
@@ -381,7 +438,50 @@ mod tests {
 				.find(|b| b.action == Command::Indent(em))
 				.expect("indent preset");
 			assert_eq!(button.label, label);
+			assert_eq!(button.selected, em == 0);
 		}
+	}
+	#[test]
+	fn settings_modal_uses_dismiss_and_selected_toggles() {
+		let mut shaper = TextShaper::new();
+		let settings = ReaderSettings {
+			justify: true,
+			hyphenate: true,
+			paragraph_indent: 2.0,
+			cjk_type: CjkType::Jp,
+			..Default::default()
+		};
+		let buttons = panel_controls(&mut shaper, &settings, 1200.0, 800.0);
+		let close = buttons
+			.iter()
+			.find(|b| b.action == Command::Settings)
+			.expect("dismiss");
+		assert_eq!(close.label, "×");
+		assert!(
+			buttons
+				.iter()
+				.any(|b| b.action == Command::Align && b.selected)
+		);
+		assert!(
+			buttons
+				.iter()
+				.any(|b| b.action == Command::Hyphens && b.selected)
+		);
+		assert!(
+			buttons
+				.iter()
+				.any(|b| b.action == Command::Indent(2) && b.selected)
+		);
+		assert!(
+			buttons.iter().any(
+				|b| b.action == Command::CjkType(CjkType::Jp) && b.selected
+			)
+		);
+		assert!(
+			buttons
+				.iter()
+				.any(|b| b.action == Command::SystemTheme && b.selected)
+		);
 	}
 	#[test]
 	fn controls_fit_minimum_window_and_panel_focus_has_no_document_actions() {
@@ -389,10 +489,9 @@ mod tests {
 		{
 			let mut shaper = TextShaper::new();
 			let panel = panel_rect(width, height);
-			for button in controls(
+			for button in panel_controls(
 				&mut shaper,
 				&ReaderSettings::default(),
-				true,
 				width,
 				height,
 			) {
@@ -403,28 +502,108 @@ mod tests {
 				));
 				assert_ne!(button.action, Command::Open);
 			}
-			for button in controls(
-				&mut shaper,
-				&ReaderSettings::default(),
-				false,
-				width,
-				height,
-			) {
-				assert!(button.rect.x + button.rect.w <= width);
-			}
-			let toolbar = controls(
-				&mut shaper,
-				&ReaderSettings::default(),
-				false,
-				width,
-				height,
-			);
+			let toolbar =
+				toolbar_controls(&mut shaper, width, ChromeFrame::default());
 			assert_eq!(
 				toolbar.iter().map(|b| b.action).collect::<Vec<_>>(),
 				vec![Command::Open, Command::Settings]
 			);
-			assert_eq!(toolbar[1].rect.x + toolbar[1].rect.w, width - 16.0);
-			assert!(toolbar.iter().all(|b| b.rect.y + b.rect.h < TOP));
+			assert!(
+				(toolbar[1].rect.x + toolbar[1].rect.w - (width - 8.0)).abs()
+					< 0.01
+			);
+			assert!(toolbar.iter().all(|b| b.rect.y + b.rect.h <= TITLE));
 		}
+	}
+	#[test]
+	fn client_chrome_places_only_the_close_control() {
+		let mut shaper = TextShaper::new();
+		let frame = ChromeFrame { client: true };
+		let buttons = toolbar_controls(&mut shaper, 800.0, frame);
+		assert_eq!(
+			buttons.iter().map(|b| b.action).collect::<Vec<_>>(),
+			vec![Command::Open, Command::Settings, Command::CloseWindow]
+		);
+		assert_eq!(frame.control_width(), WINDOW_CONTROL);
+		assert!(
+			(buttons.last().unwrap().rect.x + WINDOW_CONTROL - 800.0).abs()
+				< 0.01
+		);
+		assert!(buttons.iter().all(|b| b.rect.y + b.rect.h <= TITLE));
+	}
+	#[test]
+	fn toolbar_buttons_are_ghost_until_hovered() {
+		let mut shaper = TextShaper::new();
+		let buttons =
+			toolbar_controls(&mut shaper, 800.0, ChromeFrame::default());
+		let idle = paint_button(
+			&mut shaper,
+			&buttons[0],
+			&InteractionState::default(),
+			false,
+			12.0,
+		);
+		assert!(!idle.iter().any(|d| matches!(d, Draw::Box { .. })));
+		let hovered = paint_button(
+			&mut shaper,
+			&buttons[0],
+			&InteractionState {
+				cursor: (buttons[0].rect.x + 1.0, buttons[0].rect.y + 1.0),
+				..Default::default()
+			},
+			false,
+			12.0,
+		);
+		assert!(hovered.iter().any(|d| matches!(
+			d,
+			Draw::Box {
+				fill: C::HoverBackground,
+				..
+			}
+		)));
+	}
+	#[test]
+	fn settings_modal_has_no_offset_shadow() {
+		let mut shaper = TextShaper::new();
+		let draws = draw_controls(
+			&mut shaper,
+			&ReaderSettings::default(),
+			&InteractionState {
+				panel_open: true,
+				..Default::default()
+			},
+			ChromeFrame::default(),
+			800.0,
+			600.0,
+		);
+		assert!(
+			!draws
+				.iter()
+				.any(|d| matches!(d, Draw::Rect(_, Paint::Shadow)))
+		);
+		assert!(
+			draws
+				.iter()
+				.any(|d| matches!(d, Draw::Rect(_, Paint::Scrim)))
+		);
+	}
+	#[test]
+	fn selected_toggle_uses_active_fill() {
+		let mut shaper = TextShaper::new();
+		let button = btn("On", Command::Hyphens, 80.0, 80.0, 40.0, 24.0, true);
+		let draws = paint_button(
+			&mut shaper,
+			&button,
+			&InteractionState::default(),
+			false,
+			12.0,
+		);
+		assert!(draws.iter().any(|d| matches!(
+			d,
+			Draw::Box {
+				fill: C::ActiveBackground,
+				..
+			}
+		)));
 	}
 }

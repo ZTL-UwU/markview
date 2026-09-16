@@ -7,6 +7,7 @@ use crate::{
 use anyhow::Result;
 use std::collections::HashMap;
 
+use super::super::{BOTTOM, ChromeFrame, TITLE, TOP};
 use super::*;
 #[test]
 #[ignore = "requires a GPU; writes artifacts/refactor-ui.png"]
@@ -51,9 +52,9 @@ fn settings_and_selection_frame() -> Result<()> {
 					x: 0.0,
 					y: 0.0,
 					w: width,
-					h: TOP,
+					h: TITLE,
 				},
-				Paint::Background,
+				Paint::Styled(Condition::Statusbar, C::Background),
 			),
 			Draw::Rect(
 				Rect {
@@ -62,7 +63,7 @@ fn settings_and_selection_frame() -> Result<()> {
 					w: width,
 					h: 1.0,
 				},
-				Paint::Border,
+				Paint::Styled(Condition::Statusbar, C::BorderColor),
 			),
 		];
 		overlay.extend(draw_footer(
@@ -78,6 +79,7 @@ fn settings_and_selection_frame() -> Result<()> {
 			&mut TextShaper::new(),
 			&settings,
 			&interaction,
+			ChromeFrame { client: true },
 			width,
 			height,
 		));
@@ -205,8 +207,9 @@ fn tab_strip_frames_clip_overflow_at_fractional_dpi() -> Result<()> {
 			widths: &metrics.widths,
 			tabs: &entries,
 			active_tab: 3.min(count - 1),
-			cursor: (150.0, 20.0),
+			cursor: (150.0, 10.0),
 			width,
+			frame: ChromeFrame { client: true },
 		};
 		let viewport = bar.layout().viewport;
 		let tabs = bar.draw_tabs();
@@ -215,14 +218,15 @@ fn tab_strip_frames_clip_overflow_at_fractional_dpi() -> Result<()> {
 				x: 0.0,
 				y: 0.0,
 				w: width,
-				h: TOP,
+				h: TITLE,
 			},
-			Paint::Styled(Condition::Toolbar, C::Background),
+			Paint::Styled(Condition::Statusbar, C::Background),
 		);
 		let controls = draw_controls(
 			&mut ui,
 			&settings,
 			&InteractionState::default(),
+			ChromeFrame { client: true },
 			width,
 			100.0,
 		);
@@ -267,7 +271,7 @@ fn tab_strip_frames_clip_overflow_at_fractional_dpi() -> Result<()> {
 			renderer.save_png(&target, &output)?;
 			images.push(image::open(output)?.to_rgba8());
 		}
-		for y in 5..45 {
+		for y in 0..(TITLE * view.scale) as u32 {
 			for x in 0..view.width {
 				if x < (viewport.x * view.scale).floor() as u32
 					|| x >= ((viewport.x + viewport.w) * view.scale).ceil()

@@ -8,7 +8,7 @@ description = "Markview's default dark stylesheet"
 [[rule]]
 when = ["body"]
 color = "#DDE2E7"
-background = "#20252B"
+background = "#282c33"
 
 [[rule]]
 when = ["link"]
@@ -42,7 +42,7 @@ color = "#98A5B1"
 [[rule]]
 when = ["task_marker"]
 color = "#8FB9DD"
-background = "#20252B"
+background = "#282c33"
 border_color = "#8FB9DD"
 
 [[rule]]
@@ -76,27 +76,45 @@ background = "#2A3139"
 
 [[rule]]
 when = ["scrollbar"]
-track = "#414C58"
-thumb = "#98A5B1"
-thumb_hover = "#8FB9DD"
+track = "#00000000"
+thumb = "#c8ccd44c"
+thumb_hover = "#363c46"
 
 [[rule]]
 when = ["ui"]
-color = "#DDE2E7"
-background = "#20252B"
-muted = "#98A5B1"
-accent = "#8FB9DD"
-border_color = "#414C58"
-error = "#F39A9A"
+color = "#dce0e5"
+background = "#2f343e"
+muted = "#a9afbc"
+accent = "#74ade8"
+border_color = "#464b57"
+error = "#d07277"
+shadow = "#00000066"
+scrim = "#00000080"
+
+[[rule]]
+when = ["ui", "toolbar"]
+background = "#2f343e"
+hover_background = "#363c46"
+active_background = "#282c33"
+border_color = "#464b57"
+
+[[rule]]
+when = ["ui", "statusbar"]
+background = "#3b414d"
+border_color = "#464b57"
+muted = "#a9afbc"
 
 [[rule]]
 when = ["ui", "panel"]
-background = "#252E38F0"
+background = "#2f343e"
+border_color = "#464b57"
 
 [[rule]]
 when = ["ui", "button"]
-background = "#2A3139"
-hover_background = "#35414F"
-active_background = "#414C58"
-disabled_color = "#98A5B1"
-focus_color = "#8FB9DD"
+background = "#00000000"
+hover_background = "#363c46"
+active_background = "#454a56"
+disabled_color = "#878a98"
+focus_color = "#74ade8"
+border_color = "#74ade8"
+color = "#dce0e5"

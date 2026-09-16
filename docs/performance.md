@@ -6,13 +6,62 @@ This page explains what Markview measures and how to interpret the current basel
 
 - **Initialization** covers device, pipeline, font, and renderer setup before a document is opened.
 - **Offscreen first frame** covers reading, parsing, full geometry layout, visible glyph preparation, and GPU completion. It does not include compositor presentation.
-- **Window first readable frame** covers initialization and opening through GPU completion of the first visible document prefix. Remaining geometry can finish later; compositor presentation is not measured.
+- **Window first readable frame** covers initialization and opening through the first visible document prefix. Remaining geometry can finish later; compositor presentation is not measured. After the GPUI migration this is a GPUI paint, not a wgpu surface present.
 - **Full reflow** measures rebuilding document geometry after content or layout settings change. The block cache is cleared for this measurement, while font and shaping resources remain warm.
 - **Block refresh** measures reusing unchanged blocks after a localized invalidation, such as an image completing or a file update affecting only part of the document.
 - **RSS** is process resident memory after scrolling through the document. It is not GPU memory.
 - **Tracked GPU resources** are the capacities of resources Markview can account for; they are not a complete driver-memory report.
 
 The benchmark separates a cold first open from repeated warm reflows. A P95 from repeated runs must not be presented as a cold-start P95.
+
+## GPUI window comparison
+
+The 2026-09-15 GPUI migration compared release commit `18158e1` (winit/wgpu
+window) with candidate `60569cb` (GPUI window). The host was a 4-core Intel
+Xeon cloud VM with Mesa lavapipe (`llvmpipe`, LLVM 20.1.2) as a Vulkan CPU
+adapter, Rust 1.98.1, glibc 2.39, release mode with thin LTO and one codegen
+unit, bundled light styles, system fonts, 18 px text, a 760 px column and a
+1200 × 800 target at scale 1. These absolute times are not comparable to the
+Intel Arc/Vulkan tables below.
+
+`--bench` still paints through wgpu offscreen in both binaries, so it measures
+layout and the shared renderer, not GPUI. Three alternating process groups
+with 30 full and 30 cached iterations each produced these medians:
+
+| Fixture | First open before → after (ms) | Full P95 before → after (ms) | Cached P50 before → after (ms) | RSS before → after (MiB) |
+| --- | ---: | ---: | ---: | ---: |
+| ordinary-10k | 36.14 → 43.32 | 17.19 → 20.90 | 3.09 → 3.29 | 119.9 → 122.0 |
+| math-10k | 36.83 → 38.45 | 19.19 → 16.34 | 3.32 → 2.98 | 121.8 → 124.4 |
+| code-10k | 32.61 → 27.88 | 15.91 → 15.86 | 3.72 → 3.82 | 130.1 → 131.4 |
+| long-code-10k | 34.11 → 30.93 | 16.64 → 18.72 | 4.55 → 4.08 | 128.0 → 129.2 |
+| images | 59.62 → 58.64 | 6.88 → 6.52 | 2.64 → 2.68 | 119.7 → 121.3 |
+| emoji-fallback | 29.84 → 30.05 | 4.01 → 3.81 | 2.04 → 1.90 | 119.3 → 120.5 |
+
+Tracked GPU capacities were identical on every fixture. Full-reflow layout
+stage medians stayed within about 0.4 ms (ordinary 11.18 → 11.40 ms). The
+ordinary first-open and some P95 tails crossed the usual 5% check on this
+software adapter; those tails are GPU-completion noise, not a layout change.
+Offscreen RSS rose about 1–2% from linking GPUI into the binary.
+
+`--smoke-test` is the window-backend comparison: process entry through the
+first readable frame, five alternating process pairs per fixture, no PNG
+dump. GPUI opened at scale 1.0 (1200 × 800); winit reported scale 0.99
+(1188 × 792):
+
+| Fixture | winit/wgpu first frame (ms) | GPUI first frame (ms) | Change | RSS before → after (MiB) |
+| --- | ---: | ---: | ---: | ---: |
+| ordinary-10k | 75.66 | 92.65 | +22.5% | 128.1 → 155.9 |
+| math-10k | 72.02 | 96.42 | +33.9% | 129.6 → 158.0 |
+| code-10k | 69.18 | 82.87 | +19.8% | 135.4 → 163.8 |
+| emoji-fallback | 84.11 | 83.27 | −1.0% | 128.5 → 148.9 |
+| welcome | 78.38 | 90.81 | +15.9% | 140.9 → 167.6 |
+
+Layout inside those first frames stayed close (ordinary 16.80 → 17.74 ms).
+The extra window cost is GPUI/Blade startup and first paint, plus about 20%
+RSS from keeping Blade instead of a wgpu surface. This is not a hardware-GPU
+acceptance pass.
+
+Raw `--bench` reports are under `artifacts/gpui-window/` (ignored by Git).
 
 ## Current repository baseline
 

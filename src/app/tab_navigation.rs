@@ -31,7 +31,8 @@ impl App {
 		let (x, y) = self.interaction.cursor;
 		if x < layout.viewport.x
 			|| x > layout.viewport.x + layout.viewport.w
-			|| !(0.0..super::TOP).contains(&y)
+			|| y < layout.viewport.y
+			|| y >= layout.viewport.y + layout.viewport.h
 		{
 			return false;
 		}

@@ -288,8 +288,10 @@ fn validate_field(conditions: ConditionSet, key: &str) -> Result<()> {
 			}
 			"muted" | "accent" | "error" => conditions.ui(),
 			"shadow" | "scrim" => has(K::Ui),
-			"hover_background" | "active_background" | "disabled_color"
-			| "focus_color" => has(K::Button),
+			"hover_background" | "active_background" => {
+				has(K::Button) || has(K::Toolbar)
+			}
+			"disabled_color" | "focus_color" => has(K::Button),
 			"theme" => conditions == ConditionSet::of(K::CodeBlock),
 			_ => false,
 		}

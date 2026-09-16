@@ -7,7 +7,7 @@ use crate::{
 };
 use markview_core::style::{ColorField as C, Condition, TextAppearance};
 fn style_rows(rect: Rect) -> usize {
-	((rect.h - 142.) / 60.).floor().max(1.) as usize
+	((rect.h - 128.) / 60.).floor().max(1.) as usize
 }
 fn style_order(
 	settings: &ReaderSettings,
@@ -23,6 +23,22 @@ fn style_order(
 	});
 	indices
 }
+fn btn(
+	label: &'static str,
+	action: Command,
+	x: f32,
+	y: f32,
+	w: f32,
+	h: f32,
+	selected: bool,
+) -> Button {
+	Button {
+		label,
+		action,
+		selected,
+		rect: Rect { x, y, w, h },
+	}
+}
 pub(super) fn style_controls(
 	settings: &ReaderSettings,
 	entries: &[crate::stylesheet::Entry],
@@ -34,51 +50,65 @@ pub(super) fn style_controls(
 	let rows = style_rows(r);
 	let order = style_order(settings, entries);
 	let page = page.min(order.len().saturating_sub(1) / rows);
-	let mut out = vec![];
-	for (label, action, x, w) in [
-		("Back", Command::Styles, 20., 58.),
-		("System", Command::SystemTheme, 86., 74.),
-		("Close", Command::Settings, r.w - 78., 58.),
-		("Open styles folder", Command::StylesFolder, 20., 146.),
-	] {
-		out.push(Button {
-			label,
-			action,
-			rect: Rect {
-				x: r.x + x,
-				y: if action == Command::StylesFolder {
-					r.y + r.h - 38.
-				} else {
-					r.y + 16.
-				},
-				w,
-				h: 28.,
-			},
-		});
-	}
+	let mut out = vec![
+		btn(
+			"Back",
+			Command::Styles,
+			r.x + 12.,
+			r.y + 10.,
+			58.,
+			32.,
+			false,
+		),
+		btn(
+			"×",
+			Command::Settings,
+			r.x + r.w - 42.,
+			r.y + 10.,
+			32.,
+			32.,
+			false,
+		),
+		btn(
+			"System",
+			Command::SystemTheme,
+			r.x + r.w - 20. - 74.,
+			r.y + 56.,
+			74.,
+			28.,
+			settings.style.is_none(),
+		),
+		btn(
+			"Open styles folder",
+			Command::StylesFolder,
+			r.x + 20.,
+			r.y + r.h - 38.,
+			146.,
+			28.,
+			false,
+		),
+	];
 	if page > 0 {
-		out.push(Button {
-			label: "Previous",
-			action: Command::StylePrev,
-			rect: Rect {
-				x: r.x + r.w - 190.,
-				y: r.y + r.h - 38.,
-				w: 82.,
-				h: 28.,
-			},
-		});
+		out.push(btn(
+			"Previous",
+			Command::StylePrev,
+			r.x + r.w - 190.,
+			r.y + r.h - 38.,
+			82.,
+			28.,
+			false,
+		));
 	}
 	if (page + 1) * rows < order.len() {
-		out.push(Button {
-			label: "Next",
-			action: Command::StyleNext,
-			rect: Rect {
-				x: r.x + r.w - 100.,
-				y: r.y + r.h - 38.,
-				w: 80.,
-				h: 28.,
-			},
-		});
+		out.push(btn(
+			"Next",
+			Command::StyleNext,
+			r.x + r.w - 100.,
+			r.y + r.h - 38.,
+			80.,
+			28.,
+			false,
+		));
 	}
 	for (row, index) in
 		order.into_iter().skip(page * rows).take(rows).enumerate()
@@ -88,47 +118,44 @@ pub(super) fn style_controls(
 			.style
 			.as_ref()
 			.and_then(|ids| ids.iter().position(|id| id == &e.id));
-		let y = r.y + 84. + row as f32 * 60.;
+		let y = r.y + 92. + row as f32 * 60.;
 		if e.error.is_none() || pos.is_some() {
-			out.push(Button {
-				label: if pos.is_some() { "Disable" } else { "Enable" },
-				action: Command::StyleToggle(index),
-				rect: Rect {
-					x: r.x + r.w - 180.,
-					y,
-					w: 76.,
-					h: 26.,
-				},
-			});
+			out.push(btn(
+				if pos.is_some() { "Disable" } else { "Enable" },
+				Command::StyleToggle(index),
+				r.x + r.w - 180.,
+				y,
+				76.,
+				26.,
+				pos.is_some(),
+			));
 		}
 		if let Some(pos) = pos {
 			if pos > 0 {
-				out.push(Button {
-					label: "↑",
-					action: Command::StyleUp(index),
-					rect: Rect {
-						x: r.x + r.w - 96.,
-						y,
-						w: 32.,
-						h: 26.,
-					},
-				});
+				out.push(btn(
+					"↑",
+					Command::StyleUp(index),
+					r.x + r.w - 96.,
+					y,
+					32.,
+					26.,
+					false,
+				));
 			}
 			if settings
 				.style
 				.as_ref()
 				.is_some_and(|ids| pos + 1 < ids.len())
 			{
-				out.push(Button {
-					label: "↓",
-					action: Command::StyleDown(index),
-					rect: Rect {
-						x: r.x + r.w - 58.,
-						y,
-						w: 32.,
-						h: 26.,
-					},
-				});
+				out.push(btn(
+					"↓",
+					Command::StyleDown(index),
+					r.x + r.w - 58.,
+					y,
+					32.,
+					26.,
+					false,
+				));
 			}
 		}
 	}
@@ -167,11 +194,37 @@ pub(super) fn draw_styles(
 			rect: r,
 			chain: Condition::Panel.chain(),
 			condition: Condition::Panel,
-			radius: 0.,
+			fill: C::Background,
+			radius: super::controls::PANEL_RADIUS,
 			border: 1.,
 			left_only: false,
 		},
+		Draw::Rect(
+			Rect {
+				x: r.x,
+				y: r.y + 48.,
+				w: r.w,
+				h: 1.,
+			},
+			Paint::Styled(Condition::Panel, C::BorderColor),
+		),
+		Draw::Rect(
+			Rect {
+				x: r.x,
+				y: r.y + r.h - 48.,
+				w: r.w,
+				h: 1.,
+			},
+			Paint::Styled(Condition::Panel, C::BorderColor),
+		),
 	];
+	out.extend(shaper.label(
+		"Styles",
+		18.,
+		r.x + 78.,
+		r.y + 32.,
+		Paint::Styled(Condition::Panel, C::Color),
+	));
 	let summary = if settings.style.is_none() {
 		"Stylesheets · following system"
 	} else {
@@ -181,8 +234,8 @@ pub(super) fn draw_styles(
 		summary,
 		13.,
 		r.x + 20.,
-		r.y + 66.,
-		Paint::Styled(Condition::Panel, C::Color),
+		r.y + 74.,
+		Paint::Styled(Condition::Panel, C::Muted),
 	));
 	for (row, index) in
 		order.into_iter().skip(page * rows).take(rows).enumerate()
@@ -192,7 +245,7 @@ pub(super) fn draw_styles(
 			.style
 			.as_ref()
 			.and_then(|ids| ids.iter().position(|id| id == &e.id));
-		let y = r.y + 84. + row as f32 * 60.;
+		let y = r.y + 92. + row as f32 * 60.;
 		let title = format!(
 			"{}{} ({})",
 			pos.map(|p| format!("{}. ", p + 1)).unwrap_or_default(),
@@ -214,10 +267,15 @@ pub(super) fn draw_styles(
 				w: 76.,
 				h: 26.,
 			};
-			out.push(Draw::Rect(
+			out.push(Draw::Box {
 				rect,
-				Paint::Styled(Condition::Button, C::Background),
-			));
+				chain: Condition::Button.chain(),
+				condition: Condition::Button,
+				fill: C::HoverBackground,
+				radius: super::controls::BUTTON_RADIUS,
+				border: 0.,
+				left_only: false,
+			});
 			out.extend(shaper.label(
 				"Invalid",
 				12.,
@@ -244,58 +302,12 @@ pub(super) fn draw_styles(
 		));
 	}
 	for b in style_controls(settings, entries, page, width, height) {
-		out.push(Draw::Box {
-			rect: b.rect,
-			chain: Condition::Button.chain(),
-			condition: Condition::Button,
-			radius: 0.,
-			border: 1.,
-			left_only: false,
-		});
-		let hovered =
-			b.rect.contains(interaction.cursor.0, interaction.cursor.1);
-		out.push(Draw::Rect(
-			b.rect,
-			Paint::Styled(
-				Condition::Button,
-				if interaction.pressed == Some(b.action) {
-					C::ActiveBackground
-				} else if hovered {
-					C::HoverBackground
-				} else {
-					C::Background
-				},
-			),
-		));
-		if interaction.focus == Some(b.action) {
-			for rect in [
-				Rect { h: 1., ..b.rect },
-				Rect {
-					y: b.rect.y + b.rect.h - 1.,
-					h: 1.,
-					..b.rect
-				},
-				Rect { w: 1., ..b.rect },
-				Rect {
-					x: b.rect.x + b.rect.w - 1.,
-					w: 1.,
-					..b.rect
-				},
-			] {
-				out.push(Draw::Rect(
-					rect,
-					Paint::Styled(Condition::Button, C::FocusColor),
-				));
-			}
-		}
-		let label_x =
-			b.rect.x + (b.rect.w - shaper.text_width(b.label, 12.)) / 2.0;
-		out.extend(shaper.label(
-			b.label,
+		out.extend(super::controls::paint_button(
+			shaper,
+			&b,
+			interaction,
+			false,
 			12.,
-			label_x,
-			b.rect.y + 18.,
-			Paint::Styled(Condition::Button, C::Color),
 		));
 	}
 	out
@@ -331,6 +343,11 @@ mod stylesheet_tests {
 				&& panel.contains(b.rect.x + b.rect.w, b.rect.y + b.rect.h)));
 			assert!(
 				!buttons.iter().any(|b| b.action == Command::StyleToggle(1))
+			);
+			assert!(
+				buttons
+					.iter()
+					.any(|b| b.action == Command::Settings && b.label == "×")
 			);
 		}
 	}

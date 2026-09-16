@@ -93,6 +93,8 @@ pub enum Draw {
 		chain: u128,
 		/// The element the box belongs to; its rules own the box colors.
 		condition: crate::style::Condition,
+		/// Fill color field; document boxes use `Background`.
+		fill: crate::style::ColorField,
 		radius: f32,
 		border: f32,
 		left_only: bool,

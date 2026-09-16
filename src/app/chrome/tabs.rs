@@ -1,5 +1,6 @@
-use super::controls::toolbar_right_edge;
+use super::controls::{title_bar_leading, toolbar_left};
 use crate::app::tab_strip::{TabLayout, TabStrip};
+use crate::app::{ChromeFrame, TAB, TITLE};
 use crate::layout::{Draw, Paint, Rect, TextShaper};
 use crate::state::ReaderTab;
 use markview_core::style::{ColorField as C, Condition};
@@ -12,16 +13,18 @@ pub(in crate::app) struct TabBar<'a> {
 	pub(super) active_tab: usize,
 	pub(super) cursor: (f32, f32),
 	pub(super) width: f32,
+	pub(super) frame: ChromeFrame,
 }
 impl TabBar<'_> {
 	pub(in crate::app) fn layout(&mut self) -> TabLayout {
-		let right = toolbar_right_edge(self.ui, self.width) - 4.0;
+		let left = title_bar_leading();
+		let right = toolbar_left(self.ui, self.width, self.frame);
 		TabLayout::new(
 			Rect {
-				x: 10.0,
-				y: 4.0,
-				w: (right - 10.0).max(0.0),
-				h: 32.0,
+				x: left,
+				y: 0.0,
+				w: (right - left - 8.0).max(0.0),
+				h: TITLE,
 			},
 			self.widths,
 			self.strip.scroll,
@@ -53,22 +56,47 @@ impl TabBar<'_> {
 				continue;
 			}
 			let active = index == self.active_tab;
-			out.push(Draw::Box {
-				rect,
-				chain: Condition::Toolbar.chain(),
-				condition: Condition::Toolbar,
-				radius: 0.0,
-				border: 1.0,
-				left_only: false,
-			});
-			let fill = if active {
-				C::ActiveBackground
-			} else if rect.contains(self.cursor.0, self.cursor.1) {
-				C::HoverBackground
-			} else {
-				C::Background
-			};
-			out.push(Draw::Rect(rect, Paint::Styled(Condition::Toolbar, fill)));
+			let hovered = rect.contains(self.cursor.0, self.cursor.1);
+			rect.h = if active { TITLE } else { TAB };
+			if active {
+				out.push(Draw::Rect(
+					rect,
+					Paint::Styled(Condition::Toolbar, C::ActiveBackground),
+				));
+				out.push(Draw::Rect(
+					Rect {
+						x: rect.x,
+						y: rect.y,
+						w: 1.0,
+						h: rect.h,
+					},
+					Paint::Styled(Condition::Toolbar, C::BorderColor),
+				));
+				out.push(Draw::Rect(
+					Rect {
+						x: rect.x + rect.w - 1.0,
+						y: rect.y,
+						w: 1.0,
+						h: rect.h,
+					},
+					Paint::Styled(Condition::Toolbar, C::BorderColor),
+				));
+			} else if hovered {
+				out.push(Draw::Rect(
+					rect,
+					Paint::Styled(Condition::Toolbar, C::HoverBackground),
+				));
+			} else if index > 0 {
+				out.push(Draw::Rect(
+					Rect {
+						x: rect.x,
+						y: rect.y + 8.0,
+						w: 1.0,
+						h: rect.h - 16.0,
+					},
+					Paint::Styled(Condition::Toolbar, C::BorderColor),
+				));
+			}
 			let name = self.tabs[index]
 				.path
 				.file_name()
@@ -85,13 +113,15 @@ impl TabBar<'_> {
 					if active { C::Color } else { C::Muted },
 				),
 			));
-			out.extend(self.ui.label(
-				"×",
-				16.0,
-				rect.x + rect.w - 19.0,
-				rect.y + 21.0,
-				Paint::Styled(Condition::Toolbar, C::Muted),
-			));
+			if hovered || active {
+				out.extend(self.ui.label(
+					"×",
+					16.0,
+					rect.x + rect.w - 19.0,
+					rect.y + 21.0,
+					Paint::Styled(Condition::Toolbar, C::Muted),
+				));
+			}
 		}
 		self.ui.appearance = old;
 		let mut draws = vec![Draw::Clipped {
@@ -106,7 +136,7 @@ impl TabBar<'_> {
 					x: layout.viewport.x
 						+ (layout.viewport.w - w) * layout.scroll
 							/ layout.max_scroll,
-					y: 37.0,
+					y: TITLE - 3.0,
 					w,
 					h: 2.0,
 				},

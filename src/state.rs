@@ -10,7 +10,26 @@ use std::{
 	sync::Arc,
 	time::{Duration, Instant},
 };
-use winit::keyboard::ModifiersState;
+
+/// Keyboard modifiers, independent of the windowing backend.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Modifiers {
+	pub(crate) shift: bool,
+	pub(crate) ctrl: bool,
+	pub(crate) alt: bool,
+	pub(crate) logo: bool,
+}
+impl Modifiers {
+	pub(crate) fn shift_key(self) -> bool {
+		self.shift
+	}
+	pub(crate) fn control_key(self) -> bool {
+		self.ctrl
+	}
+	pub(crate) fn super_key(self) -> bool {
+		self.logo
+	}
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
 	Open,
@@ -36,6 +55,7 @@ pub(crate) enum Command {
 	StylesFolder,
 	SelectTab(usize),
 	CloseTab(usize),
+	CloseWindow,
 }
 
 #[derive(Default, Clone)]
@@ -86,7 +106,7 @@ pub(crate) struct InteractionState {
 	pub(crate) pointer_down: Option<Drag>,
 	pub(crate) dragged: bool,
 	pub(crate) drag_at: Option<Instant>,
-	pub(crate) modifiers: ModifiersState,
+	pub(crate) modifiers: Modifiers,
 	pub(crate) cursor: (f32, f32),
 	pub(crate) hover: Option<String>,
 	pub(crate) hover_image: Option<String>,

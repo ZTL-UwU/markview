@@ -17,12 +17,11 @@ use std::{collections::HashMap, sync::Arc};
 use swash::{
 	FontRef,
 	scale::{Render, ScaleContext, Source, image::Content},
-	zeno::{Command, Format, PathData, Vector},
+	zeno::{Format, Vector},
 };
 
 pub(super) struct GpuiPainter {
 	scaler: ScaleContext,
-	outlines: HashMap<OutlineKey, Option<swash::scale::outline::Outline>>,
 	bitmaps: HashMap<BitmapKey, Option<CachedBitmap>>,
 	images: HashMap<(String, u64), Arc<RenderImage>>,
 	math_fonts: HashMap<String, FontData>,
@@ -35,15 +34,6 @@ pub(super) struct GpuiPainter {
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
-struct OutlineKey {
-	font: u64,
-	index: u32,
-	id: u16,
-	size: u32,
-	coords: u64,
-}
-
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 struct BitmapKey {
 	font: u64,
 	index: u32,
@@ -51,6 +41,7 @@ struct BitmapKey {
 	size: u32,
 	phase: u8,
 	coords: u64,
+	color: u32,
 }
 
 struct CachedBitmap {
@@ -65,7 +56,6 @@ impl GpuiPainter {
 	pub(super) fn new() -> Self {
 		Self {
 			scaler: ScaleContext::new(),
-			outlines: HashMap::new(),
 			bitmaps: HashMap::new(),
 			images: HashMap::new(),
 			math_fonts: HashMap::new(),
@@ -87,10 +77,10 @@ impl GpuiPainter {
 		style: Arc<markview_core::style::Stylesheet>,
 	) {
 		self.stylesheet = Some(style);
+		self.clear_glyphs();
 	}
 
 	pub(super) fn clear_glyphs(&mut self) {
-		self.outlines.clear();
 		self.bitmaps.clear();
 	}
 
@@ -501,88 +491,19 @@ impl GpuiPainter {
 			return;
 		}
 		let color = self.color(g.paint, view.theme);
-		// `paint_path` multiplies by the window DPR, so outline in logical
-		// pixels. Bitmap glyphs stay physical and divide by `view.scale` later.
-		let outline_size = outline_size_quarters(g.size);
-		let size = bitmap_size_quarters(g.size, view.scale);
-		let outline_key = OutlineKey {
-			font: g.font.data.id(),
-			index: g.font.index,
-			id: g.id,
-			size: outline_size,
-			coords: fingerprint(&g.coords),
-		};
-		if !self.outlines.contains_key(&outline_key) {
-			let outline =
-				FontRef::from_index(g.font.data.data(), g.font.index as usize)
-					.and_then(|font| {
-						let mut scaler = self
-							.scaler
-							.builder_with_id(
-								font,
-								[g.font.data.id(), g.font.index as u64],
-							)
-							.size(outline_size as f32 / 4.0)
-							.hint(true)
-							.normalized_coords(g.coords.iter())
-							.build();
-						let outline = scaler.scale_outline(g.id)?;
-						(!outline.is_color()).then_some(outline)
-					});
-			self.outlines.insert(outline_key, outline);
-		}
-		if let Some(Some(outline)) = self.outlines.get(&outline_key) {
-			let mut builder = PathBuilder::fill();
-			let origin_x = x;
-			let origin_y = y;
-			for command in outline.path().commands() {
-				match command {
-					Command::MoveTo(p) => {
-						builder.move_to(point(
-							px(origin_x + p.x),
-							px(origin_y - p.y),
-						));
-					}
-					Command::LineTo(p) => {
-						builder.line_to(point(
-							px(origin_x + p.x),
-							px(origin_y - p.y),
-						));
-					}
-					Command::QuadTo(c, p) => {
-						builder.curve_to(
-							point(px(origin_x + p.x), px(origin_y - p.y)),
-							point(px(origin_x + c.x), px(origin_y - c.y)),
-						);
-					}
-					Command::CurveTo(c1, c2, p) => {
-						builder.cubic_bezier_to(
-							point(px(origin_x + p.x), px(origin_y - p.y)),
-							point(px(origin_x + c1.x), px(origin_y - c1.y)),
-							point(px(origin_x + c2.x), px(origin_y - c2.y)),
-						);
-					}
-					Command::Close => builder.close(),
-				}
-			}
-			if let Ok(path) = builder.build() {
-				window.with_content_mask(Some(Self::mask(clip)), |window| {
-					window.paint_path(path, color);
-				});
-				return;
-			}
-		}
+		// Coverage raster at physical pixels with quarter-pixel X phases, matching wgpu.
 		let origin = glyph_origin(x, y, view.scale);
 		let key = BitmapKey {
 			font: g.font.data.id(),
 			index: g.font.index,
 			id: g.id,
-			size,
+			size: bitmap_size_quarters(g.size, view.scale),
 			phase: origin.phase,
 			coords: fingerprint(&g.coords),
+			color: rgba_bits(color),
 		};
 		if !self.bitmaps.contains_key(&key) {
-			let raster = self.raster_glyph(g, view.scale, origin.phase);
+			let raster = self.raster_glyph(g, view.scale, origin.phase, color);
 			self.bitmaps.insert(key, raster);
 		}
 		let Some(Some(bitmap)) = self.bitmaps.get(&key) else {
@@ -614,10 +535,11 @@ impl GpuiPainter {
 		g: &Glyph,
 		scale: f32,
 		phase: u8,
+		color: Rgba,
 	) -> Option<CachedBitmap> {
 		let font =
 			FontRef::from_index(g.font.data.data(), g.font.index as usize)?;
-		let size = (g.size * scale * 4.0).round().max(1.0) as u32;
+		let size = bitmap_size_quarters(g.size, scale);
 		let mut scaler = self
 			.scaler
 			.builder_with_id(font, [g.font.data.id(), g.font.index as u64])
@@ -637,11 +559,22 @@ impl GpuiPainter {
 			return None;
 		}
 		let mut rgba = match image.content {
-			Content::Mask => image
-				.data
-				.iter()
-				.flat_map(|&a| [255, 255, 255, a])
-				.collect::<Vec<_>>(),
+			Content::Mask => {
+				let red = (color.r * 255.0).round() as u8;
+				let green = (color.g * 255.0).round() as u8;
+				let blue = (color.b * 255.0).round() as u8;
+				let paint_a = (color.a * 255.0).round() as u16;
+				image
+					.data
+					.iter()
+					.flat_map(|&cov| {
+						let a = (u16::from(cov) * paint_a / 255) as u8;
+						// Keep the fill color on zero-alpha texels so linear
+						// filtering does not pick up black and fringe the edge.
+						[red, green, blue, a]
+					})
+					.collect::<Vec<_>>()
+			}
 			Content::Color => {
 				let mut data = image.data;
 				if matches!(image.source, Source::ColorOutline(_)) {
@@ -1004,10 +937,6 @@ impl GpuiPainter {
 	}
 }
 
-fn outline_size_quarters(font_size: f32) -> u32 {
-	(font_size * 4.0).round().max(1.0) as u32
-}
-
 fn bitmap_size_quarters(font_size: f32, scale: f32) -> u32 {
 	(font_size * scale * 4.0).round().max(1.0) as u32
 }
@@ -1023,16 +952,12 @@ fn glyph_origin(x: f32, y: f32, scale: f32) -> GlyphOrigin {
 
 #[cfg(test)]
 mod tests {
-	use super::{bitmap_size_quarters, outline_size_quarters};
+	use super::bitmap_size_quarters;
 
 	#[test]
-	fn outline_size_ignores_display_scale() {
-		assert_eq!(outline_size_quarters(16.0), 64);
+	fn coverage_glyphs_rasterize_at_physical_size() {
+		assert_eq!(bitmap_size_quarters(16.0, 1.0), 64);
 		assert_eq!(bitmap_size_quarters(16.0, 2.0), 128);
-		assert_ne!(
-			outline_size_quarters(16.0),
-			bitmap_size_quarters(16.0, 2.0)
-		);
 	}
 }
 

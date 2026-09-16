@@ -12,6 +12,7 @@ const WINDOWS_ICON: &[u8] = include_bytes!("../../assets/icons/markview.ico");
 const LINUX_ICON: &[u8] = include_bytes!("../../assets/icons/markview-128.png");
 
 #[cfg(target_os = "windows")]
+#[allow(dead_code)]
 fn decode() -> Option<(u32, u32, Vec<u8>)> {
 	let dir = ico::IconDir::read(std::io::Cursor::new(WINDOWS_ICON)).ok()?;
 	let entry = dir.entries().iter().max_by_key(|e| e.width())?;

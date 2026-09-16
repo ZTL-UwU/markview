@@ -501,12 +501,15 @@ impl GpuiPainter {
 			return;
 		}
 		let color = self.color(g.paint, view.theme);
-		let size = (g.size * view.scale * 4.0).round().max(1.0) as u32;
+		// `paint_path` multiplies by the window DPR, so outline in logical
+		// pixels. Bitmap glyphs stay physical and divide by `view.scale` later.
+		let outline_size = outline_size_quarters(g.size);
+		let size = bitmap_size_quarters(g.size, view.scale);
 		let outline_key = OutlineKey {
 			font: g.font.data.id(),
 			index: g.font.index,
 			id: g.id,
-			size,
+			size: outline_size,
 			coords: fingerprint(&g.coords),
 		};
 		if !self.outlines.contains_key(&outline_key) {
@@ -519,7 +522,7 @@ impl GpuiPainter {
 								font,
 								[g.font.data.id(), g.font.index as u64],
 							)
-							.size(size as f32 / 4.0)
+							.size(outline_size as f32 / 4.0)
 							.hint(true)
 							.normalized_coords(g.coords.iter())
 							.build();
@@ -1001,12 +1004,35 @@ impl GpuiPainter {
 	}
 }
 
+fn outline_size_quarters(font_size: f32) -> u32 {
+	(font_size * 4.0).round().max(1.0) as u32
+}
+
+fn bitmap_size_quarters(font_size: f32, scale: f32) -> u32 {
+	(font_size * scale * 4.0).round().max(1.0) as u32
+}
+
 fn glyph_origin(x: f32, y: f32, scale: f32) -> GlyphOrigin {
 	let phased_x = (x * scale * 4.0).round();
 	GlyphOrigin {
 		x: (phased_x / 4.0).floor(),
 		y: (y * scale).round(),
 		phase: phased_x.rem_euclid(4.0) as u8,
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{bitmap_size_quarters, outline_size_quarters};
+
+	#[test]
+	fn outline_size_ignores_display_scale() {
+		assert_eq!(outline_size_quarters(16.0), 64);
+		assert_eq!(bitmap_size_quarters(16.0, 2.0), 128);
+		assert_ne!(
+			outline_size_quarters(16.0),
+			bitmap_size_quarters(16.0, 2.0)
+		);
 	}
 }
 

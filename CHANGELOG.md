@@ -18,8 +18,9 @@ at the same level, without `[brackets]`.
 - The interactive window is a GPUI application. `markview-core` layout is
   unchanged. `--render` and `--bench` still paint through wgpu so offscreen
   metrics stay comparable to earlier baselines.
-- Window chrome follows Zed's One Light / One Dark UI: ghost toolbar
-  buttons, rounded tabs and panels, and matching surface colors.
+- Window chrome follows Zed: a client-decorated title bar over a connecting
+  tab strip, ghost title-bar buttons, and a modal settings dialog with a
+  headline, dismiss control, selected toggles, and a footer rule.
 
 ## 0.1.0 - 2026-09-16
 

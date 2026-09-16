@@ -49,3 +49,67 @@ fn measured_tabs_fit_minimum_window_and_styles_invalidate_widths() {
 	metrics.sync(&mut ui, &[]);
 	assert!(metrics.widths.is_empty());
 }
+
+#[test]
+fn active_tab_connects_to_the_page_and_close_follows_hover() {
+	let mut ui = TextShaper::new();
+	let tabs = vec![
+		ReaderTab::new("one.md".into()),
+		ReaderTab::new("two.md".into()),
+	];
+	let mut metrics = TabMetrics::default();
+	metrics.sync(&mut ui, &tabs);
+	let strip = TabStrip::default();
+	let mut idle = TabBar {
+		ui: &mut ui,
+		strip: &strip,
+		widths: &metrics.widths,
+		tabs: &tabs,
+		active_tab: 0,
+		cursor: (0.0, 0.0),
+		width: 800.0,
+	};
+	let layout = idle.layout();
+	assert!((layout.viewport.y - crate::app::TITLE).abs() < 0.01);
+	assert!((layout.viewport.h - crate::app::TAB).abs() < 0.01);
+	assert!(
+		(layout.rects[1].x - (layout.rects[0].x + layout.rects[0].w)).abs()
+			< 0.01
+	);
+	let idle_close = close_glyph_count(&idle.draw_tabs(), &layout.rects);
+	assert!(idle_close[0] > 0);
+	assert_eq!(idle_close[1], 0);
+	let mut hovered = TabBar {
+		ui: &mut ui,
+		strip: &strip,
+		widths: &metrics.widths,
+		tabs: &tabs,
+		active_tab: 0,
+		cursor: (layout.rects[1].x + 4.0, crate::app::TITLE + 4.0),
+		width: 800.0,
+	};
+	let hovered_close = close_glyph_count(&hovered.draw_tabs(), &layout.rects);
+	assert!(hovered_close[0] > 0);
+	assert!(hovered_close[1] > 0);
+}
+
+fn close_glyph_count(draws: &[Draw], rects: &[Rect]) -> Vec<usize> {
+	let mut counts = vec![0; rects.len()];
+	fn walk(draws: &[Draw], rects: &[Rect], counts: &mut [usize]) {
+		for draw in draws {
+			match draw {
+				Draw::Clipped { draws, .. } => walk(draws, rects, counts),
+				Draw::Glyph(g) => {
+					if let Some(i) = rects.iter().position(|r| {
+						g.x >= r.x + r.w - 24.0 && g.x <= r.x + r.w
+					}) {
+						counts[i] += 1;
+					}
+				}
+				_ => {}
+			}
+		}
+	}
+	walk(draws, rects, &mut counts);
+	counts
+}

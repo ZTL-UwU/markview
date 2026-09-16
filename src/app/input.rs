@@ -78,7 +78,7 @@ impl App {
 	pub(super) fn on_left_down(
 		&mut self,
 		event: &MouseDownEvent,
-		_: &mut gpui::Window,
+		window: &mut gpui::Window,
 		cx: &mut gpui::Context<Self>,
 	) {
 		self.interaction.modifiers = modifiers_from(event.modifiers);
@@ -108,11 +108,19 @@ impl App {
 			self.interaction.reset_clicks();
 			self.interaction.focus = Some(button.action);
 			self.interaction.pressed = Some(button.action);
-			self.action(button.action);
+			if !self.window_command(button.action, window) {
+				self.action(button.action);
+			}
 		} else if self.interaction.panel_open {
 			self.interaction.reset_clicks();
 			if !self.pointer_in_panel() {
 				self.action(Command::Settings);
+			}
+		} else if self.interaction.cursor.1 < super::TITLE {
+			if self.interaction.click_count(Instant::now()) >= 2 {
+				window.zoom_window();
+			} else {
+				window.start_window_move();
 			}
 		} else if !self.pointer_in_panel() {
 			self.interaction.focus = None;
@@ -250,7 +258,7 @@ impl App {
 	pub(super) fn on_key_down(
 		&mut self,
 		event: &KeyDownEvent,
-		_: &mut gpui::Window,
+		window: &mut gpui::Window,
 		cx: &mut gpui::Context<Self>,
 	) {
 		self.interaction.modifiers = modifiers_from(event.keystroke.modifiers);
@@ -336,6 +344,7 @@ impl App {
 				"enter" => {
 					if let Some(action) = self.interaction.focus
 						&& self.buttons().iter().any(|b| b.action == action)
+						&& !self.window_command(action, window)
 					{
 						self.action(action);
 					}

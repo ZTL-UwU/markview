@@ -8,7 +8,8 @@ use crate::{
 };
 use anyhow::{Result, bail};
 use gpui::{
-	AppContext, Application, Bounds, WindowBounds, WindowOptions, px, size,
+	AppContext, Application, Bounds, TitlebarOptions, WindowBounds,
+	WindowDecorations, WindowOptions, point, px, size,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -146,10 +147,12 @@ pub(super) fn run() -> Result<()> {
 					window_bounds: Some(WindowBounds::Windowed(bounds)),
 					window_min_size: Some(size(px(500.), px(300.))),
 					app_id: Some("markview".into()),
-					titlebar: Some(gpui::TitlebarOptions {
+					titlebar: Some(TitlebarOptions {
 						title: Some("Markview".into()),
-						..Default::default()
+						appears_transparent: true,
+						traffic_light_position: Some(point(px(9.0), px(9.0))),
 					}),
+					window_decorations: Some(WindowDecorations::Client),
 					..Default::default()
 				},
 				{

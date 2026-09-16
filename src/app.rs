@@ -26,12 +26,56 @@ use crate::{
 };
 use anyhow::Result;
 use gpui::{
-	App as GpuiApp, Context, CursorStyle, FocusHandle, Window, WindowAppearance,
+	App as GpuiApp, Context, CursorStyle, Decorations, FocusHandle, Window,
+	WindowAppearance,
 };
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
-const TOP: f32 = 36.0;
-const BOTTOM: f32 = 24.0;
+/// Zed title bar (`h_32` + 1px), then the tab strip.
+pub(super) const TITLE: f32 = 33.0;
+pub(super) const TAB: f32 = 32.0;
+pub(super) const TOP: f32 = TITLE + TAB;
+pub(super) const BOTTOM: f32 = 24.0;
+
+#[derive(Clone, Copy, Default)]
+pub(super) struct ChromeFrame {
+	client: bool,
+	minimize: bool,
+	maximize: bool,
+}
+
+impl ChromeFrame {
+	fn from_window(window: &Window) -> Self {
+		if cfg!(target_os = "macos") {
+			return Self::default();
+		}
+		if cfg!(target_os = "windows") {
+			return Self {
+				client: true,
+				minimize: true,
+				maximize: true,
+			};
+		}
+		let controls = window.window_controls();
+		Self {
+			client: matches!(
+				window.window_decorations(),
+				Decorations::Client { .. }
+			),
+			minimize: controls.minimize,
+			maximize: controls.maximize,
+		}
+	}
+
+	pub(super) fn control_width(self) -> f32 {
+		if !self.client {
+			0.0
+		} else {
+			chrome::WINDOW_CONTROL
+				* (1 + u8::from(self.minimize) + u8::from(self.maximize)) as f32
+		}
+	}
+}
 
 pub fn run() -> Result<()> {
 	launch::run()
@@ -48,6 +92,7 @@ struct Button {
 	rect: Rect,
 	label: &'static str,
 	action: Command,
+	selected: bool,
 }
 
 fn system_theme(window: &Window) -> Theme {
@@ -102,6 +147,7 @@ struct App {
 	pending_quit: bool,
 	compositor: String,
 	os_theme: Theme,
+	chrome_frame: ChromeFrame,
 	_appearance: gpui::Subscription,
 	_activation: Option<gpui::Subscription>,
 	_quit: Option<gpui::Subscription>,
@@ -133,6 +179,7 @@ impl App {
 				let _ = events.send_blocking(Event::StylesChanged);
 			})
 		});
+		window.set_client_inset(gpui::px(5.0));
 		let focus = cx.focus_handle();
 		focus.focus(window);
 		let appearance =
@@ -192,6 +239,7 @@ impl App {
 			pending_quit: false,
 			compositor: cx.compositor_name().to_string(),
 			os_theme: system_theme(window),
+			chrome_frame: ChromeFrame::from_window(window),
 			_appearance: appearance,
 			_activation: None,
 			_quit: None,
@@ -301,6 +349,7 @@ impl App {
 		self.width = f32::from(size.width).max(1.0);
 		self.height = f32::from(size.height).max(1.0);
 		self.os_theme = system_theme(window);
+		self.chrome_frame = ChromeFrame::from_window(window);
 		if (self.scale - scale).abs() > 0.001 {
 			self.painter.clear_glyphs();
 			self.reflow_at = Some(Instant::now());

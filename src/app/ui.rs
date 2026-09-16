@@ -27,6 +27,8 @@ impl App {
 			status: &self.status,
 			status_until: self.status_until,
 			error: self.error,
+			frame: self.chrome_frame,
+			title: &self.title,
 		}
 	}
 	pub(super) fn buttons(&mut self) -> Vec<Button> {

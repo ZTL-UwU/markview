@@ -14,7 +14,7 @@ fn widths_shrink_before_scrolling_and_never_below_minimum() {
 	assert_eq!(small.scroll, 0.0);
 	let compressed = TabLayout::new(viewport(), &[(120.0, 60.0); 4], 0.0);
 	assert_eq!(compressed.max_scroll, 0.0);
-	assert_eq!(compressed.rects[0].w, 73.5);
+	assert_eq!(compressed.rects[0].w, 75.0);
 	let overflow = TabLayout::new(viewport(), &[(120.0, 60.0); 8], 10000.0);
 	assert_eq!(overflow.rects[0].w, 60.0);
 	assert_eq!(overflow.scroll, overflow.max_scroll);
